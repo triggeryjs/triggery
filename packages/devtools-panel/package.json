@@ -1,6 +1,6 @@
 {
   "name": "@triggery/devtools-panel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "React components for inspecting a Triggery runtime — drop-in inspector panel and snapshot views",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

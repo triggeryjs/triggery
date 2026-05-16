@@ -1,6 +1,6 @@
 {
   "name": "@triggery/jotai",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Jotai adapter for Triggery — read an atom's value from a trigger condition without subscribing the host component to atom updates",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

@@ -1,6 +1,6 @@
 {
   "name": "@triggery/eslint-plugin",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "ESLint plugin for Triggery — catches mis-use of createTrigger / useEvent / useCondition / useAction, suggests named hooks, enforces handler size budgets.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
