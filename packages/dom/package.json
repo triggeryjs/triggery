@@ -1,0 +1,71 @@
+{
+  "name": "@triggery/dom",
+  "version": "0.0.0",
+  "description": "DOM adapters for Triggery — pipe addEventListener, ResizeObserver and IntersectionObserver into triggers",
+  "license": "MIT",
+  "author": "Aleksey Skhomenko",
+  "homepage": "https://triggeryjs.github.io/triggery",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triggeryjs/triggery.git",
+    "directory": "packages/dom"
+  },
+  "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "keywords": [
+    "triggery",
+    "dom",
+    "react",
+    "events",
+    "resize-observer",
+    "intersection-observer"
+  ],
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "peerDependencies": {
+    "@triggery/core": "workspace:*",
+    "@triggery/react": "workspace:*",
+    "react": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@triggery/core": "workspace:*",
+    "@triggery/react": "workspace:*",
+    "@types/react": "^19.2.14",
+    "happy-dom": "^20.9.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

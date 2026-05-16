@@ -104,17 +104,43 @@ pnpm add @triggery/core @triggery/react
 
 ## Packages
 
+### Core
+
 | Package | Description |
 |---|---|
 | [`@triggery/core`](./packages/core) | Runtime: `createTrigger`, `createRuntime`, indexed dispatch, inspector, middleware, `graph()` |
 | [`@triggery/react`](./packages/react) | React bindings: `useEvent`, `useCondition`, `useAction`, `useInlineTrigger`, `useInspectHistory`, `createNamedHooks`, `<TriggerRuntimeProvider>`, `<TriggerScope>` |
 | [`@triggery/testing`](./packages/testing) | `createTestRuntime`, `mockCondition`, `mockAction`, `flushMicrotasks` |
 | [`@triggery/vite`](./packages/vite) | Vite plugin: auto-imports every `*.trigger.ts` via a virtual module + HMR |
+
+### Adapters
+
+Bridge any store / signal / atom into a Triggery condition without subscribing the host component to updates.
+
+| Package | Description |
+|---|---|
+| [`@triggery/zustand`](./packages/zustand) | `useZustandCondition(trigger, name, store, selector)` |
+| [`@triggery/redux`](./packages/redux) | `useReduxCondition(trigger, name, store, selector)` |
+| [`@triggery/jotai`](./packages/jotai) | `useJotaiCondition(trigger, name, store, atom, selector?)` |
+| [`@triggery/mobx`](./packages/mobx) | `useMobxCondition(trigger, name, () => observable)` — no dependency tracking on the host |
+| [`@triggery/reatom`](./packages/reatom) | `useReatomCondition(trigger, name, atom, selector?)` (Reatom v1000+) |
+| [`@triggery/signals`](./packages/signals) | `useSignalCondition(trigger, name, signal, selector?)` — `@preact/signals-core`, `alien-signals`, any `peek()` / `.value`-shaped signal |
+| [`@triggery/query`](./packages/query) | `useQueryCondition(trigger, name, queryClient, queryKey, selector?)` — TanStack Query cache |
+
+Pipe events from outside React into triggers:
+
+| Package | Description |
+|---|---|
+| [`@triggery/dom`](./packages/dom) | `useDomEvent`, `useResizeObserver`, `useIntersectionObserver` |
+| [`@triggery/socket`](./packages/socket) | `useSocketIoEvent` (socket.io-client), `useWebSocketEvent` (native WebSocket) |
+
+### DevTools
+
+| Package | Description |
+|---|---|
 | [`@triggery/devtools-redux`](./packages/devtools-redux) | Middleware that streams runtime events into the Redux DevTools browser extension |
 | [`@triggery/devtools-panel`](./packages/devtools-panel) | Drop-in React components for in-app inspection — `<InspectorView>`, `<TriggerSnapshotView>` |
 | [`@triggery/devtools-bridge`](./packages/devtools-bridge) | `installDevtoolsBridge(runtime)` — page-side bridge for external inspectors (Chrome ext, standalone panel) |
-
-DevTools extensions:
 
 | Extension | Description |
 |---|---|
