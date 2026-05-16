@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./.github/assets/banner.webp" alt="Triggery — write business logic, not boilerplate" width="100%" />
+</p>
+
 # Triggery
 
 > **Write business logic, not boilerplate.**
