@@ -13,7 +13,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/@triggery/core?label=downloads)](https://www.npmjs.com/package/@triggery/core)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/triggeryjs/triggery?style=social)](https://github.com/triggeryjs/triggery/stargazers)
-[![GitHub Sponsors](https://img.shields.io/github/sponsors/triggeryjs?logo=github)](https://github.com/sponsors/triggeryjs)
+[![Sponsor on Boosty](https://img.shields.io/badge/sponsor-boosty-f15f2c?logo=boosty&logoColor=white)](https://boosty.to/triggery)
 [![Discussions](https://img.shields.io/github/discussions/triggeryjs/triggery)](https://github.com/triggeryjs/triggery/discussions)
 
 **Not an event emitter. Not a state manager. Triggery orchestrates business logic across your app.**
@@ -225,8 +225,8 @@ Pre-1.0 — public API can still change between minor versions. Roadmap to 1.0 l
 
 - [**GitHub Discussions**](https://github.com/triggeryjs/triggery/discussions) — questions, ideas, show-and-tell. Primary community channel until 1.0.
 - **Discord** — opening at the 1.0 release. Until then async Discussions is the place.
-- **X / Twitter** — [`@triggeryjs`](https://twitter.com/triggeryjs) (reserved, posts after 0.4 milestone).
-- **Bluesky** — [`@triggery.dev`](https://bsky.app/profile/triggery.dev) (reserved).
+- **X / Twitter** — [`@triggeryjs`](https://x.com/triggeryjs) (reserved, posts after 0.4 milestone).
+- **Bluesky** — [`@triggeryjs.bsky.social`](https://bsky.app/profile/triggeryjs.bsky.social) (reserved).
 - **Stack Overflow** — tag your question with [`triggery`](https://stackoverflow.com/questions/tagged/triggery).
 
 See [`SUPPORT.md`](./SUPPORT.md) for the full "where do I ask X" guide.
@@ -247,8 +247,8 @@ Looking for something larger? Pick from [`ROADMAP.md`](./ROADMAP.md) or open an 
 
 Triggery is built in the open and is free under the MIT licence. If your team relies on it, please consider sponsoring — it directly funds maintenance, docs, and the bug-bounty programme.
 
-- **GitHub Sponsors** — <https://github.com/sponsors/triggeryjs>
-- **Boosty** (RU-friendly) — <https://boosty.to/triggery>
+- **Boosty** (RU/CIS-friendly, in production) — <https://boosty.to/triggery>
+- **Patreon** (international) — _coming soon_ (GitHub Sponsors is unavailable in Kazakhstan, where the maintainer is based; Patreon is being set up as the international alternative).
 
 Corporate sponsors get a logo here once the programme launches. Reach out at `a@skhom.ru` with subject `[triggery sponsorship]`.
 

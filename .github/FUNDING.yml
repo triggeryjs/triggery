@@ -1,14 +1,12 @@
 # How users can financially support Triggery.
 # See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+#
+# GitHub Sponsors is not available in Kazakhstan, so it is intentionally
+# omitted here. Patreon will be added once the maintainer's account is set up:
+#
+#   patreon: triggery   # ← uncomment + use the real handle when enrolled
+#
+# Until then we route financial support through Boosty (RU/CIS-friendly).
 
-github: [triggeryjs]
 custom:
   - https://boosty.to/triggery
-
-# NOTE for maintainers:
-# - Set up GitHub Sponsors for the @triggeryjs org or the personal account
-#   that will receive funds. The handle above must exist before the sponsor
-#   button appears on the repo.
-# - Create the Boosty page (https://boosty.to/) and replace the URL above
-#   with the real one. Until then, the link 404s — keep it commented out if
-#   that's not acceptable.
