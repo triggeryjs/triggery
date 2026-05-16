@@ -114,6 +114,23 @@ describe('actions.throttle(ms)', () => {
     expect(log).toHaveBeenCalledTimes(2);
     expect(log).toHaveBeenLastCalledWith(3);
   });
+
+  it('dispose() clears throttle entries (no clearTimeout needed for the lockout marker)', () => {
+    const runtime = createRuntime();
+    const log = vi.fn();
+    const trigger = createTrigger<Schema>(
+      {
+        id: 'throttle-dispose',
+        events: ['tick'],
+        handler: ({ event, actions }) => actions.throttle(100).log?.(event.payload),
+      },
+      runtime,
+    );
+    runtime.registerAction('throttle-dispose', 'log', log);
+    runtime.fireSync('tick', 1);
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(() => trigger.dispose()).not.toThrow();
+  });
 });
 
 describe('actions.defer(ms)', () => {

@@ -35,6 +35,14 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const microtaskScheduler = createScheduler('microtask');
   const syncScheduler = createScheduler('sync');
 
+  /**
+   * DEV-only memo of `(label:triggerId:name)` keys we've already warned about,
+   * so the user sees one warning per collision rather than one per re-render.
+   * StrictMode's mount → unmount → mount cycle empties the stack before the
+   * second mount, so it doesn't trigger this warning.
+   */
+  const warnedCollisions = new Set<string>();
+
   const indexEvent = (eventName: string, trigger: RegisteredTrigger) => {
     let set = eventIndex.get(eventName);
     if (!set) {
@@ -133,6 +141,23 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       stack = [];
       stacks.set(name, stack);
     }
+
+    // DEV: warn-once per (label, triggerId, name) when a second live
+    // registration arrives. Helps catch accidental multi-provider setups
+    // ("why does the trigger see value B, not A?") without spamming the
+    // console on every re-render or on StrictMode's mount-cycle.
+    if (isDev() && stack.length > 0) {
+      const collisionKey = `${label}:${triggerId}:${name}`;
+      if (!warnedCollisions.has(collisionKey)) {
+        warnedCollisions.add(collisionKey);
+        // eslint-disable-next-line no-console -- DEV warn
+        console.warn(
+          `[triggery] multiple ${label} registrations for "${name}" on trigger "${triggerId}" — last-mount-wins. ` +
+            'To compose values from several sources, register through a single hook.',
+        );
+      }
+    }
+
     stack.push(fn);
     mirror.set(name, fn);
 
