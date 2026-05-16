@@ -8,35 +8,85 @@
 
 A declarative, hook-first orchestration layer for React apps: **event → conditions → actions** in one file. Not a state manager, not an FRP framework — a thin coordinator that lifts business logic out of UI components.
 
+## Example: "show a toast for incoming messages, with sound, unless I'm already on that channel"
+
+### 1. The scenario lives in one file
+
 ```ts
 // triggers/message.trigger.ts
+import { createTrigger } from '@triggery/core';
+
 export const messageTrigger = createTrigger<{
-  events: { 'new-message': { author: string; text: string; channelId: string } };
-  conditions: { user: { id: string; name: string }; settings: { sound: boolean } };
-  actions: { showToast: { title: string }; playSound: 'beep' | 'mod-alert' };
+  events: {
+    'new-message': { author: string; text: string; channelId: string };
+  };
+  conditions: {
+    user: { id: string; name: string };
+    settings: { sound: boolean; notifications: boolean };
+    activeChannelId: string | null;
+  };
+  actions: {
+    showToast: { title: string; body: string };
+    playSound: 'beep' | 'mod-alert';
+  };
 }>({
   id: 'message-received',
   events: ['new-message'],
   required: ['user', 'settings'],
   handler({ event, conditions, actions, check }) {
     if (!conditions.user || !conditions.settings) return;
-    if (check.is('settings', (s) => s.sound)) actions.playSound?.('beep');
-    actions.showToast?.({ title: `${event.payload.author}: ${event.payload.text}` });
+
+    // Don't notify about the channel I'm currently looking at.
+    if (conditions.activeChannelId === event.payload.channelId) return;
+
+    // Don't notify for my own messages.
+    if (event.payload.author === conditions.user.name) return;
+
+    if (!check.is('settings', (s) => s.notifications)) return;
+
+    actions.showToast?.({
+      title: event.payload.author,
+      body: event.payload.text,
+    });
+
+    if (check.is('settings', (s) => s.sound)) {
+      actions.playSound?.('beep');
+    }
   },
 });
 ```
 
-```tsx
-// notifications/Toast.tsx
-useAction(messageTrigger, 'showToast', (p) => toast.success(p.title));
+### 2. UI components only provide ports — they know nothing about each other
 
-// auth/UserProvider.tsx
+```tsx
+// auth/UserProvider.tsx — supplies "who I am"
 useCondition(messageTrigger, 'user', () => currentUser, [currentUser]);
 
-// chat/Chat.tsx
+// settings/SettingsProvider.tsx — supplies notification preferences
+useCondition(
+  messageTrigger,
+  'settings',
+  () => ({ sound: prefs.sound, notifications: prefs.notifications }),
+  [prefs.sound, prefs.notifications],
+);
+
+// chat/ActiveChannelTracker.tsx — supplies which channel is in focus
+useCondition(messageTrigger, 'activeChannelId', () => currentChannelId, [currentChannelId]);
+
+// chat/Chat.tsx — emits the event when a WS message arrives
 const fire = useEvent(messageTrigger, 'new-message');
 useEffect(() => socket.on('msg', fire), [fire]);
+
+// notifications/Toast.tsx — knows how to render a toast
+useAction(messageTrigger, 'showToast', ({ title, body }) =>
+  toast.success(title, { description: body }),
+);
+
+// notifications/SoundPlayer.tsx — knows how to play a sound
+useAction(messageTrigger, 'playSound', (kind) => audioBus.play(kind));
 ```
+
+Six files, one scenario, no prop drilling, no `useEffect` chains, no central thunk/saga. The trigger reads like a spec.
 
 ## Install
 
@@ -51,7 +101,7 @@ pnpm add @triggery/core @triggery/react
 | Package | Description |
 |---|---|
 | [`@triggery/core`](./packages/core) | Runtime: `createTrigger`, `createRuntime`, indexed dispatch, inspector, middleware |
-| [`@triggery/react`](./packages/react) | React bindings: `useEvent`, `useCondition`, `useAction`, `<TriggerRuntimeProvider>` |
+| [`@triggery/react`](./packages/react) | React bindings: `useEvent`, `useCondition`, `useAction`, `useInlineTrigger`, `createNamedHooks`, `<TriggerRuntimeProvider>` |
 | [`@triggery/testing`](./packages/testing) | Testing utilities (V1.1) |
 
 ## Why
@@ -64,6 +114,18 @@ Business logic of the form _"when X happens, do Y if Z is true"_ is currently sp
 * No way to see at a glance _what will happen when X occurs_.
 
 Triggery's answer: **a scenario is one file**. The file reads like a spec.
+
+## Performance
+
+Measured on CodSpeed CPU-simulation runners (deterministic cycle counts, not wall-time). Reproducible via `pnpm bench`.
+
+| Scenario | Throughput |
+|---|---:|
+| `fireEvent` with no registered triggers (baseline) | **27.6M ops/sec** |
+| Single trigger, 0 conditions, 1 action | **634k ops/sec** |
+| 10 triggers, each with 2 conditions and 1 action | **44k ops/sec** |
+
+Bench source: [`benchmarks/bench/dispatch.bench.ts`](./benchmarks/bench/dispatch.bench.ts). Live dashboard: [codspeed.io/triggeryjs/triggery](https://codspeed.io/triggeryjs/triggery).
 
 ## Status
 
