@@ -143,7 +143,7 @@ Bench source: [`benchmarks/bench/dispatch.bench.ts`](./benchmarks/bench/dispatch
 
 ### vs effector / rxjs / redux-saga / xstate
 
-Six scenarios bench-ed against four neighbour libraries. Headline numbers (local M1 Pro, ops/sec; **bold = winner per row**):
+Eight scenarios bench-ed against four neighbour libraries. Headline numbers (local M1 Pro, ops/sec; **bold = winner per row**):
 
 | Scenario | Triggery | effector | rxjs | redux-saga | xstate |
 |---|---:|---:|---:|---:|---:|
@@ -151,10 +151,14 @@ Six scenarios bench-ed against four neighbour libraries. Headline numbers (local
 | Conditional (50% pass) | 516k | 565k | **14.3M** | 456k | 999k |
 | Cascade A → B | 249k | 343k | **9.5M** | 206k | 423k |
 | Take-latest cancellation | 307k | 228k | **4.0M** | 383k | 50k |
-| **Sparse bus (100 types, fire 1)** | 544k | **5.18M** | 286k | 251k | 757k |
-| **Lazy conditions (5 sources, read 1)** | 517k | 212k | **2.57M** | 302k | 127k |
+| Sparse bus (100 types, fire 1) | 544k | **5.18M** | 286k | 251k | 757k |
+| Lazy conditions (5 sources, read 1) | 517k | 212k | **2.57M** | 302k | 127k |
+| Multi-event single trigger | 545k | 3.74M | **14.45M** | 569k | 813k |
+| Toggle enable/disable + fire | 979k | 523k | **6.57M** | 341k | 462k |
 
-rxjs wins raw throughput (thin `Subject` + operators, no graph/observability/cascade). **Triggery beats rxjs + redux-saga in scenario 5** (indexed dispatch vs O(N) filter chain) and **beats effector / saga / xstate in scenario 6** (pull-only conditions vs eager state propagation). We trade ~1.5-2 µs of fixed overhead per fire for built-in inspector, cascade safety, scope gating, and concurrency strategies — see [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md) for the full breakdown and idiomatic implementations.
+rxjs wins raw throughput (thin `Subject` + operators, no graph/observability/cascade). Triggery is **competitive everywhere** and pulls ahead where its design matches the workload: **scenario 5** (indexed dispatch beats rxjs and saga), **scenario 6** (pull-only conditions beat effector, saga and xstate), **scenario 8** (first-class enable/disable beats effector, saga and xstate — only rxjs is faster).
+
+The fixed ~1.5-2 µs overhead per fire is what you pay for the built-in inspector, cascade safety, scope gating and concurrency strategies that the other libraries don't ship — full breakdown + idiomatic implementations in [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
 
 ## Status
 

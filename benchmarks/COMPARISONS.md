@@ -6,22 +6,22 @@ Side-by-side micro-benchmarks of the dispatch hot path against four libraries th
 
 ## Methodology
 
-* Same business outcome per scenario; each library implemented idiomatically (effector via `sample`, rxjs via `pipe`, saga via `take*`, xstate via transitions/invoke).
+* Same business outcome per scenario; each library implemented idiomatically (effector via `sample`/`merge`, rxjs via `pipe`/`merge`, saga via `take*`, xstate via transitions/invoke).
 * Bench fn does one logical unit per iteration. Setup happens once per `describe`.
 * Counter is incremented in the handler so the work isn't optimised away.
 * Source: `benchmarks/bench/comparisons/*.bench.ts`.
 
-## Why rxjs is so fast on simple scenarios
+## Why rxjs is so fast on the simple scenarios
 
 `Subject.next(value)` is essentially a for-loop over observers. Nothing else. When you compare against Triggery on a single subscriber, rxjs is 30× faster because for every fire Triggery also runs the inspector buffer, snapshot proxy, cascade context, abort-controller bookkeeping, and middleware chain — all features you didn't ask for at that call site but did get from the library design.
 
 That's the trade. rxjs is a thin pub-sub; everything else (state, observability, cancellation) you build yourself. Triggery puts the observability + cascade safety + concurrency strategies on the dispatch hot path so you don't have to.
 
-When scenarios pull in the things rxjs lacks (state, structured routing, scaling to many event types) the gap closes or flips. Scenarios 5 and 6 below pick examples where the library design — indexed dispatch and pull-only conditions — pays off.
+When scenarios pull in the things rxjs lacks (structured routing, scaling to many event types, paused/resumed reactions) the gap closes or flips. Scenarios 5, 6 and 8 pick examples where the library design — indexed dispatch, pull-only conditions, first-class enable/disable — pays off.
 
 ## Results
 
-Local M1 Pro, Node 22, vitest 4.1, single-threaded. RME &lt; 5% on most rows; redux-saga is consistently noisier (~10%).
+Local M1 Pro, Node 22, vitest 4.1, single-threaded. RME &lt; 5% on most rows; redux-saga is consistently noisier (~10%). Each row marks **winner overall** in bold; rows where Triggery beats most peers are flagged in the analysis.
 
 ### 1. Plain dispatch — event → action
 One subscriber, one action, no conditions.
@@ -86,7 +86,7 @@ Async handler awaits one microtask, then checks the cancel signal.
 | **rxjs** | 286,000 | 0.53× |
 | **redux-saga** | 251,000 | 0.46× |
 
-This is where indexed dispatch matters. effector and xstate beat us because their per-event primitive is even tighter (each `createEvent` is its own minimal pub-sub; xstate transitions are a tabular lookup). But **we beat rxjs and redux-saga** by ~2× — the shared-bus + filter-chain pattern (or saga's middleware + 100 `takeEvery`) pays O(N) per fire, while our `Map<eventName, Set<Trigger>>` stays O(1). If you've ever felt your rxjs event bus get sluggish as you added more channels, this is why.
+🟢 Triggery's indexed `Map<eventName, Set<Trigger>>` stays O(1) on every fire. **We beat rxjs (shared `Subject` + 100 filters = O(N)) and saga (middleware + 100 takeEvery) by ~2×.** effector and xstate win this one because their per-event primitive is even tighter (each `createEvent` is its own minimal pub-sub; xstate's transitions are tabular lookup).
 
 [`05-sparse-bus.bench.ts`](./bench/comparisons/05-sparse-bus.bench.ts)
 
@@ -101,24 +101,55 @@ The runtime knows about 5 sources of state but the trigger only needs one of the
 | **effector** | 212,000 | 0.41× |
 | **xstate** | 127,000 | 0.25× |
 
-Triggery's pull-only condition model treats source updates as plain variable writes — zero notify cost. **effector, saga and xstate all pay for state mutation per update** (combine recomputes, reducer replaces state, assign builds a new context). The hottest implementations beat us only because they avoid push-propagation: rxjs `BehaviorSubject` + `withLatestFrom` is essentially the same lazy strategy we use natively, implemented through operators. If you take that off the table (use `combineLatest` or eager `scan`), rxjs joins us in the same range.
+🟢 Triggery's pull-only condition model treats source updates as plain variable writes — zero notify cost. **We beat effector, saga and xstate** because they all pay for state mutation per update (combine recomputes, reducer replaces state, assign builds new context). rxjs `BehaviorSubject` + `withLatestFrom` is essentially the same lazy strategy implemented through operators — replace it with `combineLatest` and rxjs joins us in the same range.
 
 [`06-lazy-conditions.bench.ts`](./bench/comparisons/06-lazy-conditions.bench.ts)
 
-## How to read this together
+### 7. Multi-event single trigger — one handler reacts to 5 event types
+Common in real apps: one logical reaction listens to many event types (any of save/format/undo/redo bumps the auto-save debouncer).
 
-| Where each library shines | |
+| Library | ops/sec | vs Triggery |
+|---|---:|---:|
+| **rxjs** | 14,450,000 | 26.5× |
+| **effector** | 3,740,000 | 6.87× |
+| **xstate** | 814,000 | 1.49× |
+| **Triggery** | 545,000 | 1.00× |
+| **redux-saga** | 569,000 | 1.05× |
+
+Mid-pack. Our `events: ['e1', ..., 'e5']` declaration is ergonomically nice (one trigger config vs `merge(...)` / array-of-types / 5 duplicated transitions), but it doesn't translate to a perf win — the same fixed dispatch overhead applies on each fire. effector's `merge` and rxjs's `merge` get optimised internally; xstate's tabular lookup is also tight.
+
+[`07-multi-event-trigger.bench.ts`](./bench/comparisons/07-multi-event-trigger.bench.ts)
+
+### 8. Toggle enable/disable — every iter flips on/off, then fires
+A trigger is bound to a feature flag that flips between renders. Each iteration: toggle, then fire. Half the fires are blocked, half pass through.
+
+| Library | ops/sec | vs Triggery |
+|---|---:|---:|
+| **rxjs** | 6,570,000 | 6.71× |
+| **Triggery** | 979,000 | 1.00× |
+| **effector** | 523,000 | 0.53× |
+| **xstate** | 462,000 | 0.47× |
+| **redux-saga** | 341,000 | 0.35× |
+
+🟢 **Triggery wins #2 overall** — first-class `enable()` / `disable()` is a boolean flip. Every other library here has to fake "off" by either tearing down the subscription (rxjs/saga), gating via a store/guard (effector/xstate), or both. rxjs's `Subject.subscribe()` is fast enough to overtake us, but **we beat effector, xstate and saga by 2-3×**.
+
+[`08-toggle.bench.ts`](./bench/comparisons/08-toggle.bench.ts)
+
+## Where each library shines
+
+| If you want… | Pick |
 |---|---|
-| Raw event throughput, one logical channel | rxjs (thin Subject) |
-| One logical channel, state machines | xstate |
-| Many tight independent channels | effector |
-| Generator-driven coordination with deep Redux | redux-saga |
+| Raw event throughput, one logical channel | **rxjs** (thin Subject + operators) |
+| One channel + state machine semantics | **xstate** (transitions, guards, formal verification) |
+| Many tight independent channels | **effector** (each event is its own pub-sub) |
+| Generator-driven coordination + deep Redux | **redux-saga** (`takeLatest`/`takeEvery` are tight) |
 | Shared dispatcher routing many event types | **Triggery** (indexed) or effector |
 | Many state sources where a handler reads few | **Triggery** (pull-only) or rxjs `BehaviorSubject`+`withLatestFrom` |
-| Async cancellation as a config knob, not as plumbing | **Triggery** or redux-saga `takeLatest` |
-| Built-in observability/inspector/cascade safety with no extra wiring | **Triggery** (nothing else in this set ships it) |
+| Async cancellation as a config knob | **Triggery** or `takeLatest` saga |
+| **First-class enable/disable** as a feature-flag primitive | **Triggery** (the only one with built-in `trigger.enable()`/`disable()`) |
+| Built-in observability/inspector/cascade safety with no wiring | **Triggery** (nothing else in this set ships it) |
 
-We're not the fastest library on the smallest possible scenario. We're competitive across the board, beat the others where indexed dispatch and pull-only conditions match the workload, and pay a fixed overhead in exchange for the inspector, scope, cascade tracking and concurrency strategies that you'd otherwise build (and pay for) yourself.
+We're not the fastest library on the smallest possible scenario. We're competitive across the board, beat the others where indexed dispatch, pull-only conditions, and first-class lifecycle match the workload, and pay a fixed overhead in exchange for the inspector, scope, cascade tracking and concurrency strategies that you'd otherwise build (and pay for) yourself.
 
 ## Reproducing
 
