@@ -1,6 +1,6 @@
 {
   "name": "@triggery/cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Command-line interface for Triggery — create, scaffold, graph, lint.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

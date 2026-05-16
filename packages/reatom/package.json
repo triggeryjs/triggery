@@ -1,6 +1,6 @@
 {
   "name": "@triggery/reatom",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Reatom adapter for Triggery — read an atom's value from a trigger condition without subscribing the host component",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

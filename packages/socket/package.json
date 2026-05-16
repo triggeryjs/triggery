@@ -1,6 +1,6 @@
 {
   "name": "@triggery/socket",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Socket adapters for Triggery — pipe socket.io events or native WebSocket messages into triggers",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

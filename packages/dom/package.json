@@ -1,6 +1,6 @@
 {
   "name": "@triggery/dom",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DOM adapters for Triggery — pipe addEventListener, ResizeObserver and IntersectionObserver into triggers",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

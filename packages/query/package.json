@@ -1,6 +1,6 @@
 {
   "name": "@triggery/query",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "TanStack Query adapter for Triggery — read cached query data from a trigger condition",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

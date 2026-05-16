@@ -1,6 +1,6 @@
 {
   "name": "@triggery/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Declarative business-logic orchestration — framework-agnostic runtime (React, Solid, Vue, or any binding you write). Zero runtime dependencies.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

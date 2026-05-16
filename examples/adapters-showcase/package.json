@@ -1,6 +1,6 @@
 {
   "name": "triggery-example-adapters-showcase",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "description": "Single Vite + React app showcasing every Triggery state and event-source adapter side by side.",
