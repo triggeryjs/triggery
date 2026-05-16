@@ -178,6 +178,28 @@ Pipe events from outside React into triggers:
 |---|---|
 | [`extensions/chrome-devtools`](./extensions/chrome-devtools) | Chrome DevTools panel — live inspector over `@triggery/devtools-bridge`. Load unpacked, see runs in a dedicated panel. |
 
+### Tooling
+
+| Package | Description |
+|---|---|
+| [`@triggery/eslint-plugin`](./packages/eslint-plugin) | ESLint 9 flat-config plugin. Eight rules covering `no-event-cascade`, `no-dynamic-id`, `hook-rules`, exhaustive-required/conditions, handler/port-count budgets, and named-hook suggestions. `recommended` and `strict` presets. |
+| [`@triggery/codemod`](./packages/codemod) | ts-morph powered codemods: `extract-trigger` (pull a useEffect block into a `*.trigger.ts` file) and `migrate-from-listener-middleware` (one trigger per RTK `startListening` registration). CLI and programmatic API. |
+| [`@triggery/cli`](./packages/cli) | `triggery create / scaffold / graph / lint`. Downloads starters from `templates/*` via giget, scaffolds new trigger files, prints the trigger graph as JSON / DOT / Markdown, and shims `eslint` with the recommended preset. |
+
+### Project starters
+
+```bash
+pnpm dlx @triggery/cli create my-chat --template vite-react
+pnpm dlx @triggery/cli create my-app --template next-app
+pnpm dlx @triggery/cli create my-rn-app --template react-native
+```
+
+| Starter | Stack |
+|---|---|
+| [`templates/vite-react`](./templates/vite-react) | Vite 7 + React 19 + Triggery. Minimal "Greet" scenario across three components. |
+| [`templates/next-app`](./templates/next-app) | Next.js 15 (App Router) + React 19 + Triggery, with a `'use client'` provider boundary. |
+| [`templates/react-native`](./templates/react-native) | Expo SDK 52 + React Native 0.76 + Triggery. Same hook-API as web, no DOM. |
+
 ## Why
 
 Business logic of the form _"when X happens, do Y if Z is true"_ is currently spread across `useEffect`, sagas, observable middleware, listener middleware and thunks. Symptoms:

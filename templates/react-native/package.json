@@ -1,0 +1,30 @@
+{
+  "name": "my-triggery-rn-app",
+  "version": "0.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "lint": "eslint .",
+    "graph": "triggery graph . --format md"
+  },
+  "dependencies": {
+    "@triggery/core": "*",
+    "@triggery/react": "*",
+    "expo": "~52.0.0",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@triggery/cli": "*",
+    "@triggery/eslint-plugin": "*",
+    "@types/react": "~18.3.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.6.0"
+  }
+}

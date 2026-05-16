@@ -1,0 +1,76 @@
+{
+  "name": "@triggery/codemod",
+  "version": "0.0.0",
+  "description": "Codemods for migrating React/Redux side-effect code to Triggery — ts-morph powered.",
+  "license": "MIT",
+  "author": "Aleksey Skhomenko",
+  "homepage": "https://triggeryjs.github.io/triggery",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triggeryjs/triggery.git",
+    "directory": "packages/codemod"
+  },
+  "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "patreon",
+      "url": "https://www.patreon.com/triggery"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
+  "keywords": [
+    "triggery",
+    "codemod",
+    "ts-morph",
+    "migration",
+    "refactor",
+    "redux",
+    "listener-middleware"
+  ],
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "triggery-codemod": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "ts-morph": "^24.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

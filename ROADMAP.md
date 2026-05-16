@@ -55,6 +55,18 @@ to ship codemods for any breaking change.
 - `@triggery/vite` — auto-discovery via virtual module + HMR.
 - `@triggery/testing` — `createTestRuntime`, `mockCondition`,
   `mockAction`, `flushMicrotasks`.
+- `@triggery/eslint-plugin` — 8 rules (`no-event-cascade`,
+  `no-dynamic-id`, `hook-rules`, `exhaustive-conditions`,
+  `exhaustive-required`, `max-handler-size`, `max-ports-per-trigger`,
+  `prefer-named-hook`) plus `recommended` and `strict` flat-config presets.
+- `@triggery/codemod` — `extract-trigger`,
+  `migrate-from-listener-middleware` via ts-morph. CLI and
+  programmatic API.
+- `@triggery/cli` — `triggery create / scaffold trigger / graph / lint`.
+  Pulls starters from `templates/*` via giget; prints the trigger
+  graph as JSON / DOT / Markdown.
+- Project starters in `templates/`: `vite-react`, `next-app`,
+  `react-native` (Expo SDK 52).
 
 ### DevTools
 - `@triggery/devtools-redux` — bridges runtime events into Redux DevTools.
@@ -75,12 +87,9 @@ These are the gating items for cutting the 1.0 release.
     analytics pipeline, realtime WebSocket sync.
 - **REPL** at `play.triggery.dev` — paste a trigger, fire events, see
   inspector output. Shareable URL.
-- **`@triggery/eslint-plugin`** — 5–7 rules: `no-event-cascade`,
-  `exhaustive-conditions`, `hook-rules`, `no-dynamic-id`,
-  `prefer-named-hook`, `max-handler-size`, `max-ports-per-trigger`.
-- **`@triggery/codemod`** — `extract-trigger`,
-  `migrate-from-listener-middleware`, `migrate-from-saga`.
-- **`@triggery/cli`** — `create-triggery`, `scaffold`, `graph`, `lint`.
+- **`migrate-from-saga` codemod** for `@triggery/codemod` — the
+  `extract-trigger` and listener-middleware migrations shipped in 0.5;
+  saga support is the remaining big migration path.
 - **Webpack / Rspack** auto-discovery plugins (port of `@triggery/vite`).
 - **TypeScript performance bench** — 100 triggers + 1000 hooks must
   compile in ≤ 20 s on M1.
@@ -120,7 +129,7 @@ These items are scoped but not started.
 | 0.2.0 | Solid + Vue bindings | **Shipped** |
 | 0.3.0 | Inspector opt-out + perf Tier 1 optimisations | **Shipped** |
 | 0.4.0 | Docs site v1 + REPL stub | Planned |
-| 0.5.0 | `@triggery/eslint-plugin` + `@triggery/cli` | Planned |
+| 0.5.0 | `@triggery/eslint-plugin` + `@triggery/codemod` + `@triggery/cli` + starters | **Shipped** |
 | 0.9.0 | RC — feature freeze + community testing window | Planned |
 | 1.0.0 | Stable | Planned |
 

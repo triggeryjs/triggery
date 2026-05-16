@@ -1,0 +1,81 @@
+{
+  "name": "@triggery/eslint-plugin",
+  "version": "0.0.0",
+  "description": "ESLint plugin for Triggery — catches mis-use of createTrigger / useEvent / useCondition / useAction, suggests named hooks, enforces handler size budgets.",
+  "license": "MIT",
+  "author": "Aleksey Skhomenko",
+  "homepage": "https://triggeryjs.github.io/triggery",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triggeryjs/triggery.git",
+    "directory": "packages/eslint-plugin"
+  },
+  "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "patreon",
+      "url": "https://www.patreon.com/triggery"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
+  "keywords": [
+    "triggery",
+    "eslint",
+    "eslint-plugin",
+    "lint",
+    "rules",
+    "flat-config",
+    "typescript"
+  ],
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "peerDependencies": {
+    "eslint": ">=9.0.0",
+    "typescript": ">=5.0.0"
+  },
+  "dependencies": {
+    "@typescript-eslint/utils": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/estree": "^1.0.6",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@typescript-eslint/rule-tester": "^8.0.0",
+    "eslint": "^9.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}
