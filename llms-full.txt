@@ -1,0 +1,369 @@
+# Triggery — full LLM context
+
+> Single-file reference bundle for LLM consumers. Combines the README pitch, architecture, API surface, packages, deployment story, performance methodology, and contribution model. Source of truth: <https://github.com/triggeryjs/triggery>. Pre-1.0; API unstable.
+
+For the short index, see [`llms.txt`](./llms.txt).
+
+---
+
+## 1. What Triggery is
+
+Triggery is a declarative, hook-first orchestration layer for React, Solid, and Vue. It expresses scenarios of the form **event → conditions → actions** as first-class objects, one file per scenario.
+
+- Not a state manager. State lives in Zustand / Redux / Jotai / MobX / signals — Triggery only consumes it through pull-only conditions.
+- Not a reactive engine. There is no incremental graph or propagation pipeline.
+- Not an event emitter. Events are typed and routed via indexed dispatch.
+- Not a state machine library. Use XState for formal state charts.
+
+What it replaces in practice: prop-drilled callbacks, ad-hoc contexts wired up just to make one component call another, side-effect logic glued to UI components, and single scenarios scattered across three or four features.
+
+---
+
+## 2. Architecture overview
+
+Each runtime is an isolated instance of the engine:
+
+```
+createRuntime() → Runtime {
+  registry:         Map<triggerId, RuntimeTrigger>
+  eventIndex:       Map<eventKey, RuntimeTrigger[]>
+  scheduler:        MicrotaskScheduler (default) | SyncScheduler
+  middleware:       ordered MiddlewareChain
+  inspector:        ring buffer of last N runs
+  conditionStores:  per-scope Map of port → getter[]
+  actionStores:     per-scope Map of port → handler stack
+}
+```
+
+Dispatching a single event runs the following pipeline:
+
+```
+fireEvent(eventKey, payload)
+  └─ middleware.onFire?            (mutate / cancel / annotate)
+  └─ scheduler.enqueue(...)        (microtask flush by default)
+  └─ for each trigger in eventIndex[eventKey]:
+       1. middleware.onBeforeMatch?
+       2. required-gate (lazy reads)        → skip with reason if missing
+       3. SnapshotProxy (memoized lazy reads)
+       4. ActionsProxy (debounce/throttle/concurrency)
+       5. AbortController + signal for async
+       6. middleware.onActionStart/onActionEnd/onError per action
+       7. inspector.record(run)
+```
+
+Invariants:
+
+- **Snapshot consistency.** Inside one run, `conditions.x` always returns the same value.
+- **No render coupling.** `fireEvent` does not trigger React/Solid/Vue re-renders by itself.
+- **No global eval.** Triggers are only visited via the indexed lookup for the fired `eventKey`.
+
+---
+
+## 3. The trigger file
+
+The single source of a scenario looks like this:
+
+```ts
+// triggers/message.trigger.ts
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events: { 'new-message': { author: string; text: string; channelId: string } };
+  conditions: {
+    user: { id: string; name: string };
+    settings: { sound: boolean; notifications: boolean };
+    activeChannelId: string | null;
+  };
+  actions: { showToast: { title: string; body: string }; playSound: 'beep' | 'mod-alert' };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user', 'settings'],
+  handler({ event, conditions, actions, check }) {
+    if (!conditions.user || !conditions.settings) return;
+    if (conditions.activeChannelId === event.payload.channelId) return;
+    if (event.payload.author === conditions.user.name) return;
+    if (!check.is('settings', (s) => s.notifications)) return;
+
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+
+    if (check.is('settings', (s) => s.sound)) {
+      actions.playSound?.('beep');
+    }
+  },
+});
+```
+
+Six files for the whole feature: one trigger + five port providers. The trigger reads like a spec.
+
+---
+
+## 4. Hooks API (identical across framework bindings)
+
+### `useEvent(trigger, eventName)`
+
+Returns a `(payload) => void` fire function. Calling it enqueues an event under the active runtime's scheduler.
+
+### `useCondition(trigger, conditionName, getter, deps?)`
+
+Registers a pull-only getter. The runtime calls the getter at fire time, never push-subscribes. Re-renders of the host component do not invalidate the condition unless `deps` changed.
+
+### `useAction(trigger, actionName, handler)`
+
+Registers an action handler. Last-mount-wins with a DEV warn-once when colliding.
+
+### `useInlineTrigger(config)`
+
+Inline single-file trigger for ad-hoc reactions inside a component:
+
+```tsx
+useInlineTrigger({
+  on: 'analytics:button-click',
+  do: (payload) => track('cta', payload),
+});
+```
+
+### `useInspectHistory(trigger?)` (React/Solid/Vue)
+
+Subscribes to the inspector ring buffer. Returns recent runs filtered to a specific trigger or to the whole runtime.
+
+### `<TriggerRuntimeProvider runtime={runtime}>`
+
+Wraps the subtree in an explicit runtime. Required when not using a globally-default runtime.
+
+### `<TriggerScope id="chat">`
+
+Scope-discriminates port registrations. Only triggers declared with the same `scope` see registrations inside.
+
+---
+
+## 5. Action options and concurrency
+
+Chainable wrappers per call:
+
+```ts
+actions.throttle(5000).playSound('mod-alert');
+actions.debounce(1000).showToast({ title, body });
+actions.queue.fetchUser(id, { concurrency: 'queue' });
+```
+
+Concurrency strategies:
+
+- `sync` — fire-and-forget; never aborts.
+- `take-latest` *(default for async)* — abort the previous run via `AbortController.abort('superseded-by-latest')`.
+- `take-every` — let all runs proceed.
+- `take-first` — drop subsequent runs while one is in flight.
+- `queue` — serialize runs.
+- `exhaust` — alias for `take-first`.
+
+`take-latest` aborts on HMR (`abort('hmr')`) and on runtime/scope teardown.
+
+---
+
+## 6. Schedulers
+
+Built-in:
+
+- `microtask` *(default)*. Coalesces multiple `fire`s in the same tick.
+- `sync`. Immediate dispatch; useful in `runtime.fireSync(eventKey, payload)` for tests.
+
+V1 will add `animation-frame` and `idle`. V2 — `priority` over React's scheduler.
+
+---
+
+## 7. Runtime options
+
+```ts
+createRuntime({
+  middleware: [reduxDevtools(), sentry()],
+  maxCascadeDepth: 3,
+  inspectorBufferSize: 200,
+  inspector: false | true | { dev?: boolean; prod?: boolean },
+});
+```
+
+Inspector defaults: enabled in DEV, disabled in PROD (via `process.env.NODE_ENV` check at runtime construction). The object form lets you override one environment without changing the other. Setting `inspector: false` removes ring-buffer allocation and inspector snapshot work from the hot path.
+
+---
+
+## 8. Cascade safety
+
+Cascade (an action that fires another trigger's event) is allowed with hard guarantees:
+
+- `maxCascadeDepth` defaults to 3. Overflow → `onCascade('overflow')` → DEV throw, prod skip with the cascade tree visible in the inspector.
+- Cycle detection: every top-level fire creates a `cascadeId` and a `Set<triggerId> visited`. Re-entering `visited` → `onCascade('cycle')`.
+- `createRuntime({ cascade: { maxDepth, onOverflow, onCycle } })` lets you tune behaviour.
+
+---
+
+## 9. Ownership and scopes
+
+Default model: **last-mount-wins** with a DEV warn-once per `(port, scope)` collision.
+
+Opt-in alternatives:
+
+- `useCondition('user', getUser, { strategy: 'stackable', merge })` — custom merge.
+- `useCondition('user', getUser, { strategy: 'first-wins' })` — ignore later registrations.
+
+Scope segregation via `<TriggerScope id="chat">`. Full isolation (separate inspector + scheduler) via `createRuntime()` + `<TriggerRuntimeProvider>`.
+
+---
+
+## 10. SSR / RSC behaviour
+
+- On the server, `useEvent` / `useCondition` / `useAction` return no-op functions. `fire` does nothing.
+- Hydration mismatch is impossible because no DOM-side state is read.
+- A real server runtime (`@triggery/server`) lands in V2.
+
+---
+
+## 11. Lifecycle and edge cases
+
+| Scenario | Behaviour |
+|---|---|
+| React StrictMode double-mount | Refcount per `(scope, instance)`. `unregister` decrements; deletes at zero. |
+| Suspense fallback / Offscreen | Required condition not yet provided → handler skipped with `pending-condition`. |
+| HMR | Module version stored in registry. On HMR, in-flight runs aborted with `'hmr'`. New version replaces handler. Inspector preserves history. |
+| React Native | Works out of the box. No DOM adapters needed. |
+| Multi-tab | Opt-in via `@triggery/broadcast` (V2). |
+
+---
+
+## 12. Packages
+
+### Core
+
+- `@triggery/core` — the runtime + `createTrigger`. Zero deps.
+- `@triggery/testing` — `createTestRuntime`, `mockCondition`, `mockAction`, `flushMicrotasks`. For unit tests without rendering.
+- `@triggery/vite` — Vite plugin: auto-imports every `*.trigger.ts` via a virtual module + HMR helpers.
+
+### Framework bindings
+
+- `@triggery/react` — React 18/19 bindings.
+- `@triggery/solid` — SolidJS 1.x bindings.
+- `@triggery/vue` — Vue 3 bindings.
+
+### State adapters
+
+All adapters expose a `use*Condition(trigger, name, store, selector?)` signature and **never subscribe the host component to updates** — they read via `getState()` / `peek()` / `.value` at fire time.
+
+- `@triggery/zustand` — Zustand stores.
+- `@triggery/redux` — Redux stores (any reducer flavour: vanilla, RTK, redux-thunk, redux-saga).
+- `@triggery/jotai` — Jotai atoms.
+- `@triggery/mobx` — MobX observables.
+- `@triggery/reatom` — Reatom v1000+ (callable atoms).
+- `@triggery/signals` — `@preact/signals-core`, `alien-signals`, any `peek()`/`.value` signal.
+- `@triggery/query` — TanStack Query cache; reads `queryCache.find()` lazily.
+
+### Event-source adapters
+
+- `@triggery/dom` — `useDomEvent`, `useResizeObserver`, `useIntersectionObserver`.
+- `@triggery/socket` — `useSocketIoEvent` (socket.io-client) and `useWebSocketEvent` (native WebSocket).
+
+### DevTools
+
+- `@triggery/devtools-redux` — middleware that streams runtime events into the Redux DevTools browser extension. Action names: `triggery/<trigger-id>/fire`, `triggery/<trigger-id>/action/<action-name>`.
+- `@triggery/devtools-panel` — drop-in React components for in-app inspection: `<InspectorView>`, `<TriggerSnapshotView>`.
+- `@triggery/devtools-bridge` — page-side bridge for external inspectors.
+- `extensions/chrome-devtools` — Chrome DevTools panel over `@triggery/devtools-bridge`. Load unpacked.
+
+---
+
+## 13. Examples
+
+The repo ships at least one fully runnable example:
+
+- [`examples/vite-react-counter`](https://github.com/triggeryjs/triggery/tree/main/examples/vite-react-counter) — minimal Vite + React + Triggery scenario. Open directly in StackBlitz: <https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/vite-react-counter>.
+
+More examples (notifications, modal stack, onboarding, analytics, ws-realtime) land as part of Stage 6 of the roadmap.
+
+---
+
+## 14. Performance methodology
+
+Benchmarks live under [`benchmarks/`](https://github.com/triggeryjs/triggery/tree/main/benchmarks). Two suites:
+
+- **`benchmarks/bench/core/`** — Triggery's own dispatch hot path. Run under CodSpeed `simulation` mode (Valgrind cycle counting) for maximum regression sensitivity. Pure JS, no system calls.
+- **`benchmarks/bench/vs/`** — ten side-by-side scenarios against effector, rxjs, redux-saga, xstate, reatom, mobx. Run under CodSpeed `walltime` mode because the comparison libraries make system calls (RxJS schedulers, saga setTimeout, MobX/Reatom reactivity graphs) that instrumentation cannot consistently account for.
+
+Local reproduction: `pnpm bench`. Live dashboard: <https://codspeed.io/triggeryjs/triggery>. Full breakdown plus per-scenario analysis: [`benchmarks/COMPARISONS.md`](https://github.com/triggeryjs/triggery/blob/main/benchmarks/COMPARISONS.md).
+
+---
+
+## 15. Tooling
+
+- TypeScript strict, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`, ESM-only.
+- Biome for lint + format.
+- Vitest 4.x for tests.
+- tsup for ESM-only builds, `exports` field is the source of truth for entry points.
+- Changesets for versioning + npm Trusted Publishers (OIDC) for publishing with provenance.
+
+---
+
+## 16. Project layout
+
+```
+triggery/
+├── packages/
+│   ├── core/                    # Runtime + createTrigger
+│   ├── react/  solid/  vue/     # Framework bindings (same API)
+│   ├── testing/                 # createTestRuntime, mockCondition, mockAction
+│   ├── vite/                    # Vite plugin (auto-discovery + HMR)
+│   ├── zustand/ redux/ jotai/ mobx/ reatom/ signals/ query/  # State adapters
+│   ├── dom/    socket/          # Event-source adapters
+│   └── devtools-redux/  devtools-bridge/  devtools-panel/
+├── extensions/
+│   └── chrome-devtools/         # DevTools panel extension
+├── examples/
+│   └── vite-react-counter/      # Minimal Vite+React example
+├── benchmarks/
+│   ├── bench/core/              # Triggery hot-path benches (simulation mode)
+│   └── bench/vs/                # Side-by-side comparisons (walltime mode)
+└── .github/workflows/           # CI, bench, release, security, contributors
+```
+
+---
+
+## 17. Stability and roadmap
+
+Pre-1.0. Phases planned (full text: [ROADMAP.md](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md)):
+
+1. Foundation (done).
+2. MVP core (done).
+3. DX wrapping (done — concurrency, cascade, scope, testing kit).
+4. Auto-discovery + DevTools (done — Vite plugin, redux-devtools, devtools-panel, chrome-extension).
+5. State + event adapters (done — 9 production-ready packages).
+6. Tooling (Stage 5 of roadmap; ESLint plugin, codemod, CLI).
+7. Docs + canonical examples.
+8. RC → 1.0.
+
+Post-1.0: `@triggery/devtools-replay` (record/replay), `@triggery/sentry`, `@triggery/otel`, `@triggery/server` (Node/Edge runtime), opt-in reactive conditions, VSCode extension, Webpack/Rspack plugins.
+
+---
+
+## 18. Contribution model
+
+Read [`CONTRIBUTING.md`](https://github.com/triggeryjs/triggery/blob/main/CONTRIBUTING.md). Highlights:
+
+- Conventional Commits format. Subject ≤ 72 chars, imperative, lowercase, no period.
+- One logical change per PR. `pnpm lint && pnpm typecheck && pnpm test && pnpm build` must be green before pushing.
+- Changeset required for any change to `packages/*`. `pnpm changeset` walks you through it.
+- RFCs for changes to public API surface / runtime semantics. Open an RFC issue and get ≥ 1 maintainer approval before writing code.
+- No AI-attribution trailers in commits or PRs. Attribute to humans.
+
+---
+
+## 19. Reporting issues
+
+- **Bug** → <https://github.com/triggeryjs/triggery/issues/new?template=bug_report.yml>.
+- **Feature** → <https://github.com/triggeryjs/triggery/issues/new?template=feature_request.yml>.
+- **RFC** → <https://github.com/triggeryjs/triggery/issues/new?template=rfc.yml>.
+- **Security** → private channel via <https://github.com/triggeryjs/triggery/security/advisories/new> or email `a@skhom.ru`. See [SECURITY.md](https://github.com/triggeryjs/triggery/blob/main/SECURITY.md).
+- **Question** → <https://github.com/triggeryjs/triggery/discussions/new?category=q-a>.
+
+---
+
+## 20. License and funding
+
+- MIT © Aleksey Skhomenko.
+- Funding: Patreon (international) and Boosty (RU). See [`.github/FUNDING.yml`](https://github.com/triggeryjs/triggery/blob/main/.github/FUNDING.yml).

@@ -8,6 +8,7 @@
 
 [![CI](https://github.com/triggeryjs/triggery/actions/workflows/ci.yml/badge.svg)](https://github.com/triggeryjs/triggery/actions/workflows/ci.yml)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/triggeryjs/triggery?utm_source=badge)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/triggeryjs/triggery)
 [![npm version](https://img.shields.io/npm/v/@triggery/core?label=%40triggery%2Fcore)](https://www.npmjs.com/package/@triggery/core)
 [![Bundle size](https://img.shields.io/bundlejs/size/@triggery/core?label=core%20gzip)](https://bundlejs.com/?q=%40triggery%2Fcore)
 [![npm downloads](https://img.shields.io/npm/dm/@triggery/core?label=downloads)](https://www.npmjs.com/package/@triggery/core)
@@ -108,6 +109,13 @@ Six files, one scenario, no prop drilling, no `useEffect` chains, no central thu
 ```bash
 pnpm add @triggery/core @triggery/react
 ```
+
+## Try it in 5 seconds
+
+A runnable Vite + React example lives in [`examples/vite-react-counter`](./examples/vite-react-counter). Open it without cloning:
+
+[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/vite-react-counter)
+[![Open in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/triggeryjs/triggery/main?path=%2Fexamples%2Fvite-react-counter)
 
 **Try it without installing:**
 
@@ -254,6 +262,13 @@ Triggery is built in the open and is free under the MIT licence. If your team re
 > GitHub Sponsors is intentionally omitted — it is not available to the maintainer's region. Patreon is the international channel.
 
 Corporate sponsors get a logo here once the programme launches. Reach out at `a@skhom.ru` with subject `[triggery sponsorship]`.
+
+## Contributors
+
+<!-- readme-contributors-start -->
+<!-- readme-contributors-end -->
+
+Pull requests, bug reports, and design feedback are all welcome — see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup, workflow, and the RFC process for larger proposals. The contributor list above is refreshed automatically by the [`contributors`](./.github/workflows/contributors.yml) workflow.
 
 ## License
 
