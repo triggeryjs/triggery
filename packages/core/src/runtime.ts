@@ -62,6 +62,8 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       config,
       conditions: new Map(),
       actions: new Map(),
+      conditionStacks: new Map(),
+      actionStacks: new Map(),
       enabled: true,
       inFlight: undefined,
     };
@@ -81,22 +83,48 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     };
   };
 
-  // ─── conditions ────────────────────────────────────────────────────────
-  const registerCondition = (
+  // ─── conditions / actions ─────────────────────────────────────────────
+  //
+  // Conditions and actions are stored as stacks. The last registration wins
+  // (top of stack), so React StrictMode double-mount, multiple providers and
+  // overlapping registrations all behave deterministically.
+  //
+  // The Map<name, fn> on the trigger always mirrors the top of the stack so
+  // that `dispatch.ts` stays simple (no stack inspection on the hot path).
+
+  const registerStacked = (
     triggerId: string,
     name: string,
-    getter: ConditionGetter,
+    fn: unknown,
+    label: 'condition' | 'action',
   ): RegistrationToken => {
     const trigger = triggers.get(triggerId);
     if (!trigger) {
       if (isDev()) {
         // eslint-disable-next-line no-console -- DEV warn
-        console.warn(`[triggery] registerCondition: trigger "${triggerId}" not found`);
+        console.warn(
+          `[triggery] register${label === 'condition' ? 'Condition' : 'Action'}: trigger "${triggerId}" not found`,
+        );
       }
       return { unregister() {} };
     }
-    const prev = trigger.conditions.get(name);
-    trigger.conditions.set(name, getter);
+    const stacks: Map<string, unknown[]> =
+      label === 'condition'
+        ? (trigger.conditionStacks as unknown as Map<string, unknown[]>)
+        : (trigger.actionStacks as unknown as Map<string, unknown[]>);
+    const mirror: Map<string, unknown> =
+      label === 'condition'
+        ? (trigger.conditions as unknown as Map<string, unknown>)
+        : (trigger.actions as unknown as Map<string, unknown>);
+
+    let stack = stacks.get(name);
+    if (!stack) {
+      stack = [];
+      stacks.set(name, stack);
+    }
+    stack.push(fn);
+    mirror.set(name, fn);
+
     let unregistered = false;
     return {
       unregister() {
@@ -104,44 +132,44 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
         unregistered = true;
         const t = triggers.get(triggerId);
         if (!t) return;
-        if (t.conditions.get(name) === getter) {
-          if (prev !== undefined) t.conditions.set(name, prev);
-          else t.conditions.delete(name);
+        const liveStacks: Map<string, unknown[]> =
+          label === 'condition'
+            ? (t.conditionStacks as unknown as Map<string, unknown[]>)
+            : (t.actionStacks as unknown as Map<string, unknown[]>);
+        const liveMirror: Map<string, unknown> =
+          label === 'condition'
+            ? (t.conditions as unknown as Map<string, unknown>)
+            : (t.actions as unknown as Map<string, unknown>);
+        const liveStack = liveStacks.get(name);
+        if (!liveStack) return;
+        // Remove the most-recent occurrence of this fn (StrictMode-safe).
+        for (let i = liveStack.length - 1; i >= 0; i--) {
+          if (liveStack[i] === fn) {
+            liveStack.splice(i, 1);
+            break;
+          }
+        }
+        if (liveStack.length === 0) {
+          liveStacks.delete(name);
+          liveMirror.delete(name);
+        } else {
+          liveMirror.set(name, liveStack[liveStack.length - 1]);
         }
       },
     };
   };
 
-  // ─── actions ───────────────────────────────────────────────────────────
+  const registerCondition = (
+    triggerId: string,
+    name: string,
+    getter: ConditionGetter,
+  ): RegistrationToken => registerStacked(triggerId, name, getter, 'condition');
+
   const registerAction = (
     triggerId: string,
     name: string,
     handler: UntypedActionFn,
-  ): RegistrationToken => {
-    const trigger = triggers.get(triggerId);
-    if (!trigger) {
-      if (isDev()) {
-        // eslint-disable-next-line no-console -- DEV warn
-        console.warn(`[triggery] registerAction: trigger "${triggerId}" not found`);
-      }
-      return { unregister() {} };
-    }
-    const prev = trigger.actions.get(name);
-    trigger.actions.set(name, handler);
-    let unregistered = false;
-    return {
-      unregister() {
-        if (unregistered) return;
-        unregistered = true;
-        const t = triggers.get(triggerId);
-        if (!t) return;
-        if (t.actions.get(name) === handler) {
-          if (prev !== undefined) t.actions.set(name, prev);
-          else t.actions.delete(name);
-        }
-      },
-    };
-  };
+  ): RegistrationToken => registerStacked(triggerId, name, handler, 'action');
 
   // ─── dispatch ──────────────────────────────────────────────────────────
   const dispatch = (fireCtx: FireContext) => {

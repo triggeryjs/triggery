@@ -29,8 +29,13 @@ function needsTiming(middleware: readonly Middleware[]): boolean {
 
 export type RegisteredTrigger = {
   readonly config: InternalTriggerConfig;
+  /** Top-of-stack mirror of `conditionStacks` — kept in sync by runtime so dispatch reads a flat Map. */
   readonly conditions: Map<string, ConditionGetter>;
+  /** Top-of-stack mirror of `actionStacks`. */
   readonly actions: Map<string, UntypedActionFn>;
+  /** Full registration stacks (last-mount-wins, StrictMode-safe). @internal */
+  readonly conditionStacks: Map<string, ConditionGetter[]>;
+  readonly actionStacks: Map<string, UntypedActionFn[]>;
   enabled: boolean;
   inFlight: AbortController | undefined;
 };

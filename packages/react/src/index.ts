@@ -14,7 +14,12 @@
 
 export { TriggerRuntimeContext, useRuntime } from './context.ts';
 export { useAction, useCondition, useEvent, useInspect } from './hooks.ts';
+export { createNamedHooks } from './namedHooks.ts';
 export {
   TriggerRuntimeProvider,
   type TriggerRuntimeProviderProps,
 } from './TriggerRuntimeProvider.tsx';
+export {
+  type UseInlineTriggerConfig,
+  useInlineTrigger,
+} from './useInlineTrigger.ts';
