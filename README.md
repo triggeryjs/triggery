@@ -141,6 +141,21 @@ Measured on CodSpeed CPU-simulation runners (deterministic cycle counts, not wal
 
 Bench source: [`benchmarks/bench/dispatch.bench.ts`](./benchmarks/bench/dispatch.bench.ts). Live dashboard: [codspeed.io/triggeryjs/triggery](https://codspeed.io/triggeryjs/triggery).
 
+### vs effector / rxjs / redux-saga / xstate
+
+Four scenarios bench-ed against four neighbour libraries. Headline numbers (local M1 Pro, ops/sec):
+
+| Scenario | Triggery | effector | rxjs | redux-saga | xstate |
+|---|---:|---:|---:|---:|---:|
+| Plain dispatch | 505k | 358k | 16.4M | 442k | 614k |
+| Conditional (50% pass) | 516k | 565k | 14.3M | 456k | 999k |
+| Cascade A → B | 249k | 343k | 9.5M | 206k | 423k |
+| Take-latest | 307k | 228k | 4.0M | 383k | 50k |
+
+rxjs wins raw throughput (thin `Subject` + operators, no graph/observability/cascade). Triggery is mid-pack on simple scenarios, beats effector + xstate on take-latest (we have built-in concurrency strategies), and trades modest dispatch overhead for built-in inspector + cascade tracking + scope gating.
+
+Full methodology, idiomatic implementations of each library, and analysis: [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
+
 ## Status
 
 Pre-MVP (Phase 1). Roadmap to 1.0 is tracked in the planning doc.
