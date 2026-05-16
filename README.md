@@ -143,18 +143,18 @@ Bench source: [`benchmarks/bench/dispatch.bench.ts`](./benchmarks/bench/dispatch
 
 ### vs effector / rxjs / redux-saga / xstate
 
-Four scenarios bench-ed against four neighbour libraries. Headline numbers (local M1 Pro, ops/sec):
+Six scenarios bench-ed against four neighbour libraries. Headline numbers (local M1 Pro, ops/sec; **bold = winner per row**):
 
 | Scenario | Triggery | effector | rxjs | redux-saga | xstate |
 |---|---:|---:|---:|---:|---:|
-| Plain dispatch | 505k | 358k | 16.4M | 442k | 614k |
-| Conditional (50% pass) | 516k | 565k | 14.3M | 456k | 999k |
-| Cascade A → B | 249k | 343k | 9.5M | 206k | 423k |
-| Take-latest | 307k | 228k | 4.0M | 383k | 50k |
+| Plain dispatch | 505k | 358k | **16.4M** | 442k | 614k |
+| Conditional (50% pass) | 516k | 565k | **14.3M** | 456k | 999k |
+| Cascade A → B | 249k | 343k | **9.5M** | 206k | 423k |
+| Take-latest cancellation | 307k | 228k | **4.0M** | 383k | 50k |
+| **Sparse bus (100 types, fire 1)** | 544k | **5.18M** | 286k | 251k | 757k |
+| **Lazy conditions (5 sources, read 1)** | 517k | 212k | **2.57M** | 302k | 127k |
 
-rxjs wins raw throughput (thin `Subject` + operators, no graph/observability/cascade). Triggery is mid-pack on simple scenarios, beats effector + xstate on take-latest (we have built-in concurrency strategies), and trades modest dispatch overhead for built-in inspector + cascade tracking + scope gating.
-
-Full methodology, idiomatic implementations of each library, and analysis: [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
+rxjs wins raw throughput (thin `Subject` + operators, no graph/observability/cascade). **Triggery beats rxjs + redux-saga in scenario 5** (indexed dispatch vs O(N) filter chain) and **beats effector / saga / xstate in scenario 6** (pull-only conditions vs eager state propagation). We trade ~1.5-2 µs of fixed overhead per fire for built-in inspector, cascade safety, scope gating, and concurrency strategies — see [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md) for the full breakdown and idiomatic implementations.
 
 ## Status
 

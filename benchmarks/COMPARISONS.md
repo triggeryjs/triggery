@@ -7,18 +7,26 @@ Side-by-side micro-benchmarks of the dispatch hot path against four libraries th
 ## Methodology
 
 * Same business outcome per scenario; each library implemented idiomatically (effector via `sample`, rxjs via `pipe`, saga via `take*`, xstate via transitions/invoke).
-* Bench fn does one dispatch per iteration. Setup happens once per `describe`.
+* Bench fn does one logical unit per iteration. Setup happens once per `describe`.
 * Counter is incremented in the handler so the work isn't optimised away.
 * Source: `benchmarks/bench/comparisons/*.bench.ts`.
 
+## Why rxjs is so fast on simple scenarios
+
+`Subject.next(value)` is essentially a for-loop over observers. Nothing else. When you compare against Triggery on a single subscriber, rxjs is 30× faster because for every fire Triggery also runs the inspector buffer, snapshot proxy, cascade context, abort-controller bookkeeping, and middleware chain — all features you didn't ask for at that call site but did get from the library design.
+
+That's the trade. rxjs is a thin pub-sub; everything else (state, observability, cancellation) you build yourself. Triggery puts the observability + cascade safety + concurrency strategies on the dispatch hot path so you don't have to.
+
+When scenarios pull in the things rxjs lacks (state, structured routing, scaling to many event types) the gap closes or flips. Scenarios 5 and 6 below pick examples where the library design — indexed dispatch and pull-only conditions — pays off.
+
 ## Results
 
-Local M1 Pro, Node 22, vitest 4.1, single-threaded. RME (relative margin of error) shown to gauge noise — anything &lt; 5% is solid. CodSpeed gives the Linux-Valgrind deterministic counterpart.
+Local M1 Pro, Node 22, vitest 4.1, single-threaded. RME &lt; 5% on most rows; redux-saga is consistently noisier (~10%).
 
 ### 1. Plain dispatch — event → action
 One subscriber, one action, no conditions.
 
-| Library | ops/sec | relative to Triggery |
+| Library | ops/sec | vs Triggery |
 |---|---:|---:|
 | **rxjs** | 16,400,000 | 32.5× |
 | **xstate** | 614,000 | 1.22× |
@@ -31,7 +39,7 @@ One subscriber, one action, no conditions.
 ### 2. Conditional dispatch — guard on every fire
 Toggled boolean guard, 50% of events pass.
 
-| Library | ops/sec | relative to Triggery |
+| Library | ops/sec | vs Triggery |
 |---|---:|---:|
 | **rxjs** | 14,300,000 | 27.8× |
 | **xstate** | 999,000 | 1.94× |
@@ -44,7 +52,7 @@ Toggled boolean guard, 50% of events pass.
 ### 3. Cascade — event A → handler → event B → handler
 Both events fire synchronously in the same tick; counter is bumped only by B's handler.
 
-| Library | ops/sec | relative to Triggery |
+| Library | ops/sec | vs Triggery |
 |---|---:|---:|
 | **rxjs** | 9,450,000 | 38.0× |
 | **xstate** | 423,000 | 1.70× |
@@ -57,7 +65,7 @@ Both events fire synchronously in the same tick; counter is bumped only by B's h
 ### 4. Take-latest — every fire cancels prior in-flight async work
 Async handler awaits one microtask, then checks the cancel signal.
 
-| Library | ops/sec | relative to Triggery |
+| Library | ops/sec | vs Triggery |
 |---|---:|---:|
 | **rxjs** | 4,010,000 | 13.1× |
 | **redux-saga** | 383,000 | 1.25× |
@@ -67,25 +75,50 @@ Async handler awaits one microtask, then checks the cancel signal.
 
 [`04-take-latest.bench.ts`](./bench/comparisons/04-take-latest.bench.ts)
 
-## How to read this
+### 5. Sparse event bus — 100 event types, fire targets one
+"Shared dispatcher routes typed events to typed handlers" — common in large apps. The fire hits one channel out of 100.
 
-**rxjs is fastest across the board.** It's a thin `Subject` + operator chain, no graph, no observability, no cascade tracking. If you want maximum throughput and accept the rxjs mental model, you'll beat every framework here.
+| Library | ops/sec | vs Triggery |
+|---|---:|---:|
+| **effector** | 5,180,000 | 9.51× |
+| **xstate** | 757,000 | 1.39× |
+| **Triggery** | 544,000 | 1.00× |
+| **rxjs** | 286,000 | 0.53× |
+| **redux-saga** | 251,000 | 0.46× |
 
-**Triggery sits middle-of-pack on the simple scenarios.** Within ~25% of effector, xstate, redux-saga. The overhead we pay vs a plain Subject is mostly observability (inspector buffer, snapshot proxy) and cascade tracking (visited chain, depth check) on every fire. Those are paid features — you get them whether or not you opt in.
+This is where indexed dispatch matters. effector and xstate beat us because their per-event primitive is even tighter (each `createEvent` is its own minimal pub-sub; xstate transitions are a tabular lookup). But **we beat rxjs and redux-saga** by ~2× — the shared-bus + filter-chain pattern (or saga's middleware + 100 `takeEvery`) pays O(N) per fire, while our `Map<eventName, Set<Trigger>>` stays O(1). If you've ever felt your rxjs event bus get sluggish as you added more channels, this is why.
 
-**Take-latest is where built-in concurrency strategies pull weight.** We beat effector (which needs a manual AbortController wrapper) and xstate (which leans on `invoke` re-entry — heavy). redux-saga's dedicated `takeLatest` effect is a hair faster than ours. rxjs's `switchMap` is the king here.
+[`05-sparse-bus.bench.ts`](./bench/comparisons/05-sparse-bus.bench.ts)
 
-**Cascade is our weak spot.** We pay for cycle detection + depth guard on every nested fire. effector's `forward` is just a synchronous edge, so it's ~40% faster. If you don't use cascade, the cost is still there in dispatch — a candidate for V1.1 to make optional.
+### 6. Lazy conditions — 5 sources update each iter, handler reads 1
+The runtime knows about 5 sources of state but the trigger only needs one of them in this branch of logic. Sources update on every iteration; the handler reads source #1.
 
-## When each library wins
+| Library | ops/sec | vs Triggery |
+|---|---:|---:|
+| **rxjs** | 2,570,000 | 4.98× |
+| **Triggery** | 517,000 | 1.00× |
+| **redux-saga** | 302,000 | 0.58× |
+| **effector** | 212,000 | 0.41× |
+| **xstate** | 127,000 | 0.25× |
 
-| If you want… | Pick |
+Triggery's pull-only condition model treats source updates as plain variable writes — zero notify cost. **effector, saga and xstate all pay for state mutation per update** (combine recomputes, reducer replaces state, assign builds a new context). The hottest implementations beat us only because they avoid push-propagation: rxjs `BehaviorSubject` + `withLatestFrom` is essentially the same lazy strategy we use natively, implemented through operators. If you take that off the table (use `combineLatest` or eager `scan`), rxjs joins us in the same range.
+
+[`06-lazy-conditions.bench.ts`](./bench/comparisons/06-lazy-conditions.bench.ts)
+
+## How to read this together
+
+| Where each library shines | |
 |---|---|
-| Maximum raw event throughput, FRP mental model | **rxjs** |
-| Hard state machines, statecharts, formal verification | **xstate** |
-| Generator-driven side-effects, deep Redux integration | **redux-saga** |
-| Reactive stores + events + effects as a unified graph | **effector** |
-| Hook-first business logic in one file with built-in observability, scoping, cascade safety, concurrency strategies, all working together | **Triggery** |
+| Raw event throughput, one logical channel | rxjs (thin Subject) |
+| One logical channel, state machines | xstate |
+| Many tight independent channels | effector |
+| Generator-driven coordination with deep Redux | redux-saga |
+| Shared dispatcher routing many event types | **Triggery** (indexed) or effector |
+| Many state sources where a handler reads few | **Triggery** (pull-only) or rxjs `BehaviorSubject`+`withLatestFrom` |
+| Async cancellation as a config knob, not as plumbing | **Triggery** or redux-saga `takeLatest` |
+| Built-in observability/inspector/cascade safety with no extra wiring | **Triggery** (nothing else in this set ships it) |
+
+We're not the fastest library on the smallest possible scenario. We're competitive across the board, beat the others where indexed dispatch and pull-only conditions match the workload, and pay a fixed overhead in exchange for the inspector, scope, cascade tracking and concurrency strategies that you'd otherwise build (and pay for) yourself.
 
 ## Reproducing
 
