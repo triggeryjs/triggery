@@ -15,11 +15,17 @@ const registry = new Set<{ cb: Cb; observer: IntersectionObserver }>();
 
 beforeAll(() => {
   class FakeIO {
-    constructor(private readonly cb: Cb) {}
+    readonly root: Element | Document | null = null;
+    readonly rootMargin: string = '0px';
+    readonly thresholds: readonly number[] = [0];
+    constructor(
+      private readonly cb: Cb,
+      _init?: IntersectionObserverInit,
+    ) {}
     observe(_el: Element): void {
       registry.add({ cb: this.cb, observer: this as unknown as IntersectionObserver });
     }
-    unobserve(): void {}
+    unobserve(_el: Element): void {}
     disconnect(): void {
       for (const entry of registry) {
         if (entry.observer === (this as unknown as IntersectionObserver)) registry.delete(entry);
