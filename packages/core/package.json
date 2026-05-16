@@ -1,7 +1,7 @@
 {
   "name": "@triggery/core",
-  "version": "0.1.0",
-  "description": "Declarative business-logic orchestration \u2014 framework-agnostic runtime (React, Solid, Vue, or any binding you write). Zero runtime dependencies.",
+  "version": "0.1.1",
+  "description": "Declarative business-logic orchestration — framework-agnostic runtime (React, Solid, Vue, or any binding you write). Zero runtime dependencies.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",

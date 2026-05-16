@@ -1,7 +1,7 @@
 {
   "name": "@triggery/signals",
-  "version": "0.1.0",
-  "description": "Signals adapter for Triggery \u2014 read a signal's value from a trigger condition without engaging signal-tracking on the host component",
+  "version": "0.1.1",
+  "description": "Signals adapter for Triggery — read a signal's value from a trigger condition without engaging signal-tracking on the host component",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
