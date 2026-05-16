@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a bug in Triggery
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem, including steps to reproduce.
+      placeholder: 'I called createTrigger with X, expected Y, got Z'
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Triggery version
+      placeholder: '@triggery/core 0.0.1, @triggery/react 0.0.1'
+    validations:
+      required: true
+
+  - type: input
+    id: react-version
+    attributes:
+      label: React version
+      placeholder: '19.2.0'
+
+  - type: input
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: StackBlitz / CodeSandbox link strongly preferred
+      placeholder: 'https://stackblitz.com/edit/...'
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / error
+      render: shell

@@ -1,0 +1,59 @@
+{
+  "name": "@triggery/core",
+  "version": "0.0.0",
+  "description": "Declarative business-logic orchestration for React — core runtime",
+  "license": "MIT",
+  "author": "Aleksey Skhomenko",
+  "homepage": "https://triggeryjs.github.io/triggery",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triggeryjs/triggery.git",
+    "directory": "packages/core"
+  },
+  "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "keywords": [
+    "react",
+    "triggers",
+    "events",
+    "orchestration",
+    "business-logic",
+    "rule-engine",
+    "side-effects"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}

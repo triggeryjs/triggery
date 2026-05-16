@@ -1,0 +1,61 @@
+{
+  "name": "@triggery/testing",
+  "version": "0.0.0",
+  "description": "Testing utilities for Triggery — isolated runtime, mock conditions/actions, fake scheduler",
+  "license": "MIT",
+  "author": "Aleksey Skhomenko",
+  "homepage": "https://triggeryjs.github.io/triggery",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triggeryjs/triggery.git",
+    "directory": "packages/testing"
+  },
+  "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "keywords": [
+    "triggery",
+    "testing",
+    "vitest",
+    "jest",
+    "mocking"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest --passWithNoTests",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "peerDependencies": {
+    "@triggery/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@triggery/core": "workspace:*",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6"
+  }
+}
