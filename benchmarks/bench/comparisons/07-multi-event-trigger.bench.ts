@@ -39,7 +39,7 @@ describe('comparison — one trigger reacts to 5 event types (rotating fires)', 
     return name;
   };
 
-  // ─── Triggery (one trigger, 5 events) ────────────────────────────────────
+  // ─── Triggery (default) ──────────────────────────────────────────────────
   const triggeryAcc = { n: 0 };
   const tRuntime = createRuntime();
   createTrigger<{ events: Record<EventName, number> }>(
@@ -54,6 +54,23 @@ describe('comparison — one trigger reacts to 5 event types (rotating fires)', 
   );
   bench('triggery', () => {
     tRuntime.fireSync(nextEvent(), 1);
+  });
+
+  // ─── Triggery (prod) ─────────────────────────────────────────────────────
+  const tProdAcc = { n: 0 };
+  const tProdRuntime = createRuntime({ inspector: false });
+  createTrigger<{ events: Record<EventName, number> }>(
+    {
+      id: 'multi-prod',
+      events: EVENT_NAMES,
+      handler: ({ event }) => {
+        tProdAcc.n += event.payload;
+      },
+    },
+    tProdRuntime,
+  );
+  bench('triggery (prod)', () => {
+    tProdRuntime.fireSync(nextEvent(), 1);
   });
 
   // ─── effector (merge into one derived unit) ──────────────────────────────

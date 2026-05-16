@@ -32,7 +32,7 @@ import { bench, describe } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
 
 describe('comparison — toggle enable/disable (every iter: toggle + fire)', () => {
-  // ─── Triggery (first-class enable/disable) ───────────────────────────────
+  // ─── Triggery (default — first-class enable/disable) ────────────────────
   const triggeryAcc = { n: 0 };
   const tRuntime = createRuntime();
   const tTrigger: Trigger<{ events: { e: number }; actions: { log: number } }> = createTrigger(
@@ -52,6 +52,28 @@ describe('comparison — toggle enable/disable (every iter: toggle + fire)', () 
     else tTrigger.enable();
     tOn = !tOn;
     tRuntime.fireSync('e', 1);
+  });
+
+  // ─── Triggery (prod) ─────────────────────────────────────────────────────
+  const tProdAcc = { n: 0 };
+  const tProdRuntime = createRuntime({ inspector: false });
+  const tProdTrigger: Trigger<{ events: { e: number }; actions: { log: number } }> = createTrigger(
+    {
+      id: 'toggle-prod',
+      events: ['e'],
+      handler: ({ event, actions }) => actions.log?.(event.payload),
+    },
+    tProdRuntime,
+  );
+  tProdRuntime.registerAction('toggle-prod', 'log', (n) => {
+    tProdAcc.n += n as number;
+  });
+  let tProdOn = true;
+  bench('triggery (prod)', () => {
+    if (tProdOn) tProdTrigger.disable();
+    else tProdTrigger.enable();
+    tProdOn = !tProdOn;
+    tProdRuntime.fireSync('e', 1);
   });
 
   // ─── effector (store flag + sample filter) ───────────────────────────────

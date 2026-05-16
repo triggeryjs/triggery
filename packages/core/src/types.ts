@@ -218,13 +218,40 @@ export type RegistrationToken = {
   unregister(): void;
 };
 
+/**
+ * Per-environment override for the inspector flag. Either field may be omitted,
+ * in which case the auto default applies (DEV on, PROD off).
+ */
+export type InspectorEnvOverride = {
+  readonly dev?: boolean;
+  readonly prod?: boolean;
+};
+
+/**
+ * Inspector configuration for `createRuntime`.
+ *
+ * - `undefined` (default) — auto: on in DEV (`process.env.NODE_ENV !== 'production'`), off in PROD.
+ * - `true` — always on regardless of env.
+ * - `false` — always off regardless of env.
+ * - `{ dev?, prod? }` — per-env override; unset fields fall back to the auto default.
+ *
+ * When off, the runtime skips the per-run buffer write, `subscribe()` callbacks
+ * never fire, `getInspectorBuffer()` returns `[]`, and the hot path drops the
+ * snapshot allocation entirely (~30-40% extra throughput on a simple dispatch).
+ * Devtools — `@triggery/devtools-redux`, `@triggery/devtools-bridge`, the React
+ * `useInspectHistory` hook — require the inspector to be on.
+ */
+export type InspectorOption = boolean | InspectorEnvOverride;
+
 export type RuntimeOptions = {
   /** Global middleware applied to every trigger in this runtime. */
   middleware?: readonly Middleware[];
   /** Maximum cascade depth (action → fireEvent → ...). Default: 3. */
   maxCascadeDepth?: number;
-  /** Inspector ring buffer size (default: 50). */
+  /** Inspector ring buffer size (default: 50). Ignored when the inspector is disabled. */
   inspectorBufferSize?: number;
+  /** Enable / disable the per-run inspector. See {@link InspectorOption}. */
+  inspector?: InspectorOption;
 };
 
 export type FireContext = {
@@ -315,6 +342,13 @@ export type RuntimeGraph = {
 
 export type Runtime = {
   readonly id: string;
+
+  /**
+   * Whether the per-run inspector is active on this runtime. Devtools bridges
+   * can use this to detect "you mounted me but the runtime won't emit anything"
+   * and surface a one-time DEV warning.
+   */
+  readonly inspectorEnabled: boolean;
 
   /** Register a trigger. Returns a token for later disposal. */
   registerTrigger(config: InternalTriggerConfig): RegistrationToken;

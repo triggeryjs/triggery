@@ -33,7 +33,7 @@ import { bench, describe } from 'vitest';
 import { createActor, createMachine, fromPromise } from 'xstate';
 
 describe('comparison — take-latest (each fire cancels prior in-flight)', () => {
-  // ─── Triggery ────────────────────────────────────────────────────────────
+  // ─── Triggery (default) ──────────────────────────────────────────────────
   const tRuntime = createRuntime();
   createTrigger<{ events: { e: number } }>(
     {
@@ -49,6 +49,24 @@ describe('comparison — take-latest (each fire cancels prior in-flight)', () =>
   );
   bench('triggery', () => {
     tRuntime.fireSync('e', 1);
+  });
+
+  // ─── Triggery (prod) ─────────────────────────────────────────────────────
+  const tProdRuntime = createRuntime({ inspector: false });
+  createTrigger<{ events: { e: number } }>(
+    {
+      id: 'tl-prod',
+      events: ['e'],
+      concurrency: 'take-latest',
+      handler: async ({ signal }) => {
+        await Promise.resolve();
+        if (signal.aborted) return;
+      },
+    },
+    tProdRuntime,
+  );
+  bench('triggery (prod)', () => {
+    tProdRuntime.fireSync('e', 1);
   });
 
   // ─── effector (manual AbortController wrapper) ───────────────────────────

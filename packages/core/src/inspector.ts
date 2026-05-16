@@ -8,6 +8,35 @@ export type InspectorImpl = {
   clear(): void;
 };
 
+const EMPTY_BUFFER: readonly TriggerInspectSnapshot[] = Object.freeze(
+  [] as readonly TriggerInspectSnapshot[],
+);
+const NOOP_UNSUBSCRIBE = (): void => {};
+const NOOP_INSPECTOR: InspectorImpl = {
+  record() {},
+  getBuffer() {
+    return EMPTY_BUFFER;
+  },
+  getLastForTrigger() {
+    return undefined;
+  },
+  subscribe() {
+    return NOOP_UNSUBSCRIBE;
+  },
+  clear() {},
+};
+
+/**
+ * No-op inspector — used when the runtime is configured with `inspector: false`
+ * (or by the auto default in production). `record` does nothing, `subscribe`
+ * returns a noop token whose callback will never fire, and `getBuffer` returns
+ * a shared frozen empty array. Same shape as the real inspector so callers
+ * don't need to branch.
+ */
+export function createNoopInspector(): InspectorImpl {
+  return NOOP_INSPECTOR;
+}
+
 /**
  * Ring-buffer inspector. `record` is O(1) — writes into a fixed-size slot array
  * with a wrap-around index, no `unshift`/`shift` allocations. `getBuffer`

@@ -25,7 +25,7 @@ import { bench, describe } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
 
 describe('comparison — plain dispatch (event → +1 action)', () => {
-  // ─── Triggery ────────────────────────────────────────────────────────────
+  // ─── Triggery (default — inspector on; matches dev/test envs) ────────────
   const triggeryAcc = { n: 0 };
   const tRuntime = createRuntime();
   createTrigger<{ events: { e: number }; actions: { log: number } }>(
@@ -41,6 +41,24 @@ describe('comparison — plain dispatch (event → +1 action)', () => {
   });
   bench('triggery', () => {
     tRuntime.fireSync('e', 1);
+  });
+
+  // ─── Triggery (prod — inspector off; matches production default) ────────
+  const tProdAcc = { n: 0 };
+  const tProdRuntime = createRuntime({ inspector: false });
+  createTrigger<{ events: { e: number }; actions: { log: number } }>(
+    {
+      id: 'plain-prod',
+      events: ['e'],
+      handler: ({ event, actions }) => actions.log?.(event.payload),
+    },
+    tProdRuntime,
+  );
+  tProdRuntime.registerAction('plain-prod', 'log', (n) => {
+    tProdAcc.n += n as number;
+  });
+  bench('triggery (prod)', () => {
+    tProdRuntime.fireSync('e', 1);
   });
 
   // ─── effector ────────────────────────────────────────────────────────────

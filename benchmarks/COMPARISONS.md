@@ -10,6 +10,7 @@ Side-by-side micro-benchmarks of the dispatch hot path against four libraries th
 * Bench fn does one logical unit per iteration. Setup happens once per `describe`.
 * Counter is incremented in the handler so the work isn't optimised away.
 * Source: `benchmarks/bench/comparisons/*.bench.ts`.
+* `Triggery` uses the dev/test default (`inspector: on`). `Triggery (prod)` mirrors the production default (`createRuntime({ inspector: false })`) — same setup, no per-fire snapshot allocation or subscribe-listener fan-out. Devtools (`@triggery/devtools-redux`, `@triggery/devtools-bridge`, `useInspectHistory`) require the inspector to be on.
 
 ## Why rxjs is so fast on the simple scenarios
 
@@ -28,11 +29,12 @@ One subscriber, one action, no conditions.
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 16,500,000 | 27.3× |
-| **xstate** | 667,000 | 1.10× |
-| **Triggery** | 605,000 | 1.00× |
-| **redux-saga** | 409,000 | 0.68× |
-| **effector** | 362,000 | 0.60× |
+| **rxjs** | 16,900,000 | 28.3× |
+| **xstate** | 691,000 | 1.16× |
+| **Triggery (prod)** | 633,000 | 1.06× |
+| **Triggery** | 598,000 | 1.00× |
+| **redux-saga** | 418,000 | 0.70× |
+| **effector** | 371,000 | 0.62× |
 
 [`01-plain-dispatch.bench.ts`](./bench/comparisons/01-plain-dispatch.bench.ts)
 
@@ -41,11 +43,12 @@ Toggled boolean guard, 50% of events pass.
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 14,600,000 | 24.3× |
-| **xstate** | 1,030,000 | 1.72× |
-| **Triggery** | 600,000 | 1.00× |
-| **effector** | 552,000 | 0.92× |
-| **redux-saga** | 419,000 | 0.70× |
+| **rxjs** | 13,400,000 | 24.0× |
+| **xstate** | 1,030,000 | 1.85× |
+| **Triggery (prod)** | 643,000 | 1.15× |
+| **Triggery** | 558,000 | 1.00× |
+| **effector** | 531,000 | 0.95× |
+| **redux-saga** | 371,000 | 0.66× |
 
 [`02-conditional.bench.ts`](./bench/comparisons/02-conditional.bench.ts)
 
@@ -54,11 +57,12 @@ Both events fire synchronously in the same tick; counter is bumped only by B's h
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 9,900,000 | 33.4× |
-| **xstate** | 428,000 | 1.45× |
-| **effector** | 358,000 | 1.21× |
-| **Triggery** | 296,000 | 1.00× |
-| **redux-saga** | 201,000 | 0.68× |
+| **rxjs** | 9,850,000 | 32.7× |
+| **xstate** | 436,000 | 1.45× |
+| **effector** | 358,000 | 1.19× |
+| **Triggery (prod)** | 332,000 | 1.10× |
+| **Triggery** | 301,000 | 1.00× |
+| **redux-saga** | 222,000 | 0.74× |
 
 [`03-cascade.bench.ts`](./bench/comparisons/03-cascade.bench.ts)
 
@@ -67,11 +71,14 @@ Async handler awaits one microtask, then checks the cancel signal.
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 3,700,000 | 13.1× |
-| **redux-saga** | 375,000 | 1.33× |
-| **Triggery** | 282,000 | 1.00× |
-| **effector** | 200,000 | 0.71× |
-| **xstate** | 52,000 | 0.18× |
+| **rxjs** | 4,110,000 | 14.3× |
+| **redux-saga** | 355,000 | 1.24× |
+| **Triggery (prod)** | 290,000 | 1.01× |
+| **Triggery** | 287,000 | 1.00× |
+| **effector** | 229,000 | 0.80× |
+| **xstate** | 50,000 | 0.17× |
+
+`prod` is flat here — microtask + Promise resolution dominates the per-iteration cost, so skipping the inspector buffer is in the noise.
 
 [`04-take-latest.bench.ts`](./bench/comparisons/04-take-latest.bench.ts)
 
@@ -80,11 +87,12 @@ Async handler awaits one microtask, then checks the cancel signal.
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **effector** | 5,240,000 | 8.27× |
-| **xstate** | 830,000 | 1.31× |
-| **Triggery** | 633,000 | 1.00× |
-| **rxjs** | 405,000 | 0.64× |
-| **redux-saga** | 348,000 | 0.55× |
+| **effector** | 5,000,000 | 8.21× |
+| **xstate** | 818,000 | 1.34× |
+| **Triggery (prod)** | 689,000 | 1.13× |
+| **Triggery** | 609,000 | 1.00× |
+| **rxjs** | 358,000 | 0.59× |
+| **redux-saga** | 329,000 | 0.54× |
 
 🟢 Triggery's indexed `Map<eventName, Set<Trigger>>` stays O(1) on every fire. **We beat rxjs (shared `Subject` + 100 filters = O(N)) and saga (middleware + 100 takeEvery).** effector and xstate win this one because their per-event primitive is even tighter (each `createEvent` is its own minimal pub-sub; xstate's transitions are tabular lookup).
 
@@ -95,11 +103,12 @@ The runtime knows about 5 sources of state but the trigger only needs one of the
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 2,470,000 | 3.94× |
-| **Triggery** | 627,000 | 1.00× |
-| **redux-saga** | 316,000 | 0.50× |
-| **effector** | 212,000 | 0.34× |
-| **xstate** | 127,000 | 0.20× |
+| **rxjs** | 2,550,000 | 4.64× |
+| **Triggery (prod)** | 629,000 | 1.15× |
+| **Triggery** | 549,000 | 1.00× |
+| **redux-saga** | 326,000 | 0.59× |
+| **effector** | 217,000 | 0.40× |
+| **xstate** | 126,000 | 0.23× |
 
 🟢 Triggery's pull-only condition model treats source updates as plain variable writes — zero notify cost. **We beat effector, saga and xstate by 2-5×** because they all pay for state mutation per update (combine recomputes, reducer replaces state, assign builds new context). rxjs `BehaviorSubject` + `withLatestFrom` is essentially the same lazy strategy implemented through operators — replace it with `combineLatest` and rxjs joins us in the same range.
 
@@ -110,13 +119,14 @@ Common in real apps: one logical reaction listens to many event types (any of sa
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 13,000,000 | 20.2× |
-| **effector** | 3,790,000 | 5.89× |
-| **Triggery** | 643,000 | 1.00× |
-| **xstate** | 632,000 | 0.98× |
-| **redux-saga** | 398,000 | 0.62× |
+| **rxjs** | 14,400,000 | 24.5× |
+| **effector** | 3,750,000 | 6.38× |
+| **xstate** | 781,000 | 1.33× |
+| **Triggery (prod)** | 663,000 | 1.13× |
+| **Triggery** | 588,000 | 1.00× |
+| **redux-saga** | 525,000 | 0.89× |
 
-Mid-pack but **edges out xstate and saga**. Our `events: ['e1', ..., 'e5']` declaration is ergonomically nice (one trigger config vs `merge(...)` / array-of-types / 5 duplicated transitions); after the Tier 1 dispatch pass it also keeps up with xstate's tabular lookup. effector's `merge` and rxjs's `merge` still get optimised internally beyond what we do.
+Mid-pack — `prod` keeps up with xstate's tabular lookup. Our `events: ['e1', ..., 'e5']` declaration is ergonomically nice (one trigger config vs `merge(...)` / array-of-types / 5 duplicated transitions). effector's `merge` and rxjs's `merge` still get optimised internally beyond what we do.
 
 [`07-multi-event-trigger.bench.ts`](./bench/comparisons/07-multi-event-trigger.bench.ts)
 
@@ -125,13 +135,14 @@ A trigger is bound to a feature flag that flips between renders. Each iteration:
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 6,570,000 | 5.98× |
-| **Triggery** | 1,100,000 | 1.00× |
-| **effector** | 526,000 | 0.48× |
-| **xstate** | 479,000 | 0.44× |
-| **redux-saga** | 334,000 | 0.30× |
+| **rxjs** | 6,500,000 | 6.19× |
+| **Triggery (prod)** | 1,210,000 | 1.15× |
+| **Triggery** | 1,050,000 | 1.00× |
+| **effector** | 520,000 | 0.50× |
+| **xstate** | 473,000 | 0.45× |
+| **redux-saga** | 289,000 | 0.28× |
 
-🟢 **Triggery wins #2 overall** — first-class `enable()` / `disable()` is a boolean flip. Every other library here has to fake "off" by either tearing down the subscription (rxjs/saga), gating via a store/guard (effector/xstate), or both. rxjs's `Subject.subscribe()` is fast enough to overtake us, but **we beat effector, xstate and saga by 2-3×**.
+🟢 **Triggery wins #2 overall** (with `prod` widening the lead) — first-class `enable()` / `disable()` is a boolean flip. Every other library here has to fake "off" by either tearing down the subscription (rxjs/saga), gating via a store/guard (effector/xstate), or both. rxjs's `Subject.subscribe()` is fast enough to overtake us, but **we beat effector, xstate and saga by 2-4×**.
 
 [`08-toggle.bench.ts`](./bench/comparisons/08-toggle.bench.ts)
 

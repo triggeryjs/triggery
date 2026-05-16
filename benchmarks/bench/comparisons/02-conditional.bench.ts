@@ -28,7 +28,7 @@ describe('comparison — conditional dispatch (alternating guard, 50% pass)', ()
   let tick = 0;
   const flagFor = () => (tick++ & 1) === 0;
 
-  // ─── Triggery ────────────────────────────────────────────────────────────
+  // ─── Triggery (default) ──────────────────────────────────────────────────
   const triggeryAcc = { n: 0 };
   const tRuntime = createRuntime();
   // Use a condition rather than a captured variable so the bench
@@ -55,6 +55,33 @@ describe('comparison — conditional dispatch (alternating guard, 50% pass)', ()
   });
   bench('triggery', () => {
     tRuntime.fireSync('e', 1);
+  });
+
+  // ─── Triggery (prod) ─────────────────────────────────────────────────────
+  const tProdAcc = { n: 0 };
+  const tProdRuntime = createRuntime({ inspector: false });
+  createTrigger<{
+    events: { e: number };
+    conditions: { enabled: boolean };
+    actions: { log: number };
+  }>(
+    {
+      id: 'cond-prod',
+      events: ['e'],
+      required: ['enabled'],
+      handler: ({ event, conditions, actions }) => {
+        if (!conditions.enabled) return;
+        actions.log?.(event.payload);
+      },
+    },
+    tProdRuntime,
+  );
+  tProdRuntime.registerCondition('cond-prod', 'enabled', () => flagFor());
+  tProdRuntime.registerAction('cond-prod', 'log', (n) => {
+    tProdAcc.n += n as number;
+  });
+  bench('triggery (prod)', () => {
+    tProdRuntime.fireSync('e', 1);
   });
 
   // ─── effector ────────────────────────────────────────────────────────────

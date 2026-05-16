@@ -25,7 +25,7 @@ import { bench, describe } from 'vitest';
 import { assign, createActor, createMachine, raise } from 'xstate';
 
 describe('comparison — cascade (event A → handler → event B → handler)', () => {
-  // ─── Triggery ────────────────────────────────────────────────────────────
+  // ─── Triggery (default) ──────────────────────────────────────────────────
   const triggeryAcc = { n: 0 };
   const tRuntime = createRuntime();
   createTrigger<{ events: { a: number }; actions: { goB: number } }>(
@@ -49,6 +49,32 @@ describe('comparison — cascade (event A → handler → event B → handler)',
   tRuntime.registerAction('t-a', 'goB', (n) => tRuntime.fireSync('b', n));
   bench('triggery', () => {
     tRuntime.fireSync('a', 1);
+  });
+
+  // ─── Triggery (prod) ─────────────────────────────────────────────────────
+  const tProdAcc = { n: 0 };
+  const tProdRuntime = createRuntime({ inspector: false });
+  createTrigger<{ events: { a: number }; actions: { goB: number } }>(
+    {
+      id: 't-a-prod',
+      events: ['a'],
+      handler: ({ event, actions }) => actions.goB?.(event.payload),
+    },
+    tProdRuntime,
+  );
+  createTrigger<{ events: { b: number } }>(
+    {
+      id: 't-b-prod',
+      events: ['b'],
+      handler: ({ event }) => {
+        tProdAcc.n += event.payload;
+      },
+    },
+    tProdRuntime,
+  );
+  tProdRuntime.registerAction('t-a-prod', 'goB', (n) => tProdRuntime.fireSync('b', n));
+  bench('triggery (prod)', () => {
+    tProdRuntime.fireSync('a', 1);
   });
 
   // ─── effector ────────────────────────────────────────────────────────────

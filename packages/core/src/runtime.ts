@@ -5,12 +5,13 @@ import {
   needsTiming,
   type RegisteredTrigger,
 } from './dispatch.ts';
-import { createInspector } from './inspector.ts';
+import { createInspector, createNoopInspector } from './inspector.ts';
 import { createScheduler } from './scheduler.ts';
 import type {
   CascadeContext,
   ConditionGetter,
   FireContext,
+  InspectorOption,
   InternalTriggerConfig,
   RegisterScopeOptions,
   RegistrationToken,
@@ -33,6 +34,24 @@ const isDev = (): boolean => {
   return env !== 'production';
 };
 
+/**
+ * Resolve the inspector option against the current environment.
+ *
+ *   undefined  → DEV on, PROD off (auto)
+ *   true       → always on
+ *   false      → always off
+ *   { dev?, prod? } → per-env override, unset fields fall back to auto
+ */
+function resolveInspectorEnabled(option: InspectorOption | undefined): boolean {
+  if (option === true) return true;
+  if (option === false) return false;
+  const dev = isDev();
+  if (option === undefined) return dev;
+  // Object form: explicit overrides per environment, with auto fallback.
+  if (dev) return option.dev ?? true;
+  return option.prod ?? false;
+}
+
 export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const id = genRuntimeId();
   const triggers = new Map<string, RegisteredTrigger>();
@@ -43,7 +62,10 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const hasMiddleware = middleware.length > 0;
   const trackTiming = needsTiming(middleware);
   const maxCascadeDepth = options.maxCascadeDepth ?? 3;
-  const inspector = createInspector(options.inspectorBufferSize ?? 50);
+  const inspectorEnabled = resolveInspectorEnabled(options.inspector);
+  const inspector = inspectorEnabled
+    ? createInspector(options.inspectorBufferSize ?? 50)
+    : createNoopInspector();
   const microtaskScheduler = createScheduler('microtask');
   const syncScheduler = createScheduler('sync');
 
@@ -327,6 +349,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
           trigger,
           fireCtx,
           inspector,
+          inspectorEnabled,
           middleware,
           hasMiddleware,
           trackTiming,
@@ -407,6 +430,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
 
   return {
     id,
+    inspectorEnabled,
     registerTrigger,
     registerCondition,
     registerAction,

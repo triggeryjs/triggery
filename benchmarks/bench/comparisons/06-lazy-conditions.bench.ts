@@ -31,7 +31,7 @@ import { bench, describe } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
 
 describe('comparison — lazy conditions (5 sources update each iter, handler reads 1)', () => {
-  // ─── Triggery ────────────────────────────────────────────────────────────
+  // ─── Triggery (default) ──────────────────────────────────────────────────
   const triggeryAcc = { n: 0 };
   let tv1 = 0;
   let tv2 = 0;
@@ -63,6 +63,39 @@ describe('comparison — lazy conditions (5 sources update each iter, handler re
     tv4 = 1;
     tv5 = 1;
     tRuntime.fireSync('clock');
+  });
+
+  // ─── Triggery (prod) ─────────────────────────────────────────────────────
+  const tProdAcc = { n: 0 };
+  let tpv1 = 0;
+  let tpv2 = 0;
+  let tpv3 = 0;
+  let tpv4 = 0;
+  let tpv5 = 0;
+  const tProdRuntime = createRuntime({ inspector: false });
+  createTrigger<{ events: { clock: void }; conditions: { v1: number } }>(
+    {
+      id: 'lazy-prod',
+      events: ['clock'],
+      required: ['v1'],
+      handler: ({ conditions }) => {
+        tProdAcc.n += conditions.v1 ?? 0;
+      },
+    },
+    tProdRuntime,
+  );
+  tProdRuntime.registerCondition('lazy-prod', 'v1', () => tpv1);
+  tProdRuntime.registerCondition('lazy-prod', 'v2', () => tpv2);
+  tProdRuntime.registerCondition('lazy-prod', 'v3', () => tpv3);
+  tProdRuntime.registerCondition('lazy-prod', 'v4', () => tpv4);
+  tProdRuntime.registerCondition('lazy-prod', 'v5', () => tpv5);
+  bench('triggery (prod)', () => {
+    tpv1 = 1;
+    tpv2 = 1;
+    tpv3 = 1;
+    tpv4 = 1;
+    tpv5 = 1;
+    tProdRuntime.fireSync('clock');
   });
 
   // ─── effector (5 stores, sample reads only the one we need) ──────────────

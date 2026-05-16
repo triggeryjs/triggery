@@ -64,6 +64,12 @@ type DispatchDeps = {
   trigger: RegisteredTrigger;
   fireCtx: FireContext;
   inspector: InspectorImpl;
+  /**
+   * Whether the runtime's inspector is active. When `false` we skip building
+   * the per-run snapshot object, skip the executedActions / snapshotKeys
+   * tracking, and avoid the `inspector.record(...)` call entirely.
+   */
+  inspectorEnabled: boolean;
   middleware: readonly Middleware[];
   /** Cached `middleware.length > 0` — saves a `.length` access per fire. */
   hasMiddleware: boolean;
@@ -154,14 +160,22 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
 const EMPTY_STRING_ARRAY: readonly string[] = Object.freeze([]) as readonly string[];
 
 function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void | Promise<void> {
-  const { trigger, fireCtx, inspector, middleware, hasMiddleware, trackTiming, runtimeId } = deps;
+  const {
+    trigger,
+    fireCtx,
+    inspector,
+    inspectorEnabled,
+    middleware,
+    hasMiddleware,
+    trackTiming,
+    runtimeId,
+  } = deps;
   if (!trigger.enabled) return;
 
   // ─── Concurrency gate ────────────────────────────────────────────────────
   // take-first / exhaust: if anything is in flight, skip this run.
   if (concurrency === 'take-first' || concurrency === 'exhaust') {
     if (trigger.inFlight.size > 0) {
-      const runId = genRunId();
       const reason = `concurrency-${concurrency}`;
       if (hasMiddleware) {
         const skipCtx: SkipContext = {
@@ -171,16 +185,18 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
         };
         for (const mw of middleware) mw.onSkip?.(skipCtx);
       }
-      inspector.record({
-        triggerId: trigger.config.id,
-        runId,
-        eventName: fireCtx.eventName,
-        status: 'skipped',
-        reason,
-        durationMs: 0,
-        executedActions: EMPTY_STRING_ARRAY,
-        snapshotKeys: EMPTY_STRING_ARRAY,
-      });
+      if (inspectorEnabled) {
+        inspector.record({
+          triggerId: trigger.config.id,
+          runId: genRunId(),
+          eventName: fireCtx.eventName,
+          status: 'skipped',
+          reason,
+          durationMs: 0,
+          executedActions: EMPTY_STRING_ARRAY,
+          snapshotKeys: EMPTY_STRING_ARRAY,
+        });
+      }
       return;
     }
   }
@@ -193,7 +209,10 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
 
   // ─── Run setup ──────────────────────────────────────────────────────────
   const runId = genRunId();
-  const startedAt = trackTiming ? performance.now() : 0;
+  // performance.now() is only needed when either the inspector wants a
+  // durationMs or middleware observes per-action timing.
+  const needDuration = inspectorEnabled || trackTiming;
+  const startedAt = needDuration ? performance.now() : 0;
 
   // Required gate — every required condition must be registered. This check
   // hits `trigger.conditions` (the mirror Map) directly, not the lazy proxy,
@@ -212,24 +231,29 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
           };
           for (const mw of middleware) mw.onSkip?.(skipCtx);
         }
-        inspector.record({
-          triggerId: trigger.config.id,
-          runId,
-          eventName: fireCtx.eventName,
-          status: 'skipped',
-          reason,
-          durationMs: trackTiming ? performance.now() - startedAt : 0,
-          executedActions: EMPTY_STRING_ARRAY,
-          snapshotKeys: EMPTY_STRING_ARRAY,
-        });
+        if (inspectorEnabled) {
+          inspector.record({
+            triggerId: trigger.config.id,
+            runId,
+            eventName: fireCtx.eventName,
+            status: 'skipped',
+            reason,
+            durationMs: needDuration ? performance.now() - startedAt : 0,
+            executedActions: EMPTY_STRING_ARRAY,
+            snapshotKeys: EMPTY_STRING_ARRAY,
+          });
+        }
         return;
       }
     }
   }
 
-  // Snapshot bookkeeping (mutated by the conditions proxy + action proxy).
-  const executedActions: string[] = [];
-  const snapshotKeys: string[] = [];
+  // Snapshot bookkeeping — only allocated when the inspector wants them. When
+  // the inspector is off we point both arrays at a shared frozen empty array
+  // and gate every `push` behind `inspectorEnabled`. Saves two allocations and
+  // all per-condition/per-action pushes on the hot path.
+  const executedActions: string[] = inspectorEnabled ? [] : (EMPTY_STRING_ARRAY as string[]);
+  const snapshotKeys: string[] = inspectorEnabled ? [] : (EMPTY_STRING_ARRAY as string[]);
 
   // Conditions snapshot — lazy proxy with a cache (consistency guarantee:
   // a handler reading the same condition twice in one run sees the same value).
@@ -245,7 +269,7 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
       }
       const value = getter();
       snapshotCache.set(prop, value);
-      snapshotKeys.push(prop);
+      if (inspectorEnabled) snapshotKeys.push(prop);
       return value;
     },
     has(_target, prop) {
@@ -263,7 +287,7 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
   const callActionImmediate = (name: string, payload: unknown): void => {
     const handler = trigger.actions.get(name);
     if (!handler) return;
-    executedActions.push(name);
+    if (inspectorEnabled) executedActions.push(name);
     invokeAction(
       handler,
       { triggerId: trigger.config.id, runId, actionName: name, payload },
@@ -360,6 +384,7 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
 
   const finalize = (status: 'fired' | 'errored' | 'aborted', reason?: string) => {
     trigger.inFlight.delete(controller);
+    if (!inspectorEnabled) return;
     // Build the snapshot without the `...(reason && {reason})` spread —
     // the spread allocates two intermediate objects per fire on the hot path.
     const snapshot: { -readonly [K in keyof TriggerInspectSnapshot]: TriggerInspectSnapshot[K] } = {
@@ -367,7 +392,7 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
       runId,
       eventName: fireCtx.eventName,
       status,
-      durationMs: trackTiming ? performance.now() - startedAt : 0,
+      durationMs: needDuration ? performance.now() - startedAt : 0,
       executedActions,
       snapshotKeys,
     };

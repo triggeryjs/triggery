@@ -33,7 +33,7 @@ const TARGET = 'event42';
 const TARGET_INDEX = 42;
 
 describe('comparison — sparse event bus (100 event types, fire 1)', () => {
-  // ─── Triggery ────────────────────────────────────────────────────────────
+  // ─── Triggery (default) ──────────────────────────────────────────────────
   const triggeryAcc = { n: 0 };
   const tRuntime = createRuntime();
   for (let i = 0; i < N; i++) {
@@ -50,6 +50,25 @@ describe('comparison — sparse event bus (100 event types, fire 1)', () => {
   }
   bench('triggery', () => {
     tRuntime.fireSync(TARGET, 1);
+  });
+
+  // ─── Triggery (prod) ─────────────────────────────────────────────────────
+  const tProdAcc = { n: 0 };
+  const tProdRuntime = createRuntime({ inspector: false });
+  for (let i = 0; i < N; i++) {
+    createTrigger<{ events: Record<string, number> }>(
+      {
+        id: `t${i}-prod`,
+        events: [`event${i}`],
+        handler: ({ event }) => {
+          tProdAcc.n += event.payload as number;
+        },
+      },
+      tProdRuntime,
+    );
+  }
+  bench('triggery (prod)', () => {
+    tProdRuntime.fireSync(TARGET, 1);
   });
 
   // ─── effector (100 events — equivalent to indexed dispatch) ──────────────
