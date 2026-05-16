@@ -145,28 +145,26 @@ Bench source: [`benchmarks/bench/core/dispatch.bench.ts`](./benchmarks/bench/cor
 
 ### vs effector / rxjs / redux-saga / xstate / Reatom / MobX
 
-Ten scenarios bench-ed against six neighbour libraries. Headline numbers (local M1 Pro, ops/sec; **bold = winner per row**). `Triggery (prod)` is `createRuntime({ inspector: false })` — the auto default in production builds.
+Ten scenarios bench-ed against six neighbour libraries. Headline numbers (local M1 Pro, ops/sec; **bold = winner per row**). Triggery column shows the production default (`createRuntime({ inspector: false })`); the dev-default with the inspector on runs ~10-15% slower across most rows. Both modes appear side-by-side in [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
 
-| Scenario | Triggery | T (prod) | effector | rxjs | saga | xstate | reatom | mobx |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Plain dispatch | 620k | 606k | 370k | **16.8M** | 428k | 675k | 3.78M | 3.02M |
-| Conditional (50% pass) | 566k | 649k | 566k | **14.5M** | 484k | 1.29M | 4.45M | 3.24M |
-| Cascade A → B | 207k | 335k | 356k | **9.91M** | 202k | 429k | 5.10M | 1.60M |
-| Take-latest cancellation | 280k | 301k | 226k | **4.16M** | 381k | 50k | 3.32M | 497k |
-| Sparse bus (100 types, fire 1) | 611k | 690k | **5.05M** | 388k | 327k | 795k | **5.07M** | 2.94M |
-| Lazy conditions (5 sources, read 1) | 589k | 659k | 212k | **2.45M** | 316k | 122k | 1.19M | 2.00M |
-| Multi-event single trigger | 614k | 694k | 3.75M | **14.3M** | 410k | 636k | 3.09M | 2.48M |
-| Toggle enable/disable + fire | 1.05M | 1.21M | 528k | **6.48M** | 302k | 474k | 2.81M | 2.35M |
-| Realistic app bus (30 events × 30 triggers + condition + action) | 504k | 586k | 361k | 1.29M | 440k | 703k | **4.26M** | 3.00M |
-| Lazy conditions at scale (10 sources, read 1 rotating) | 551k | 625k | 160k | **1.43M** | 310k | 72k | 634k | 1.63M |
+| Scenario | Triggery | effector | rxjs | saga | xstate | reatom | mobx |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Plain dispatch | 606k | 370k | **16.8M** | 428k | 675k | 3.78M | 3.02M |
+| Conditional (50% pass) | 649k | 566k | **14.5M** | 484k | 1.29M | 4.45M | 3.24M |
+| Cascade A → B | 335k | 356k | **9.91M** | 202k | 429k | 5.10M | 1.60M |
+| Take-latest cancellation | 301k | 226k | **4.16M** | 381k | 50k | 3.32M | 497k |
+| Sparse bus (100 types, fire 1) | 690k | **5.05M** | 388k | 327k | 795k | **5.07M** | 2.94M |
+| Lazy conditions (5 sources, read 1) | 659k | 212k | **2.45M** | 316k | 122k | 1.19M | 2.00M |
+| Multi-event single trigger | 694k | 3.75M | **14.3M** | 410k | 636k | 3.09M | 2.48M |
+| Toggle enable/disable + fire | 1.21M | 528k | **6.48M** | 302k | 474k | 2.81M | 2.35M |
+| Realistic app bus (30 events × 30 triggers + condition + action) | 586k | 361k | 1.29M | 440k | 703k | **4.26M** | 3.00M |
+| Lazy conditions at scale (10 sources, read 1 rotating) | 625k | 160k | **1.43M** | 310k | 72k | 634k | 1.63M |
 
 #### How to read this table
 
 **Triggery is not an event emitter or a state manager** — it's an orchestrator that sits on top of whichever store you already have. The five state/effect/atom libraries in the table all out-throughput Triggery on raw per-fire cost, which is exactly what you'd expect: a `Subject.next()` (rxjs), an `atom.set()` (Reatom) or a `box.set()` (MobX) are bare reactive primitives, while every Triggery fire also runs the inspector ring buffer, cascade context, required-gate, lazy condition proxy, abort controller bookkeeping and middleware chain. **That overhead is the product, not a bug.**
 
 Where Triggery still pulls ahead despite the overhead: **scenario 5** (indexed dispatch beats rxjs and saga; ties Reatom for first), **scenarios 6 + 10** (pull-only conditions beat effector, saga, and xstate by 2-7×), **scenario 8** (first-class enable/disable beats effector, saga and xstate by 2-4×).
-
-`inspector: false` saves the ring-buffer write, snapshot allocation and subscribe-listener fan-out per fire — consistent **+10-15% on dispatch-bound scenarios**. Devtools (`@triggery/devtools-redux`, `@triggery/devtools-bridge`, `useInspectHistory`) require the inspector to be on; production code that doesn't ship devtools gets the lean path for free.
 
 Full breakdown + idiomatic implementations + per-scenario analysis in [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
 
