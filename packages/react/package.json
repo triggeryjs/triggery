@@ -1,7 +1,7 @@
 {
   "name": "@triggery/react",
   "version": "0.1.0",
-  "description": "React bindings for Triggery \u2014 hook-first orchestration layer",
+  "description": "React 18+/19 bindings for Triggery \u2014 useEvent / useCondition / useAction / useInlineTrigger / useInspect hooks + <TriggerRuntimeProvider> / <TriggerScope>. Zero runtime dependencies.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
