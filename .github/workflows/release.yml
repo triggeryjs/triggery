@@ -30,6 +30,14 @@ jobs:
           cache: pnpm
           registry-url: 'https://registry.npmjs.org'
 
+      # setup-node@v6 + Node 20 ships with npm 10. npm Trusted Publishers
+      # require npm 11+ for the OIDC publish flow to match the new server-
+      # side validator. Without this step `changeset publish` hits the
+      # registry as if from a legacy 2FA-required client, and every PUT
+      # comes back as "404 not found" (npm's misleading wording for "no
+      # matching trusted publisher rule for this token").
+      - run: npm install -g npm@latest
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
