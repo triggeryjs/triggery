@@ -1,0 +1,41 @@
+name: Documentation issue
+description: Report a doc problem — wrong, missing, unclear, or out of date
+labels: ['docs']
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Where is the problem?
+      description: URL on the docs site, file path in the repo, or section name in the README.
+      placeholder: 'https://triggery.dev/guides/cascade — section "Cycle detection"'
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong?
+      description: |
+        - **Inaccurate** — the code/behaviour does not match the docs.
+        - **Missing** — no documentation for X.
+        - **Confusing** — wording is hard to follow.
+        - **Out of date** — covers an older API.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix
+      description: If you have wording in mind, paste it here. PRs welcome — see CONTRIBUTING.md.
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: How blocking is this?
+      options:
+        - 'Annoyance — I figured it out, but it cost me time'
+        - 'Blocker — I could not figure out the right way to do this'
+        - 'Misleading — I followed the docs and got broken behaviour'
+    validations:
+      required: true

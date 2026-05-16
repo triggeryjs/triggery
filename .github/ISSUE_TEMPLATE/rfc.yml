@@ -1,0 +1,82 @@
+name: RFC — Request for Comments
+description: Propose a substantial change to public API, runtime semantics, or project direction
+title: 'RFC: <short title>'
+labels: ['rfc', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for thinking carefully about Triggery's design.
+
+        Use this template for changes that:
+        - Add, change, or remove a public API.
+        - Change runtime semantics (scheduler, cascade, ownership, snapshot model).
+        - Introduce a new package under `@triggery/*`.
+        - Affect anything described in the README or docs site.
+
+        For small bug fixes or self-contained features — use the regular issue templates instead.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One paragraph describing the proposal. A human reading just this should understand what you want.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: |
+        What problem does this solve? Who is affected? What is the cost of doing nothing?
+        Concrete examples (from a real codebase, ideally) carry the most weight.
+    validations:
+      required: true
+
+  - type: textarea
+    id: detailed-design
+    attributes:
+      label: Detailed design
+      description: |
+        How should this work? Include:
+        - API signatures (TypeScript types preferred).
+        - Code samples showing the proposed usage.
+        - Semantics — what happens in edge cases (StrictMode, SSR, async, scope nesting).
+        - Migration path if this is a breaking change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you consider? Why did you reject those?
+    validations:
+      required: true
+
+  - type: textarea
+    id: drawbacks
+    attributes:
+      label: Drawbacks and unresolved questions
+      description: |
+        Honest about what this proposal makes worse. Bundle size? Cognitive load? Performance?
+        Compatibility with future plans?
+    validations:
+      required: true
+
+  - type: textarea
+    id: prior-art
+    attributes:
+      label: Prior art
+      description: Where has something similar been done? (effector, rxjs, xstate, reatom, mobx, signals — link to docs or source if relevant.)
+
+  - type: checkboxes
+    id: scope-check
+    attributes:
+      label: Scope check
+      options:
+        - label: I have read the [ROADMAP](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) and this is not already planned or rejected.
+          required: true
+        - label: I have read the [GOVERNANCE](https://github.com/triggeryjs/triggery/blob/main/GOVERNANCE.md) document and understand the RFC process.
+          required: true

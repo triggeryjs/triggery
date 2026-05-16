@@ -1,7 +1,7 @@
 {
   "name": "@triggery/devtools-bridge",
   "version": "0.0.0",
-  "description": "Page-side bridge for Triggery devtools — broadcasts runtime events over window.postMessage for the Chrome extension / standalone panel to consume",
+  "description": "Page-side bridge for Triggery devtools \u2014 broadcasts runtime events over window.postMessage for the Chrome extension / standalone panel to consume",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
@@ -11,6 +11,16 @@
     "directory": "packages/devtools-bridge"
   },
   "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/triggeryjs"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
   "keywords": [
     "triggery",
     "devtools",

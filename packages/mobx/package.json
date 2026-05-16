@@ -1,7 +1,7 @@
 {
   "name": "@triggery/mobx",
   "version": "0.0.0",
-  "description": "MobX adapter for Triggery — read observable state from a trigger condition with no reaction setup",
+  "description": "MobX adapter for Triggery \u2014 read observable state from a trigger condition with no reaction setup",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
@@ -11,6 +11,16 @@
     "directory": "packages/mobx"
   },
   "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/triggeryjs"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
   "keywords": [
     "triggery",
     "mobx",

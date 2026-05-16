@@ -1,0 +1,14 @@
+# Default owner for everything in the repository.
+# Add or override per-path entries as the team grows.
+
+*                           @triggeryjs
+
+# Per-area owners (template — uncomment and adjust as maintainers join):
+# /packages/core/           @triggeryjs
+# /packages/react/          @triggeryjs
+# /packages/solid/          @triggeryjs
+# /packages/vue/            @triggeryjs
+# /packages/devtools-*/     @triggeryjs
+# /benchmarks/              @triggeryjs
+# /extensions/              @triggeryjs
+# /.github/                 @triggeryjs

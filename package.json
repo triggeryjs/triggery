@@ -2,9 +2,39 @@
   "name": "triggery-monorepo",
   "version": "0.0.0",
   "private": true,
-  "description": "Declarative business-logic orchestration for React",
+  "description": "Declarative business-logic orchestration for React, Solid and Vue",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
+  "homepage": "https://github.com/triggeryjs/triggery#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triggeryjs/triggery.git"
+  },
+  "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/triggeryjs"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
+  "keywords": [
+    "triggery",
+    "react",
+    "solid",
+    "vue",
+    "orchestration",
+    "business-logic",
+    "triggers",
+    "events",
+    "conditions",
+    "actions",
+    "hooks",
+    "monorepo"
+  ],
   "type": "module",
   "packageManager": "pnpm@9.3.0",
   "engines": {

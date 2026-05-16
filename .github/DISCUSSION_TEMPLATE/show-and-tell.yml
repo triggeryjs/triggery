@@ -1,0 +1,35 @@
+title: '<what you built>'
+labels: ['show-and-tell']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Built something with Triggery? Migrated a real codebase? Wrote a blog post or recorded a video?
+
+        Share it here so others can learn from it. We love adoption stories — they directly inform the roadmap.
+
+  - type: input
+    id: link
+    attributes:
+      label: Link
+      description: GitHub repo, demo URL, blog post, tweet, YouTube — anywhere.
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What is it?
+      description: A few sentences about the project and how Triggery fits in.
+    validations:
+      required: true
+
+  - type: textarea
+    id: lessons
+    attributes:
+      label: What did you learn?
+      description: |
+        Especially interesting:
+        - Patterns that worked well.
+        - Sharp edges you ran into.
+        - Things you wish Triggery did differently.

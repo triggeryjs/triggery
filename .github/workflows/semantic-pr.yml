@@ -1,0 +1,42 @@
+name: Semantic PR title
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  statuses: write
+
+jobs:
+  validate:
+    name: Validate PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            refactor
+            test
+            docs
+            perf
+            build
+            ci
+            style
+            revert
+            bench
+          # Scope is optional, but if present it should be lower-case kebab.
+          requireScope: false
+          subjectPattern: '^(?![A-Z])(?!.*\.$).+'
+          subjectPatternError: |
+            The subject of the PR title "{subject}" doesn't match the expected pattern:
+            - starts with a lower-case letter
+            - does not end with a period
+            See CONTRIBUTING.md → Commit messages for the full format.
+          wip: true
+          validateSingleCommit: false

@@ -1,7 +1,7 @@
 {
   "name": "@triggery/query",
   "version": "0.0.0",
-  "description": "TanStack Query adapter for Triggery — read cached query data from a trigger condition",
+  "description": "TanStack Query adapter for Triggery \u2014 read cached query data from a trigger condition",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
@@ -11,6 +11,16 @@
     "directory": "packages/query"
   },
   "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/triggeryjs"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
   "keywords": [
     "triggery",
     "tanstack-query",

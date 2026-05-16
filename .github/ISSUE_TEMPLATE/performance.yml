@@ -1,0 +1,64 @@
+name: Performance issue
+description: Report a measurable slowdown, regression, or unexpected resource use
+labels: ['performance', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Performance reports are most useful when they are **reproducible** and **measured**. Please include numbers.
+
+        The CodSpeed dashboard lives at https://codspeed.io/triggeryjs/triggery — if the regression is captured there, link the run.
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: What is slow? What did you measure? What did you expect?
+      placeholder: 'Firing 10k events with 5 triggers takes 800 ms in 0.3.0 — it took 80 ms in 0.2.5.'
+    validations:
+      required: true
+
+  - type: input
+    id: version-good
+    attributes:
+      label: Last known good version
+      placeholder: '@triggery/core 0.2.5'
+
+  - type: input
+    id: version-bad
+    attributes:
+      label: First bad version
+      placeholder: '@triggery/core 0.3.0'
+
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: 'Node 22.5.0, M1 Pro, Chrome 140'
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: |
+        A bench file, a profiling trace, or a StackBlitz link with a measurement harness.
+        Microbenchmarks should run for ≥ 1 s of warmup before measuring.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: profile
+    attributes:
+      label: Profile / measurements
+      description: Paste flamegraph output, `vitest bench` numbers, or CodSpeed delta. Screenshots welcome.
+
+  - type: checkboxes
+    id: scope-check
+    attributes:
+      label: Scope check
+      options:
+        - label: I have checked the [CodSpeed dashboard](https://codspeed.io/triggeryjs/triggery) and the regression is reproducible.
+        - label: I have checked that no `inspector` / `cascade` / middleware option in user code is responsible for the slowdown.

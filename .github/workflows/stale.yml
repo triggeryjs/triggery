@@ -1,0 +1,45 @@
+name: Stale issues and PRs
+
+on:
+  schedule:
+    # Daily at 02:30 UTC — off-peak so it doesn't fight CI for runner time.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    name: Mark stale items
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v10
+        with:
+          # Issues
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+          stale-issue-label: 'stale'
+          stale-issue-message: >
+            This issue has been inactive for 60 days. If it's still relevant,
+            drop a comment with any new info or repro steps and we'll keep it
+            open. Otherwise it will auto-close in 14 days. Thanks for opening it!
+          close-issue-message: >
+            Closing as stale. If this is still a problem, please re-open with
+            the latest reproduction details. Happy to look again.
+          exempt-issue-labels: 'pinned,security,roadmap,help wanted,good first issue'
+
+          # PRs
+          days-before-pr-stale: 30
+          days-before-pr-close: 14
+          stale-pr-label: 'stale'
+          stale-pr-message: >
+            This PR has been inactive for 30 days. If you're still working on
+            it, drop a comment or push a commit — we'll keep it open. Otherwise
+            it will auto-close in 14 days. Thanks for the contribution!
+          close-pr-message: >
+            Closing as stale. Re-open any time when you're ready to continue.
+          exempt-pr-labels: 'pinned,security,wip,blocked'
+
+          operations-per-run: 50

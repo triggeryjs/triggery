@@ -8,7 +8,13 @@
 
 [![CI](https://github.com/triggeryjs/triggery/actions/workflows/ci.yml/badge.svg)](https://github.com/triggeryjs/triggery/actions/workflows/ci.yml)
 [![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/triggeryjs/triggery?utm_source=badge)
+[![npm version](https://img.shields.io/npm/v/@triggery/core?label=%40triggery%2Fcore)](https://www.npmjs.com/package/@triggery/core)
+[![Bundle size](https://img.shields.io/bundlejs/size/@triggery/core?label=core%20gzip)](https://bundlejs.com/?q=%40triggery%2Fcore)
+[![npm downloads](https://img.shields.io/npm/dm/@triggery/core?label=downloads)](https://www.npmjs.com/package/@triggery/core)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/triggeryjs/triggery?style=social)](https://github.com/triggeryjs/triggery/stargazers)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/triggeryjs?logo=github)](https://github.com/sponsors/triggeryjs)
+[![Discussions](https://img.shields.io/github/discussions/triggeryjs/triggery)](https://github.com/triggeryjs/triggery/discussions)
 
 **Not an event emitter. Not a state manager. Triggery orchestrates business logic across your app.**
 
@@ -101,6 +107,14 @@ Six files, one scenario, no prop drilling, no `useEffect` chains, no central thu
 ```bash
 pnpm add @triggery/core @triggery/react
 ```
+
+**Try it without installing:**
+
+[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/vite-notifications)
+[![Open in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/triggeryjs/triggery/main?file=examples/vite-notifications/src/triggers/message.trigger.ts)
+[![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/triggeryjs/triggery)
+
+> Examples folder is populated as part of the [0.4 milestone](./ROADMAP.md). Until then the buttons drop you into the monorepo source so you can poke at the code.
 
 ## Packages
 
@@ -205,8 +219,39 @@ Full breakdown + idiomatic implementations + per-scenario analysis in [`benchmar
 
 ## Status
 
-Pre-MVP (Phase 1). Roadmap to 1.0 is tracked in the planning doc.
+Pre-1.0 — public API can still change between minor versions. Roadmap to 1.0 lives in [`ROADMAP.md`](./ROADMAP.md). High-level milestones are tracked on the [GitHub Project board](https://github.com/orgs/triggeryjs/projects).
+
+## Community
+
+- [**GitHub Discussions**](https://github.com/triggeryjs/triggery/discussions) — questions, ideas, show-and-tell. Primary community channel until 1.0.
+- **Discord** — opening at the 1.0 release. Until then async Discussions is the place.
+- **X / Twitter** — [`@triggeryjs`](https://twitter.com/triggeryjs) (reserved, posts after 0.4 milestone).
+- **Bluesky** — [`@triggery.dev`](https://bsky.app/profile/triggery.dev) (reserved).
+- **Stack Overflow** — tag your question with [`triggery`](https://stackoverflow.com/questions/tagged/triggery).
+
+See [`SUPPORT.md`](./SUPPORT.md) for the full "where do I ask X" guide.
+
+## Contributing
+
+PRs, RFCs, bug reports and documentation fixes are all welcome. Start here:
+
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — dev setup, workflow, coding standards, changesets.
+- [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) — Contributor Covenant 2.1.
+- [`GOVERNANCE.md`](./GOVERNANCE.md) — how decisions are made.
+- [`SECURITY.md`](./SECURITY.md) — responsible disclosure for security issues.
+- [Good first issues](https://github.com/triggeryjs/triggery/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) — direct CTA if you want a small win.
+
+Looking for something larger? Pick from [`ROADMAP.md`](./ROADMAP.md) or open an [RFC issue](https://github.com/triggeryjs/triggery/issues/new?template=rfc.yml).
+
+## Sponsors
+
+Triggery is built in the open and is free under the MIT licence. If your team relies on it, please consider sponsoring — it directly funds maintenance, docs, and the bug-bounty programme.
+
+- **GitHub Sponsors** — <https://github.com/sponsors/triggeryjs>
+- **Boosty** (RU-friendly) — <https://boosty.to/triggery>
+
+Corporate sponsors get a logo here once the programme launches. Reach out at `a@skhom.ru` with subject `[triggery sponsorship]`.
 
 ## License
 
-MIT &copy; Aleksey Skhomenko
+MIT &copy; Aleksey Skhomenko — see [`LICENSE`](./LICENSE).

@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question — how do I do X with Triggery?
+    url: https://github.com/triggeryjs/triggery/discussions/new?category=q-a
+    about: Use GitHub Discussions for usage questions. Faster, searchable, and the answer helps the next person.
+  - name: Idea or proposal (discussion-first)
+    url: https://github.com/triggeryjs/triggery/discussions/new?category=ideas
+    about: Discuss directional changes before opening a formal RFC issue.
+  - name: Show and tell
+    url: https://github.com/triggeryjs/triggery/discussions/new?category=show-and-tell
+    about: Built something with Triggery? Share it!
+  - name: Security vulnerability
+    url: https://github.com/triggeryjs/triggery/security/advisories/new
+    about: Please report security issues privately via GitHub Security Advisories. Do NOT open a public issue.

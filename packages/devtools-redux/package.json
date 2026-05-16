@@ -1,7 +1,7 @@
 {
   "name": "@triggery/devtools-redux",
   "version": "0.0.0",
-  "description": "Redux DevTools bridge for Triggery — middleware that streams runtime events into the Redux DevTools browser extension",
+  "description": "Redux DevTools bridge for Triggery \u2014 middleware that streams runtime events into the Redux DevTools browser extension",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
@@ -11,6 +11,16 @@
     "directory": "packages/devtools-redux"
   },
   "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/triggeryjs"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
   "keywords": [
     "triggery",
     "devtools",

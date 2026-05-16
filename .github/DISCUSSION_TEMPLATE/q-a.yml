@@ -1,0 +1,31 @@
+title: '<short question>'
+labels: ['question']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before posting, please:
+        - Search existing discussions — your question may already be answered.
+        - Check the [docs](https://github.com/triggeryjs/triggery#readme).
+        - Make sure this is a **how-to** question, not a bug report. Bug reports go to Issues.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do? What have you tried?
+    validations:
+      required: true
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Code (if applicable)
+      description: A minimal example. StackBlitz / CodeSandbox link is even better.
+      render: ts
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      placeholder: '@triggery/core 0.3.0, react 19.2.0, vite 5.x'

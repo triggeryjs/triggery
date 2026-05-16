@@ -1,0 +1,32 @@
+title: '<short title>'
+labels: ['idea']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to float an idea before committing to a formal RFC.
+
+        - For small features → open a Feature Request issue instead.
+        - For substantial public API changes → use the RFC issue template after this discussion converges.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What are you proposing? One paragraph is enough at this stage.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why does it matter?
+      description: What problem does it solve? Whose life gets better?
+    validations:
+      required: true
+
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions
+      description: What are you unsure about? What feedback would be most useful?

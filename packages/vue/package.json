@@ -1,7 +1,7 @@
 {
   "name": "@triggery/vue",
   "version": "0.0.0",
-  "description": "Vue 3 bindings for Triggery — useEvent / useCondition / useAction composables + <TriggerRuntimeProvider> / <TriggerScope>",
+  "description": "Vue 3 bindings for Triggery \u2014 useEvent / useCondition / useAction composables + <TriggerRuntimeProvider> / <TriggerScope>",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
@@ -11,6 +11,16 @@
     "directory": "packages/vue"
   },
   "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/triggeryjs"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
   "keywords": [
     "triggery",
     "vue",

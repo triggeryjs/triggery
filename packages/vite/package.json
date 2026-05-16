@@ -1,7 +1,7 @@
 {
   "name": "@triggery/vite",
   "version": "0.0.0",
-  "description": "Vite plugin for Triggery — auto-import every *.trigger.ts file via a virtual module",
+  "description": "Vite plugin for Triggery \u2014 auto-import every *.trigger.ts file via a virtual module",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
@@ -11,6 +11,16 @@
     "directory": "packages/vite"
   },
   "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/triggeryjs"
+    },
+    {
+      "type": "boosty",
+      "url": "https://boosty.to/triggery"
+    }
+  ],
   "keywords": [
     "triggery",
     "vite-plugin",

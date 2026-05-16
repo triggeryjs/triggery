@@ -1,0 +1,92 @@
+name: Bundle size
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/size-limit.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  size:
+    name: Measure dist size
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Build PR head
+      - run: pnpm build
+      - name: Snapshot PR sizes
+        id: pr
+        run: |
+          set -euo pipefail
+          {
+            echo 'sizes<<SIZES'
+            echo '| Package | dist (gzip) | dist (raw) |'
+            echo '|---|---:|---:|'
+            for d in packages/*/dist; do
+              pkg=$(basename "$(dirname "$d")")
+              raw=$(du -bc "$d" 2>/dev/null | tail -1 | awk '{print $1}')
+              gz=$(find "$d" -type f \( -name '*.js' -o -name '*.mjs' \) -exec sh -c 'gzip -c "$1" | wc -c' _ {} \; | awk '{s+=$1} END {print s+0}')
+              printf '| `@triggery/%s` | %s B | %s B |\n' "$pkg" "$gz" "$raw"
+            done
+            echo 'SIZES'
+          } >> "$GITHUB_OUTPUT"
+
+      # Build main for comparison
+      - name: Checkout base ref
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+          git checkout origin/${{ github.event.pull_request.base.ref }} -- packages/
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Snapshot main sizes
+        id: base
+        run: |
+          set -euo pipefail
+          {
+            echo 'sizes<<SIZES'
+            echo '| Package | dist (gzip) | dist (raw) |'
+            echo '|---|---:|---:|'
+            for d in packages/*/dist; do
+              pkg=$(basename "$(dirname "$d")")
+              raw=$(du -bc "$d" 2>/dev/null | tail -1 | awk '{print $1}')
+              gz=$(find "$d" -type f \( -name '*.js' -o -name '*.mjs' \) -exec sh -c 'gzip -c "$1" | wc -c' _ {} \; | awk '{s+=$1} END {print s+0}')
+              printf '| `@triggery/%s` | %s B | %s B |\n' "$pkg" "$gz" "$raw"
+            done
+            echo 'SIZES'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: bundle-size
+          message: |
+            ### Bundle size — PR vs `${{ github.event.pull_request.base.ref }}`
+
+            **PR HEAD (`${{ github.event.pull_request.head.sha }}`)**
+
+            ${{ steps.pr.outputs.sizes }}
+
+            **Base (`${{ github.event.pull_request.base.ref }}`)**
+
+            ${{ steps.base.outputs.sizes }}
+
+            <sub>Measured by `gzip -c | wc -c` over emitted `.js`/`.mjs` files. Not a hard gate.</sub>
