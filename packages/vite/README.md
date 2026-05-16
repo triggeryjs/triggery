@@ -40,6 +40,13 @@ That's it — every file matching the glob is auto-imported, so its top-level `c
 * Editing an existing trigger file just re-runs its `createTrigger(...)` — the runtime's last-mount-wins replaces the old registration. No special handling needed.
 * Adding / removing / renaming a trigger file invalidates the virtual module so its import list is rebuilt on the next request.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — runtime where discovered triggers register.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — Most common combination with this plugin.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
 MIT &copy; Aleksey Skhomenko

@@ -69,6 +69,15 @@ useMobxCondition<S, K>(
 
 `read` is a plain function. Use `.get()` on boxes, dot-access on `observable.object`, etc. — exactly as you'd read MobX state anywhere else.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — Required peer.
+- [`@triggery/zustand`](https://www.npmjs.com/package/@triggery/zustand) — Alternative adapter for Zustand stores.
+- [`@triggery/redux`](https://www.npmjs.com/package/@triggery/redux) — Alternative adapter for Redux stores.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
-MIT
+MIT &copy; Aleksey Skhomenko

@@ -67,6 +67,14 @@ All three hooks attach in `useEffect` (commit phase, StrictMode-safe) and detach
 
 The trigger's event payload type defines what `mapPayload` should produce. If `mapPayload` is omitted, the raw DOM event / observer entry is forwarded unchanged.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — Required peer — these are React hooks.
+- [`@triggery/socket`](https://www.npmjs.com/package/@triggery/socket) — Alternative event source: socket.io / native WebSocket.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
-MIT
+MIT &copy; Aleksey Skhomenko

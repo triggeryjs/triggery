@@ -25,6 +25,14 @@ const runtime = createRuntime({
 
 If the Redux DevTools extension isn't installed (production builds, Node, browsers without the extension), the middleware degrades to a quiet no-op.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.
+- [`@triggery/devtools-panel`](https://www.npmjs.com/package/@triggery/devtools-panel) — In-app inspector React components.
+- [`@triggery/devtools-bridge`](https://www.npmjs.com/package/@triggery/devtools-bridge) — Page-side bridge for external inspectors.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
 MIT &copy; Aleksey Skhomenko

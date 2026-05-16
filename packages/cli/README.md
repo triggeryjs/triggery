@@ -47,3 +47,15 @@ import { buildTriggerGraph, renderGraph, scaffoldTrigger, createProject } from '
 const nodes = buildTriggerGraph({ cwd: process.cwd() });
 console.log(renderGraph(nodes, 'md'));
 ```
+
+## Related packages
+
+- [`@triggery/eslint-plugin`](https://www.npmjs.com/package/@triggery/eslint-plugin) — Lint rules invoked by `triggery lint`.
+- [`@triggery/codemod`](https://www.npmjs.com/package/@triggery/codemod) — Migration codemods invoked by the CLI.
+- [`@triggery/vite`](https://www.npmjs.com/package/@triggery/vite) — Vite plugin for auto-discovery.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
+## License
+
+MIT &copy; Aleksey Skhomenko

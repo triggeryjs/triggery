@@ -141,6 +141,18 @@ Read the latest snapshot of a trigger, or subscribe to the runtime's inspector r
 
 Returns `{ useFooEvent, useBarCondition, useBazAction }` named hooks derived from the trigger schema — purely for code readability in larger files.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — the runtime this binding wraps.
+- [`@triggery/solid`](https://www.npmjs.com/package/@triggery/solid) — SolidJS variant with the same hook API.
+- [`@triggery/vue`](https://www.npmjs.com/package/@triggery/vue) — Vue 3 variant with the same hook API.
+- [`@triggery/zustand`](https://www.npmjs.com/package/@triggery/zustand) — Adapter: read a Zustand store from a condition.
+- [`@triggery/redux`](https://www.npmjs.com/package/@triggery/redux) — Adapter: read a Redux store from a condition.
+- [`@triggery/jotai`](https://www.npmjs.com/package/@triggery/jotai) — Adapter: read a Jotai atom from a condition.
+- [`@triggery/query`](https://www.npmjs.com/package/@triggery/query) — Adapter: read a TanStack Query cache entry.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
 MIT &copy; Aleksey Skhomenko

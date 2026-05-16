@@ -62,6 +62,15 @@ useReatomCondition<V, S, K>(
 
 Works with any callable Reatom primitive — atoms, computeds, derived values.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — Required peer.
+- [`@triggery/jotai`](https://www.npmjs.com/package/@triggery/jotai) — Alternative adapter for atom-shaped state.
+- [`@triggery/signals`](https://www.npmjs.com/package/@triggery/signals) — Alternative adapter for signal-shaped state.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
-MIT
+MIT &copy; Aleksey Skhomenko

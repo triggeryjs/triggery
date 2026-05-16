@@ -49,3 +49,14 @@ Other listenerMiddleware shapes (`matcher`, `predicate`, `type`) are detected bu
 ## Why ts-morph (and not jscodeshift / babel)?
 
 ts-morph is the TypeScript Compiler API with a nicer surface. It speaks JSX and the same type system the rest of Triggery is built on. The codemods produce TypeScript output, so type-aware AST work would be a regression with jscodeshift's recast-based round-trip.
+
+## Related packages
+
+- [`@triggery/eslint-plugin`](https://www.npmjs.com/package/@triggery/eslint-plugin) — Lint rules that catch issues this codemod can't repair.
+- [`@triggery/cli`](https://www.npmjs.com/package/@triggery/cli) — `triggery scaffold trigger` for greenfield files.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
+## License
+
+MIT &copy; Aleksey Skhomenko

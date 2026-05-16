@@ -186,6 +186,16 @@ The runtime is a plain object with a `Map`-based registry. It does not import Re
 
 The same `createTrigger({...})` declaration runs unchanged across all of those. Bindings only wire `useEvent` / `useCondition` / `useAction` to the host framework's lifecycle.
 
+## Related packages
+
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — React bindings (`useEvent` / `useCondition` / `useAction`).
+- [`@triggery/solid`](https://www.npmjs.com/package/@triggery/solid) — SolidJS bindings — same hook API.
+- [`@triggery/vue`](https://www.npmjs.com/package/@triggery/vue) — Vue 3 bindings — same hook API.
+- [`@triggery/testing`](https://www.npmjs.com/package/@triggery/testing) — Test utilities (`createTestRuntime`, `fakeScheduler`).
+- [`@triggery/vite`](https://www.npmjs.com/package/@triggery/vite) — Vite plugin for auto-discovery of `*.trigger.ts`.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
 MIT &copy; Aleksey Skhomenko

@@ -31,6 +31,15 @@ That's the full integration. The component subscribes to the active runtime (via
 
 The standalone (in-browser, postMessage-driven) panel and the Chrome DevTools wrapper land in V1.1 — see [`extensions/chrome-devtools`](../../extensions/chrome-devtools) for the manifest stub.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — Required peer — these are React components.
+- [`@triggery/devtools-redux`](https://www.npmjs.com/package/@triggery/devtools-redux) — Stream runtime events into the Redux DevTools extension.
+- [`@triggery/devtools-bridge`](https://www.npmjs.com/package/@triggery/devtools-bridge) — Page-side bridge for external inspectors.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
 MIT &copy; Aleksey Skhomenko

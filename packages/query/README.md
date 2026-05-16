@@ -69,6 +69,15 @@ useQueryCondition<T, S, K>(
 ): void
 ```
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — Required peer.
+- [`@triggery/zustand`](https://www.npmjs.com/package/@triggery/zustand) — Adapter for non-server state.
+- [`@triggery/redux`](https://www.npmjs.com/package/@triggery/redux) — Adapter for non-server state.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
-MIT
+MIT &copy; Aleksey Skhomenko

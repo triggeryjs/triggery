@@ -38,6 +38,14 @@ In Node / SSR `installDevtoolsBridge` returns a no-op disposer.
 { source: 'triggery-devtools', type: 'triggery:bye',      runtimeId,               at }
 ```
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.
+- [`@triggery/devtools-panel`](https://www.npmjs.com/package/@triggery/devtools-panel) — In-app inspector React components.
+- [`@triggery/devtools-redux`](https://www.npmjs.com/package/@triggery/devtools-redux) — Stream runtime events into the Redux DevTools extension.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
 MIT &copy; Aleksey Skhomenko

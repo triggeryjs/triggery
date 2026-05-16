@@ -60,6 +60,15 @@ useZustandCondition<T, S, K>(
 
 Works with both vanilla stores (`createStore`) and hook stores (`create`).
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — exposes `Trigger<S>`.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — Required peer — `useZustandCondition` is a React hook.
+- [`@triggery/redux`](https://www.npmjs.com/package/@triggery/redux) — Alternative adapter for Redux stores.
+- [`@triggery/jotai`](https://www.npmjs.com/package/@triggery/jotai) — Alternative adapter for Jotai atoms.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
-MIT
+MIT &copy; Aleksey Skhomenko

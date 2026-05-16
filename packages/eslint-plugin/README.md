@@ -94,3 +94,14 @@ Caps the per-trigger port count to keep scenarios spec-like.
 ```
 
 Once a file has `threshold` or more port calls, suggests switching from `useEvent(trigger, 'new-message')` to the named hook `useNewMessageEvent` (available via `trigger.namedHooks()`).
+
+## Related packages
+
+- [`@triggery/codemod`](https://www.npmjs.com/package/@triggery/codemod) — Codemods that introduce trigger files this plugin then checks.
+- [`@triggery/cli`](https://www.npmjs.com/package/@triggery/cli) — `triggery lint` ships this plugin's `recommended` preset by default.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
+## License
+
+MIT &copy; Aleksey Skhomenko

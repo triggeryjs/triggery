@@ -117,6 +117,14 @@ Register an action handler.
 
 All composables auto-clean via `onScopeDispose` — they work both inside component `setup()` and inside detached `effectScope()`s.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — the runtime this binding wraps.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — React variant with the same hook API.
+- [`@triggery/solid`](https://www.npmjs.com/package/@triggery/solid) — SolidJS variant with the same hook API.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
-MIT
+MIT &copy; Aleksey Skhomenko

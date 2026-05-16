@@ -56,6 +56,14 @@ function MessageBridge() {
 
 Both hooks attach in `useEffect` (commit phase, StrictMode-safe) and detach on unmount or when their inputs change. If `socket` / `ws` is `null` or `undefined`, the hook is a no-op until you supply a connection — useful while the socket is being created asynchronously.
 
+## Related packages
+
+- [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.
+- [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — Required peer.
+- [`@triggery/dom`](https://www.npmjs.com/package/@triggery/dom) — Alternative event source: DOM / ResizeObserver / IntersectionObserver.
+
+See the [full package list](https://github.com/triggeryjs/triggery#packages) in the repo README.
+
 ## License
 
-MIT
+MIT &copy; Aleksey Skhomenko
