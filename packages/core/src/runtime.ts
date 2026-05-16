@@ -1,5 +1,10 @@
 import { chainHas, getCurrentDispatch } from './cascadeContext.ts';
-import { cancelAllTimers, executeTrigger, type RegisteredTrigger } from './dispatch.ts';
+import {
+  cancelAllTimers,
+  executeTrigger,
+  needsTiming,
+  type RegisteredTrigger,
+} from './dispatch.ts';
 import { createInspector } from './inspector.ts';
 import { createScheduler } from './scheduler.ts';
 import type {
@@ -33,6 +38,10 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const triggers = new Map<string, RegisteredTrigger>();
   const eventIndex = new Map<string, Set<RegisteredTrigger>>();
   const middleware = options.middleware ?? [];
+  // Cached at construction — middleware is immutable for the runtime's lifetime,
+  // so we avoid recomputing these flags on the dispatch hot path.
+  const hasMiddleware = middleware.length > 0;
+  const trackTiming = needsTiming(middleware);
   const maxCascadeDepth = options.maxCascadeDepth ?? 3;
   const inspector = createInspector(options.inspectorBufferSize ?? 50);
   const microtaskScheduler = createScheduler('microtask');
@@ -266,10 +275,13 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   type DispatchOpts = { forceSync: boolean };
 
   const dispatch = (fireCtx: FireContext, opts: DispatchOpts) => {
-    // Middleware onFire — same shape for top-level and cascade fires.
-    for (const mw of middleware) {
-      const result = mw.onFire?.(fireCtx);
-      if (result?.cancel) return;
+    // Middleware onFire — gated by `hasMiddleware` so the empty-middleware path
+    // skips even the for-of setup.
+    if (hasMiddleware) {
+      for (const mw of middleware) {
+        const result = mw.onFire?.(fireCtx);
+        if (result?.cancel) return;
+      }
     }
 
     // Cascade depth gate. Top-level fires have depth=0, so this can only
@@ -311,7 +323,15 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       }
 
       const run = () => {
-        executeTrigger({ trigger, fireCtx, inspector, middleware, runtimeId: id });
+        executeTrigger({
+          trigger,
+          fireCtx,
+          inspector,
+          middleware,
+          hasMiddleware,
+          trackTiming,
+          runtimeId: id,
+        });
       };
 
       // `forceSync` skips the per-trigger scheduler choice (used by fireSync).

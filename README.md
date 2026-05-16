@@ -147,18 +147,18 @@ Eight scenarios bench-ed against four neighbour libraries. Headline numbers (loc
 
 | Scenario | Triggery | effector | rxjs | redux-saga | xstate |
 |---|---:|---:|---:|---:|---:|
-| Plain dispatch | 505k | 358k | **16.4M** | 442k | 614k |
-| Conditional (50% pass) | 516k | 565k | **14.3M** | 456k | 999k |
-| Cascade A → B | 249k | 343k | **9.5M** | 206k | 423k |
-| Take-latest cancellation | 307k | 228k | **4.0M** | 383k | 50k |
-| Sparse bus (100 types, fire 1) | 544k | **5.18M** | 286k | 251k | 757k |
-| Lazy conditions (5 sources, read 1) | 517k | 212k | **2.57M** | 302k | 127k |
-| Multi-event single trigger | 545k | 3.74M | **14.45M** | 569k | 813k |
-| Toggle enable/disable + fire | 979k | 523k | **6.57M** | 341k | 462k |
+| Plain dispatch | 605k | 362k | **16.5M** | 409k | 667k |
+| Conditional (50% pass) | 600k | 552k | **14.6M** | 419k | 1.03M |
+| Cascade A → B | 296k | 358k | **9.9M** | 201k | 428k |
+| Take-latest cancellation | 282k | 200k | **3.7M** | 375k | 52k |
+| Sparse bus (100 types, fire 1) | 633k | **5.24M** | 405k | 348k | 830k |
+| Lazy conditions (5 sources, read 1) | 627k | 212k | **2.47M** | 316k | 127k |
+| Multi-event single trigger | 643k | 3.79M | **13.0M** | 398k | 632k |
+| Toggle enable/disable + fire | 1.10M | 526k | **6.57M** | 334k | 479k |
 
 rxjs wins raw throughput (thin `Subject` + operators, no graph/observability/cascade). Triggery is **competitive everywhere** and pulls ahead where its design matches the workload: **scenario 5** (indexed dispatch beats rxjs and saga), **scenario 6** (pull-only conditions beat effector, saga and xstate), **scenario 8** (first-class enable/disable beats effector, saga and xstate — only rxjs is faster).
 
-The fixed ~1.5-2 µs overhead per fire is what you pay for the built-in inspector, cascade safety, scope gating and concurrency strategies that the other libraries don't ship — full breakdown + idiomatic implementations in [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
+The fixed ~1.5 µs overhead per fire is what you pay for the built-in inspector, cascade safety, scope gating and concurrency strategies that the other libraries don't ship — full breakdown + idiomatic implementations in [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
 
 ## Status
 

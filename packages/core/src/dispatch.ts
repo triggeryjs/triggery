@@ -10,6 +10,7 @@ import type {
   InternalTriggerConfig,
   Middleware,
   SkipContext,
+  TriggerInspectSnapshot,
   UntypedActionFn,
 } from './types.ts';
 
@@ -18,10 +19,9 @@ const genRunId = () => `run_${(++runIdCounter).toString(36)}`;
 
 /**
  * Whether any middleware in the list cares about per-run / per-action timing.
- * When nothing observes timing we skip every `performance.now()` call in the
- * hot path (this avoids one syscall-per-trigger on CodSpeed Valgrind runs).
+ * Cached once at runtime construction — avoids one for-of per fire.
  */
-function needsTiming(middleware: readonly Middleware[]): boolean {
+export function needsTiming(middleware: readonly Middleware[]): boolean {
   for (const mw of middleware) {
     if (mw.onActionEnd || mw.onError || mw.onActionStart) return true;
   }
@@ -65,6 +65,10 @@ type DispatchDeps = {
   fireCtx: FireContext;
   inspector: InspectorImpl;
   middleware: readonly Middleware[];
+  /** Cached `middleware.length > 0` — saves a `.length` access per fire. */
+  hasMiddleware: boolean;
+  /** Cached `needsTiming(middleware)` — saves a per-fire for-of through middleware. */
+  trackTiming: boolean;
   /** Runtime id — passed into the cascade context so cross-runtime fires don't get tagged as cascade. */
   runtimeId: string;
 };
@@ -150,10 +154,8 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
 const EMPTY_STRING_ARRAY: readonly string[] = Object.freeze([]) as readonly string[];
 
 function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void | Promise<void> {
-  const { trigger, fireCtx, inspector, middleware, runtimeId } = deps;
+  const { trigger, fireCtx, inspector, middleware, hasMiddleware, trackTiming, runtimeId } = deps;
   if (!trigger.enabled) return;
-
-  const trackTiming = needsTiming(middleware);
 
   // ─── Concurrency gate ────────────────────────────────────────────────────
   // take-first / exhaust: if anything is in flight, skip this run.
@@ -161,12 +163,14 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
     if (trigger.inFlight.size > 0) {
       const runId = genRunId();
       const reason = `concurrency-${concurrency}`;
-      const skipCtx: SkipContext = {
-        triggerId: trigger.config.id,
-        eventName: fireCtx.eventName,
-        reason,
-      };
-      for (const mw of middleware) mw.onSkip?.(skipCtx);
+      if (hasMiddleware) {
+        const skipCtx: SkipContext = {
+          triggerId: trigger.config.id,
+          eventName: fireCtx.eventName,
+          reason,
+        };
+        for (const mw of middleware) mw.onSkip?.(skipCtx);
+      }
       inspector.record({
         triggerId: trigger.config.id,
         runId,
@@ -194,26 +198,32 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
   // Required gate — every required condition must be registered. This check
   // hits `trigger.conditions` (the mirror Map) directly, not the lazy proxy,
   // so it stays cheap even when nothing else in the handler runs.
-  for (const requiredName of trigger.config.required) {
-    if (!trigger.conditions.has(requiredName)) {
-      const reason = `missing-required-condition:${requiredName}`;
-      const skipCtx: SkipContext = {
-        triggerId: trigger.config.id,
-        eventName: fireCtx.eventName,
-        reason,
-      };
-      for (const mw of middleware) mw.onSkip?.(skipCtx);
-      inspector.record({
-        triggerId: trigger.config.id,
-        runId,
-        eventName: fireCtx.eventName,
-        status: 'skipped',
-        reason,
-        durationMs: trackTiming ? performance.now() - startedAt : 0,
-        executedActions: EMPTY_STRING_ARRAY,
-        snapshotKeys: EMPTY_STRING_ARRAY,
-      });
-      return;
+  const required = trigger.config.required;
+  if (required.length > 0) {
+    for (let i = 0; i < required.length; i++) {
+      const requiredName = required[i] as string;
+      if (!trigger.conditions.has(requiredName)) {
+        const reason = `missing-required-condition:${requiredName}`;
+        if (hasMiddleware) {
+          const skipCtx: SkipContext = {
+            triggerId: trigger.config.id,
+            eventName: fireCtx.eventName,
+            reason,
+          };
+          for (const mw of middleware) mw.onSkip?.(skipCtx);
+        }
+        inspector.record({
+          triggerId: trigger.config.id,
+          runId,
+          eventName: fireCtx.eventName,
+          status: 'skipped',
+          reason,
+          durationMs: trackTiming ? performance.now() - startedAt : 0,
+          executedActions: EMPTY_STRING_ARRAY,
+          snapshotKeys: EMPTY_STRING_ARRAY,
+        });
+        return;
+      }
     }
   }
 
@@ -350,16 +360,19 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
 
   const finalize = (status: 'fired' | 'errored' | 'aborted', reason?: string) => {
     trigger.inFlight.delete(controller);
-    inspector.record({
+    // Build the snapshot without the `...(reason && {reason})` spread —
+    // the spread allocates two intermediate objects per fire on the hot path.
+    const snapshot: { -readonly [K in keyof TriggerInspectSnapshot]: TriggerInspectSnapshot[K] } = {
       triggerId: trigger.config.id,
       runId,
       eventName: fireCtx.eventName,
       status,
-      ...(reason !== undefined && { reason }),
       durationMs: trackTiming ? performance.now() - startedAt : 0,
       executedActions,
       snapshotKeys,
-    });
+    };
+    if (reason !== undefined) snapshot.reason = reason;
+    inspector.record(snapshot);
   };
 
   // Invoke the handler. The synchronous prologue runs inside `withDispatch`,
