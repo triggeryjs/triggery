@@ -1,5 +1,8 @@
 /**
- * @triggery/core — orchestration runtime for React business logic.
+ * @triggery/core — framework-agnostic orchestration runtime. Zero runtime
+ * dependencies. Bindings for React, Solid, Vue (and anything else you wire
+ * up in ~50 lines) live in their own packages — see the related-packages
+ * section in the README.
  *
  * Public entry points:
  *   - `createTrigger<Schema>(config)` — define a trigger.
