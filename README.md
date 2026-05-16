@@ -13,6 +13,7 @@
 [![npm downloads](https://img.shields.io/npm/dm/@triggery/core?label=downloads)](https://www.npmjs.com/package/@triggery/core)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/triggeryjs/triggery?style=social)](https://github.com/triggeryjs/triggery/stargazers)
+[![Sponsor on Patreon](https://img.shields.io/badge/sponsor-patreon-ff424d?logo=patreon&logoColor=white)](https://www.patreon.com/triggery)
 [![Sponsor on Boosty](https://img.shields.io/badge/sponsor-boosty-f15f2c?logo=boosty&logoColor=white)](https://boosty.to/triggery)
 [![Discussions](https://img.shields.io/github/discussions/triggeryjs/triggery)](https://github.com/triggeryjs/triggery/discussions)
 
@@ -247,8 +248,10 @@ Looking for something larger? Pick from [`ROADMAP.md`](./ROADMAP.md) or open an 
 
 Triggery is built in the open and is free under the MIT licence. If your team relies on it, please consider sponsoring — it directly funds maintenance, docs, and the bug-bounty programme.
 
-- **Boosty** (RU/CIS-friendly, in production) — <https://boosty.to/triggery>
-- **Patreon** (international) — _coming soon_ (GitHub Sponsors is unavailable in Kazakhstan, where the maintainer is based; Patreon is being set up as the international alternative).
+- **Patreon** (international) — <https://www.patreon.com/triggery> — three tiers: **Supporter** ($5), **Sponsor** ($25, logo in README), **Backer** ($100, larger logo + priority issue triage).
+- **Boosty** (RU/CIS-friendly) — <https://boosty.to/triggery>
+
+> GitHub Sponsors is intentionally omitted — it is not available to the maintainer's region. Patreon is the international channel.
 
 Corporate sponsors get a logo here once the programme launches. Reach out at `a@skhom.ru` with subject `[triggery sponsorship]`.
 

@@ -13,6 +13,10 @@
   "bugs": "https://github.com/triggeryjs/triggery/issues",
   "funding": [
     {
+      "type": "patreon",
+      "url": "https://www.patreon.com/triggery"
+    },
+    {
       "type": "boosty",
       "url": "https://boosty.to/triggery"
     }
