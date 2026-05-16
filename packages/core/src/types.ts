@@ -283,6 +283,31 @@ export type RegisterScopeOptions = {
   readonly scope?: string;
 };
 
+/**
+ * Static, serializable description of a trigger — used by `runtime.graph()`,
+ * devtools panels, the CLI and any code that wants to introspect the registry
+ * without holding a reference to the live runtime objects.
+ */
+export type TriggerGraphNode = {
+  readonly id: string;
+  readonly scope: string;
+  readonly events: readonly string[];
+  readonly required: readonly string[];
+  readonly schedule: SchedulerStrategy;
+  readonly concurrency: ConcurrencyStrategy;
+  readonly enabled: boolean;
+};
+
+/**
+ * JSON-friendly snapshot of the runtime's trigger registry. Stable shape —
+ * safe to log, send over a postMessage bridge, or render in devtools.
+ */
+export type RuntimeGraph = {
+  readonly triggers: readonly TriggerGraphNode[];
+  /** Map of `eventName → triggerId[]`. Empty events are not included. */
+  readonly eventIndex: Readonly<Record<string, readonly string[]>>;
+};
+
 export type Runtime = {
   readonly id: string;
 
@@ -319,6 +344,12 @@ export type Runtime = {
 
   /** Look up a trigger by id (for `useInspect` and CLI tools). */
   getTrigger(triggerId: string): Trigger<TriggerSchema> | undefined;
+
+  /**
+   * JSON-friendly snapshot of the trigger registry — for devtools, the CLI's
+   * `triggery graph` command, and tooling that introspects connections.
+   */
+  graph(): RuntimeGraph;
 
   /** Tear down the runtime completely. */
   dispose(): void;

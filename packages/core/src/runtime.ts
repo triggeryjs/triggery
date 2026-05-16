@@ -10,8 +10,10 @@ import type {
   RegisterScopeOptions,
   RegistrationToken,
   Runtime,
+  RuntimeGraph,
   RuntimeOptions,
   Trigger,
+  TriggerGraphNode,
   TriggerInspectSnapshot,
   TriggerSchema,
   UntypedActionFn,
@@ -347,6 +349,26 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     return buildPublicTrigger(trigger, inspector);
   };
 
+  const graph = (): RuntimeGraph => {
+    const nodes: TriggerGraphNode[] = [];
+    for (const t of triggers.values()) {
+      nodes.push({
+        id: t.config.id,
+        scope: t.config.scope,
+        events: t.config.events,
+        required: t.config.required,
+        schedule: t.config.schedule,
+        concurrency: t.config.concurrency,
+        enabled: t.enabled,
+      });
+    }
+    const idx: Record<string, string[]> = {};
+    for (const [eventName, triggerSet] of eventIndex) {
+      idx[eventName] = Array.from(triggerSet).map((t) => t.config.id);
+    }
+    return { triggers: nodes, eventIndex: idx };
+  };
+
   const dispose = () => {
     for (const trigger of triggers.values()) {
       for (const ctl of trigger.inFlight) ctl.abort('runtime-disposed');
@@ -369,6 +391,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     subscribe,
     getInspectorBuffer,
     getTrigger,
+    graph,
     dispose,
   };
 }

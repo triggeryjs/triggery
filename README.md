@@ -100,9 +100,11 @@ pnpm add @triggery/core @triggery/react
 
 | Package | Description |
 |---|---|
-| [`@triggery/core`](./packages/core) | Runtime: `createTrigger`, `createRuntime`, indexed dispatch, inspector, middleware |
-| [`@triggery/react`](./packages/react) | React bindings: `useEvent`, `useCondition`, `useAction`, `useInlineTrigger`, `createNamedHooks`, `<TriggerRuntimeProvider>` |
-| [`@triggery/testing`](./packages/testing) | Testing utilities (V1.1) |
+| [`@triggery/core`](./packages/core) | Runtime: `createTrigger`, `createRuntime`, indexed dispatch, inspector, middleware, `graph()` |
+| [`@triggery/react`](./packages/react) | React bindings: `useEvent`, `useCondition`, `useAction`, `useInlineTrigger`, `createNamedHooks`, `<TriggerRuntimeProvider>`, `<TriggerScope>` |
+| [`@triggery/testing`](./packages/testing) | `createTestRuntime`, `mockCondition`, `mockAction`, `flushMicrotasks` |
+| [`@triggery/vite`](./packages/vite) | Vite plugin: auto-imports every `*.trigger.ts` via a virtual module + HMR |
+| [`@triggery/devtools-redux`](./packages/devtools-redux) | Middleware that streams runtime events into the Redux DevTools browser extension |
 
 ## Why
 

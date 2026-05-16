@@ -34,7 +34,9 @@
     "paths": {
       "@triggery/core": ["./packages/core/src/index.ts"],
       "@triggery/react": ["./packages/react/src/index.ts"],
-      "@triggery/testing": ["./packages/testing/src/index.ts"]
+      "@triggery/testing": ["./packages/testing/src/index.ts"],
+      "@triggery/devtools-redux": ["./packages/devtools-redux/src/index.ts"],
+      "@triggery/vite": ["./packages/vite/src/index.ts"]
     }
   }
 }
