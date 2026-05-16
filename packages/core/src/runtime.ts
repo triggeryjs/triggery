@@ -1,7 +1,9 @@
-import { executeTrigger, type RegisteredTrigger } from './dispatch.ts';
+import { getCurrentDispatch } from './cascadeContext.ts';
+import { cancelAllTimers, executeTrigger, type RegisteredTrigger } from './dispatch.ts';
 import { createInspector } from './inspector.ts';
 import { createScheduler } from './scheduler.ts';
 import type {
+  CascadeContext,
   ConditionGetter,
   FireContext,
   InternalTriggerConfig,
@@ -56,6 +58,9 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       const existing = triggers.get(config.id);
       if (existing) {
         for (const eventName of existing.config.events) deindexEvent(eventName, existing);
+        cancelAllTimers(existing);
+        for (const prev of existing.inFlight) prev.abort('trigger-replaced');
+        existing.inFlight.clear();
       }
     }
     const registered: RegisteredTrigger = {
@@ -65,7 +70,10 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       conditionStacks: new Map(),
       actionStacks: new Map(),
       enabled: true,
-      inFlight: undefined,
+      inFlight: new Set(),
+      queueTail: Promise.resolve(),
+      timers: new Map(),
+      deferCounter: 0,
     };
     triggers.set(config.id, registered);
     for (const eventName of config.events) indexEvent(eventName, registered);
@@ -78,6 +86,9 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
         const current = triggers.get(config.id);
         if (current !== registered) return;
         for (const eventName of registered.config.events) deindexEvent(eventName, registered);
+        cancelAllTimers(registered);
+        for (const ctl of registered.inFlight) ctl.abort('trigger-disposed');
+        registered.inFlight.clear();
         triggers.delete(config.id);
       },
     };
@@ -171,80 +182,99 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     handler: UntypedActionFn,
   ): RegistrationToken => registerStacked(triggerId, name, handler, 'action');
 
+  // ─── cascade helpers ──────────────────────────────────────────────────
+  const emitCascade = (info: CascadeContext) => {
+    for (const mw of middleware) mw.onCascade?.(info);
+  };
+
+  /**
+   * Build a FireContext, taking the current synchronous dispatch context into
+   * account (so an action emitting a new event is tagged as a cascade rather
+   * than as a top-level fire).
+   *
+   * Top-level fires intentionally leave `visitedChain` undefined — this keeps
+   * the empty-registry hot path allocation-free. `dispatch` and `executeTrigger`
+   * treat `undefined` as an empty chain.
+   */
+  const buildFireContext = (eventName: string, payload: unknown): FireContext => {
+    const parent = getCurrentDispatch();
+    if (parent && parent.runtimeId === id) {
+      return {
+        eventName,
+        payload,
+        cascadeDepth: parent.cascadeDepth + 1,
+        parentRunId: parent.runId,
+        parentTriggerId: parent.triggerId,
+        visitedChain: parent.visitedChain,
+      };
+    }
+    return { eventName, payload, cascadeDepth: 0 };
+  };
+
   // ─── dispatch ──────────────────────────────────────────────────────────
-  const dispatch = (fireCtx: FireContext) => {
-    // Middleware onFire
+  type DispatchOpts = { forceSync: boolean };
+
+  const dispatch = (fireCtx: FireContext, opts: DispatchOpts) => {
+    // Middleware onFire — same shape for top-level and cascade fires.
     for (const mw of middleware) {
       const result = mw.onFire?.(fireCtx);
       if (result?.cancel) return;
     }
 
+    // Cascade depth gate. Top-level fires have depth=0, so this can only
+    // trigger when a cascade has produced FireContext.cascadeDepth > max.
+    if (fireCtx.cascadeDepth > maxCascadeDepth) {
+      emitCascade({
+        parentTriggerId: fireCtx.parentTriggerId ?? '',
+        parentRunId: fireCtx.parentRunId ?? '',
+        newEventName: fireCtx.eventName,
+        cascadeDepth: fireCtx.cascadeDepth,
+        kind: 'overflow',
+      });
+      return;
+    }
+
     const set = eventIndex.get(fireCtx.eventName);
     if (!set || set.size === 0) return;
 
-    // Snapshot the matching triggers at fire-time (registry changes during the handler don't affect this run).
+    // Snapshot the matching triggers at fire-time (registry changes during the
+    // handler don't affect this run).
     const triggersForEvent = Array.from(set);
     for (const trigger of triggersForEvent) {
       if (!trigger.enabled) continue;
-      const schedulerForTrigger =
-        trigger.config.schedule === 'sync' ? syncScheduler : microtaskScheduler;
-      schedulerForTrigger.enqueue(() => {
-        executeTrigger({
-          trigger,
-          fireCtx,
-          inspector,
-          middleware,
-          cascadeFire: (eventName, payload, parentRunId) => {
-            const nextDepth = fireCtx.cascadeDepth + 1;
-            if (nextDepth > maxCascadeDepth) {
-              for (const mw of middleware) {
-                mw.onCascade?.({
-                  parentTriggerId: trigger.config.id,
-                  parentRunId,
-                  newEventName: eventName,
-                  cascadeDepth: nextDepth,
-                  kind: 'overflow',
-                });
-              }
-              return;
-            }
-            dispatch({
-              eventName,
-              payload,
-              cascadeDepth: nextDepth,
-              parentRunId,
-            });
-          },
+
+      // Cycle detection: this trigger is already in the current cascade chain.
+      if (fireCtx.visitedChain?.has(trigger.config.id)) {
+        emitCascade({
+          parentTriggerId: fireCtx.parentTriggerId ?? '',
+          parentRunId: fireCtx.parentRunId ?? '',
+          newEventName: fireCtx.eventName,
+          cascadeDepth: fireCtx.cascadeDepth,
+          kind: 'cycle',
         });
-      });
+        continue;
+      }
+
+      const run = () => {
+        executeTrigger({ trigger, fireCtx, inspector, middleware, runtimeId: id });
+      };
+
+      // `forceSync` skips the per-trigger scheduler choice (used by fireSync).
+      if (opts.forceSync) {
+        run();
+        continue;
+      }
+      const scheduler = trigger.config.schedule === 'sync' ? syncScheduler : microtaskScheduler;
+      scheduler.enqueue(run);
     }
   };
 
   const fire = (eventName: string, payload?: unknown): void => {
-    dispatch({ eventName, payload, cascadeDepth: 0 });
+    dispatch(buildFireContext(eventName, payload), { forceSync: false });
   };
 
   const fireSync = (eventName: string, payload?: unknown): void => {
-    // Force-sync — ignore per-trigger schedule.
-    for (const mw of middleware) {
-      const result = mw.onFire?.({ eventName, payload, cascadeDepth: 0 });
-      if (result?.cancel) return;
-    }
-    const set = eventIndex.get(eventName);
-    if (!set || set.size === 0) return;
-    const triggersForEvent = Array.from(set);
-    for (const trigger of triggersForEvent) {
-      if (!trigger.enabled) continue;
-      executeTrigger({
-        trigger,
-        fireCtx: { eventName, payload, cascadeDepth: 0 },
-        inspector,
-        middleware,
-        cascadeFire: () => {
-          // sync mode: cascades would also run sync, dispatched via the regular path with depth tracking.
-        },
-      });
-    }
+    dispatch(buildFireContext(eventName, payload), { forceSync: true });
   };
 
   // ─── subscribe / inspector ─────────────────────────────────────────────
@@ -270,7 +300,9 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
 
   const dispose = () => {
     for (const trigger of triggers.values()) {
-      trigger.inFlight?.abort('runtime-disposed');
+      for (const ctl of trigger.inFlight) ctl.abort('runtime-disposed');
+      trigger.inFlight.clear();
+      cancelAllTimers(trigger);
       trigger.enabled = false;
     }
     triggers.clear();
@@ -316,7 +348,9 @@ function buildPublicTrigger(
     },
     dispose() {
       internal.enabled = false;
-      internal.inFlight?.abort('disposed');
+      for (const ctl of internal.inFlight) ctl.abort('disposed');
+      internal.inFlight.clear();
+      cancelAllTimers(internal);
     },
   };
 }

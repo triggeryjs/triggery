@@ -1,5 +1,6 @@
 import { getDefaultRuntime } from './runtime.ts';
 import type {
+  ConcurrencyStrategy,
   ConditionKey,
   EventKey,
   InternalHandlerCtx,
@@ -32,6 +33,16 @@ export type CreateTriggerConfig<S extends TriggerSchema> = {
   /** Required condition keys. The trigger will not run unless all of them are registered. */
   readonly required?: readonly ConditionKey<S>[];
   readonly schedule?: SchedulerStrategy;
+  /**
+   * Concurrency strategy applied across handler runs (default: `'take-latest'`).
+   *
+   * - `take-latest` — new run aborts the previous (`signal.aborted` becomes true).
+   * - `take-every`  — every run proceeds independently, no aborts.
+   * - `take-first` / `exhaust` — new runs are skipped while one is still in flight.
+   * - `queue`       — new runs wait for the previous to finish (serialized).
+   * - `sync`        — like `take-every`; provided as a documentation marker.
+   */
+  readonly concurrency?: ConcurrencyStrategy;
   readonly scope?: string;
   readonly handler: TriggerHandler<S, never>;
 };
@@ -67,6 +78,7 @@ export function createTrigger<S extends TriggerSchema>(
   const internalConfig: InternalTriggerConfig = {
     id: config.id,
     schedule: config.schedule ?? 'microtask',
+    concurrency: config.concurrency ?? 'take-latest',
     required: (config.required ?? []) as readonly string[],
     events: config.events as readonly string[],
     handler: internalHandler,

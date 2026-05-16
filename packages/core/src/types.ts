@@ -82,6 +82,7 @@ export type MetaCtx = {
   readonly scheduledAt: number;
   readonly cascadeDepth: number;
   readonly parentRunId?: string;
+  readonly parentTriggerId?: string;
 };
 
 /**
@@ -231,6 +232,12 @@ export type FireContext = {
   readonly payload: unknown;
   readonly cascadeDepth: number;
   readonly parentRunId?: string;
+  readonly parentTriggerId?: string;
+  /**
+   * Set of trigger ids already visited in the current cascade chain.
+   * Used by the dispatcher to detect cycles (a trigger re-entering itself).
+   */
+  readonly visitedChain?: ReadonlySet<string>;
 };
 
 export type SkipContext = {
@@ -299,6 +306,7 @@ export type Runtime = {
 export type InternalTriggerConfig = {
   readonly id: string;
   readonly schedule: SchedulerStrategy;
+  readonly concurrency: ConcurrencyStrategy;
   readonly required: readonly string[];
   readonly events: readonly string[];
   readonly handler: (ctx: InternalHandlerCtx) => void | Promise<void>;
