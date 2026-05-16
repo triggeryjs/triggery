@@ -164,7 +164,7 @@ Ten scenarios bench-ed against six neighbour libraries. Headline numbers (local 
 
 **Triggery is not an event emitter or a state manager** — it's an orchestrator that sits on top of whichever store you already have. The five state/effect/atom libraries in the table all out-throughput Triggery on raw per-fire cost, which is exactly what you'd expect: a `Subject.next()` (rxjs), an `atom.set()` (Reatom) or a `box.set()` (MobX) are bare reactive primitives, while every Triggery fire also runs the inspector ring buffer, cascade context, required-gate, lazy condition proxy, abort controller bookkeeping and middleware chain. **That overhead is the product, not a bug.**
 
-Where Triggery still pulls ahead despite the overhead: **scenario 5** (indexed dispatch beats rxjs and saga; ties Reatom for first), **scenarios 6 + 10** (pull-only conditions beat effector, saga, and xstate by 2-7×), **scenario 8** (first-class enable/disable beats effector, saga and xstate by 2-4×).
+Where Triggery still pulls ahead despite the overhead: **scenario 5** (indexed dispatch beats rxjs by ~1.8× and saga by ~2× — though effector and Reatom hold the top of this one together at ~5M each), **scenarios 6 + 10** (pull-only conditions beat effector, saga, and xstate by 2-8×; scenario 10 also lands tied with Reatom), **scenario 8** (first-class enable/disable beats effector, saga and xstate by 2-4×).
 
 Full breakdown + idiomatic implementations + per-scenario analysis in [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
 
