@@ -256,7 +256,7 @@ Looking for something larger? Pick from [`ROADMAP.md`](./ROADMAP.md) or open an 
 
 Triggery is built in the open and is free under the MIT licence. If your team relies on it, please consider sponsoring — it directly funds maintenance, docs, and the bug-bounty programme.
 
-- **Patreon** (international) — <https://www.patreon.com/triggery> — three tiers: **Supporter** ($5), **Sponsor** ($25, logo in README), **Backer** ($100, larger logo + priority issue triage).
+- **Patreon** (international) — <https://www.patreon.com/triggery>
 - **Boosty** (RU/CIS-friendly) — <https://boosty.to/triggery>
 
 > GitHub Sponsors is intentionally omitted — it is not available to the maintainer's region. Patreon is the international channel.
