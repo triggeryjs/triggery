@@ -1,6 +1,6 @@
 {
   "name": "@triggery/testing",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Testing utilities for Triggery \u2014 isolated runtime, mock conditions/actions, fake scheduler",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -29,7 +29,6 @@
     "mocking"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +44,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

@@ -1,7 +1,7 @@
 {
   "name": "@triggery/cli",
-  "version": "0.0.0",
-  "description": "Command-line interface for Triggery — create, scaffold, graph, lint.",
+  "version": "0.1.0",
+  "description": "Command-line interface for Triggery \u2014 create, scaffold, graph, lint.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
@@ -29,7 +29,6 @@
     "graph"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -48,7 +47,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

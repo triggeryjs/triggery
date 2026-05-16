@@ -1,6 +1,6 @@
 {
   "name": "@triggery/redux",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Redux adapter for Triggery \u2014 read store state from a trigger condition without subscribing the component to re-renders",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -29,7 +29,6 @@
     "state"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +44,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

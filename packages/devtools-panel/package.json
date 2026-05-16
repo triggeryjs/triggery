@@ -1,6 +1,6 @@
 {
   "name": "@triggery/devtools-panel",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "React components for inspecting a Triggery runtime \u2014 drop-in inspector panel and snapshot views",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -28,7 +28,6 @@
     "react"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -44,7 +43,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

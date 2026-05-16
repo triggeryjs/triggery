@@ -1,6 +1,6 @@
 {
   "name": "@triggery/jotai",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Jotai adapter for Triggery \u2014 read an atom's value from a trigger condition without subscribing the host component to atom updates",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -29,7 +29,6 @@
     "atoms"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +44,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

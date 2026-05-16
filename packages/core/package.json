@@ -1,6 +1,6 @@
 {
   "name": "@triggery/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Declarative business-logic orchestration for React \u2014 core runtime",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -31,7 +31,6 @@
     "side-effects"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -47,7 +46,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

@@ -1,6 +1,6 @@
 {
   "name": "@triggery/signals",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Signals adapter for Triggery \u2014 read a signal's value from a trigger condition without engaging signal-tracking on the host component",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -29,7 +29,6 @@
     "react"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +44,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

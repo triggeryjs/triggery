@@ -1,6 +1,6 @@
 {
   "name": "@triggery/zustand",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Zustand adapter for Triggery \u2014 `useZustandCondition` hook wiring a Zustand store into a trigger",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -29,7 +29,6 @@
     "state"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +44,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

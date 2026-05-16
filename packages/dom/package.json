@@ -1,6 +1,6 @@
 {
   "name": "@triggery/dom",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "DOM adapters for Triggery \u2014 pipe addEventListener, ResizeObserver and IntersectionObserver into triggers",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -30,7 +30,6 @@
     "intersection-observer"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -46,7 +45,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

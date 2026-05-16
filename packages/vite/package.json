@@ -1,6 +1,6 @@
 {
   "name": "@triggery/vite",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Vite plugin for Triggery \u2014 auto-import every *.trigger.ts file via a virtual module",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -29,7 +29,6 @@
     "hmr"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +44,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

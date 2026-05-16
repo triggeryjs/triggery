@@ -1,7 +1,7 @@
 {
   "name": "@triggery/eslint-plugin",
-  "version": "0.0.0",
-  "description": "ESLint plugin for Triggery — catches mis-use of createTrigger / useEvent / useCondition / useAction, suggests named hooks, enforces handler size budgets.",
+  "version": "0.1.0",
+  "description": "ESLint plugin for Triggery \u2014 catches mis-use of createTrigger / useEvent / useCondition / useAction, suggests named hooks, enforces handler size budgets.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
@@ -31,7 +31,6 @@
     "typescript"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -47,7 +46,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {

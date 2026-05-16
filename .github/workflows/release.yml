@@ -42,6 +42,8 @@ jobs:
           title: 'chore: release packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # NB: NPM_TOKEN is not needed when using Trusted Publishers (OIDC).
-          # Uncomment if you fall back to the classic token flow:
-          # NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Bootstrap path: NPM_TOKEN is in use until the very first publish
+          # lands on npm. After that we'll claim each package as a Trusted
+          # Publisher in the npm UI, remove this token, and rely on OIDC
+          # provenance (`id-token: write` is already set above).
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

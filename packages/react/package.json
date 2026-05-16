@@ -1,6 +1,6 @@
 {
   "name": "@triggery/react",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "React bindings for Triggery \u2014 hook-first orchestration layer",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
@@ -29,7 +29,6 @@
     "business-logic"
   ],
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -45,7 +44,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "publishConfig": {
