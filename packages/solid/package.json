@@ -1,0 +1,67 @@
+{
+  "name": "@triggery/solid",
+  "version": "0.0.0",
+  "description": "SolidJS bindings for Triggery — useEvent / useCondition / useAction composables + <TriggerRuntimeProvider> / <TriggerScope>",
+  "license": "MIT",
+  "author": "Aleksey Skhomenko",
+  "homepage": "https://triggeryjs.github.io/triggery",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triggeryjs/triggery.git",
+    "directory": "packages/solid"
+  },
+  "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "keywords": [
+    "triggery",
+    "solid",
+    "solidjs",
+    "bindings",
+    "orchestration"
+  ],
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "peerDependencies": {
+    "@triggery/core": "workspace:*",
+    "solid-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "@solidjs/testing-library": "^0.8.10",
+    "@triggery/core": "workspace:*",
+    "happy-dom": "^20.9.0",
+    "solid-js": "^1.9.13",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vite-plugin-solid": "^2.11.12",
+    "vitest": "^4.1.6"
+  }
+}

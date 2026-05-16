@@ -109,9 +109,18 @@ pnpm add @triggery/core @triggery/react
 | Package | Description |
 |---|---|
 | [`@triggery/core`](./packages/core) | Runtime: `createTrigger`, `createRuntime`, indexed dispatch, inspector, middleware, `graph()` |
-| [`@triggery/react`](./packages/react) | React bindings: `useEvent`, `useCondition`, `useAction`, `useInlineTrigger`, `useInspectHistory`, `createNamedHooks`, `<TriggerRuntimeProvider>`, `<TriggerScope>` |
 | [`@triggery/testing`](./packages/testing) | `createTestRuntime`, `mockCondition`, `mockAction`, `flushMicrotasks` |
 | [`@triggery/vite`](./packages/vite) | Vite plugin: auto-imports every `*.trigger.ts` via a virtual module + HMR |
+
+### Framework bindings
+
+Same `useEvent` / `useCondition` / `useAction` API across all three. Pick the one for your framework — Triggery itself is framework-agnostic.
+
+| Package | Description |
+|---|---|
+| [`@triggery/react`](./packages/react) | React bindings: `useEvent`, `useCondition`, `useAction`, `useInlineTrigger`, `useInspectHistory`, `createNamedHooks`, `<TriggerRuntimeProvider>`, `<TriggerScope>` |
+| [`@triggery/solid`](./packages/solid) | SolidJS bindings — same API, native to signals + `onCleanup` |
+| [`@triggery/vue`](./packages/vue) | Vue 3 bindings — same API, `provide`/`inject` + `onScopeDispose` |
 
 ### Adapters
 

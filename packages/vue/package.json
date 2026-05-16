@@ -1,0 +1,66 @@
+{
+  "name": "@triggery/vue",
+  "version": "0.0.0",
+  "description": "Vue 3 bindings for Triggery — useEvent / useCondition / useAction composables + <TriggerRuntimeProvider> / <TriggerScope>",
+  "license": "MIT",
+  "author": "Aleksey Skhomenko",
+  "homepage": "https://triggeryjs.github.io/triggery",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/triggeryjs/triggery.git",
+    "directory": "packages/vue"
+  },
+  "bugs": "https://github.com/triggeryjs/triggery/issues",
+  "keywords": [
+    "triggery",
+    "vue",
+    "vue3",
+    "bindings",
+    "orchestration"
+  ],
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "peerDependencies": {
+    "@triggery/core": "workspace:*",
+    "vue": "^3.0.0"
+  },
+  "devDependencies": {
+    "@triggery/core": "workspace:*",
+    "@vue/test-utils": "^2.4.10",
+    "happy-dom": "^20.9.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6",
+    "vue": "^3.5.34"
+  }
+}
