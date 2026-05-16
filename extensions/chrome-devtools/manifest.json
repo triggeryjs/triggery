@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Triggery DevTools",
+  "version": "0.0.0",
+  "description": "Inspect Triggery runtime events from Chrome DevTools. V1 stub — real content-script bridge ships in V1.1.",
+  "minimum_chrome_version": "108",
+  "devtools_page": "devtools.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

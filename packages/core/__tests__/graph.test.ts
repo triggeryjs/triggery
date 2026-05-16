@@ -42,6 +42,7 @@ describe('runtime.graph()', () => {
     createTrigger<{ events: { tick: void } }>({ id: 'b', events: ['tick'], handler() {} }, runtime);
     const g = runtime.graph();
     expect(g.triggers.map((t) => t.id).sort()).toEqual(['a', 'b']);
+    // biome-ignore lint/complexity/useLiteralKeys: TS strict noPropertyAccessFromIndexSignature requires brackets on Record types
     expect([...(g.eventIndex['tick'] ?? [])].sort()).toEqual(['a', 'b']);
   });
 

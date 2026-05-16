@@ -70,7 +70,7 @@ export function triggery(options: TriggeryViteOptions = {}): Plugin {
       const body =
         files.length === 0
           ? '/* @triggery/vite: no *.trigger.* files matched */\n'
-          : files.map((f) => `import ${JSON.stringify(f)};`).join('\n') + '\n';
+          : `${files.map((f) => `import ${JSON.stringify(f)};`).join('\n')}\n`;
       return `${body}export {};\n`;
     },
     handleHotUpdate(ctx) {

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Triggery DevTools</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        color: #24292e;
+        background: #fff;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+      .status {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #fff3bf;
+        color: #846008;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .hint {
+        margin-top: 16px;
+        color: #586069;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      code {
+        background: #f6f8fa;
+        padding: 1px 4px;
+        border-radius: 3px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      a {
+        color: #0366d6;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Triggery <span class="status">V1 stub</span></h1>
+    <p class="hint">
+      This panel is a scaffold. The content-script bridge that streams runtime
+      events from the inspected page lands in V1.1. Until then, drop the
+      in-app inspector into your app:
+    </p>
+    <pre><code>import { InspectorView } from '@triggery/devtools-panel';
+
+&lt;InspectorView limit={50} /&gt;</code></pre>
+    <p class="hint">
+      For Redux DevTools integration use <code>reduxDevtoolsMiddleware()</code>
+      from <code>@triggery/devtools-redux</code> — fully functional today.
+    </p>
+    <script src="panel.js"></script>
+  </body>
+</html>

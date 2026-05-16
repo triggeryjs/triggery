@@ -36,6 +36,7 @@
       "@triggery/react": ["./packages/react/src/index.ts"],
       "@triggery/testing": ["./packages/testing/src/index.ts"],
       "@triggery/devtools-redux": ["./packages/devtools-redux/src/index.ts"],
+      "@triggery/devtools-panel": ["./packages/devtools-panel/src/index.ts"],
       "@triggery/vite": ["./packages/vite/src/index.ts"]
     }
   }

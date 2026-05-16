@@ -6,9 +6,10 @@ import type {
   EventKey,
   EventMap,
   Trigger,
+  TriggerInspectSnapshot,
   TriggerSchema,
 } from '@triggery/core';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRuntime, useScope } from './context.ts';
 
 /**
@@ -103,4 +104,40 @@ export function useAction<S extends TriggerSchema, K extends ActionKey<S>>(
  */
 export function useInspect<S extends TriggerSchema>(trigger: Trigger<S>) {
   return trigger.inspect();
+}
+
+/**
+ * Subscribe to the active runtime's inspector buffer and return the most
+ * recent `limit` snapshots (newest first). Re-renders whenever a new run is
+ * recorded.
+ *
+ * Use this for in-app devtools panels, custom run lists, or any "show me the
+ * last N runs" UI. Combine with `<TriggerSnapshotView>` from
+ * `@triggery/devtools-panel` for a turnkey UI.
+ *
+ * @example
+ * ```tsx
+ * function DebugPanel() {
+ *   const history = useInspectHistory(50);
+ *   return <ul>{history.map((s) => <li key={s.runId}>{s.triggerId}: {s.status}</li>)}</ul>;
+ * }
+ * ```
+ */
+export function useInspectHistory(limit = 20): readonly TriggerInspectSnapshot[] {
+  const runtime = useRuntime();
+  const [history, setHistory] = useState<readonly TriggerInspectSnapshot[]>(() =>
+    runtime.getInspectorBuffer().slice(0, limit),
+  );
+
+  useEffect(() => {
+    // Re-seed on mount in case fires happened between the initial render and
+    // the effect (the runtime may have new entries already).
+    setHistory(runtime.getInspectorBuffer().slice(0, limit));
+    const token = runtime.subscribe(() => {
+      setHistory(runtime.getInspectorBuffer().slice(0, limit));
+    });
+    return () => token.unregister();
+  }, [runtime, limit]);
+
+  return history;
 }
