@@ -1,0 +1,17 @@
+node_modules
+dist
+coverage
+*.tsbuildinfo
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+.turbo
+.cache
+
+# local-only planning / scratch files
+brainstorm.md
+*.local.md
+.scratch/

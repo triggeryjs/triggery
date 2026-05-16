@@ -1,0 +1,45 @@
+{
+  "name": "triggery-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Declarative business-logic orchestration for React",
+  "license": "MIT",
+  "author": "Aleksey Skhomenko",
+  "type": "module",
+  "packageManager": "pnpm@9.3.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "pnpm -r --filter \"./packages/*\" run test",
+    "test:watch": "pnpm -r --parallel --filter \"./packages/*\" run test:watch",
+    "test:coverage": "pnpm -r --filter \"./packages/*\" run test:coverage",
+    "bench": "pnpm -r --filter \"./benchmarks\" run bench",
+    "build": "pnpm -r --filter \"./packages/*\" run build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "clean": "pnpm -r exec rm -rf dist .turbo coverage && rm -rf node_modules/.cache",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "pnpm build && changeset publish"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
+    "@changesets/cli": "^2.31.0",
+    "@codspeed/vitest-plugin": "^5.4.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^25.8.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitest/coverage-v8": "^4.1.6",
+    "happy-dom": "^20.9.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "tinybench": "^5.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.6"
+  }
+}
