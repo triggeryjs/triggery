@@ -13,3 +13,8 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    ignore:
+      # tinybench v6 is not yet supported by @codspeed/vitest-plugin
+      # tracking: https://github.com/CodSpeedHQ/codspeed-node/issues/69
+      - dependency-name: tinybench
+        update-types: [version-update:semver-major]

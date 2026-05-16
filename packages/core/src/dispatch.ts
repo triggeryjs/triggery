@@ -13,7 +13,19 @@ import type {
 } from './types.ts';
 
 let runIdCounter = 0;
-const genRunId = () => `run_${Date.now().toString(36)}_${(++runIdCounter).toString(36)}`;
+const genRunId = () => `run_${(++runIdCounter).toString(36)}`;
+
+/**
+ * Whether any middleware in the list cares about per-run / per-action timing.
+ * When nothing observes timing we skip every `performance.now()` call in the
+ * hot path (this avoids one syscall-per-trigger on CodSpeed Valgrind runs).
+ */
+function needsTiming(middleware: readonly Middleware[]): boolean {
+  for (const mw of middleware) {
+    if (mw.onActionEnd || mw.onError || mw.onActionStart) return true;
+  }
+  return false;
+}
 
 export type RegisteredTrigger = {
   readonly config: InternalTriggerConfig;
@@ -40,7 +52,8 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
   if (!trigger.enabled) return;
 
   const runId = genRunId();
-  const startedAt = performance.now();
+  const trackTiming = needsTiming(middleware);
+  const startedAt = trackTiming ? performance.now() : 0;
   const executedActions: string[] = [];
   const snapshotKeys: string[] = [];
 
@@ -59,7 +72,7 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
         eventName: fireCtx.eventName,
         status: 'skipped',
         reason: skipCtx.reason,
-        durationMs: performance.now() - startedAt,
+        durationMs: trackTiming ? performance.now() - startedAt : 0,
         executedActions: [],
         snapshotKeys: [],
       };
@@ -107,7 +120,7 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
         actionName: name,
         payload,
       };
-      const actionStart = performance.now();
+      const actionStart = trackTiming ? performance.now() : 0;
       for (const mw of middleware) mw.onActionStart?.(actionCtx);
       try {
         const result = handler(payload);
@@ -117,7 +130,7 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
               for (const mw of middleware) {
                 mw.onActionEnd?.({
                   ...actionCtx,
-                  durationMs: performance.now() - actionStart,
+                  durationMs: trackTiming ? performance.now() - actionStart : 0,
                   result: value,
                 });
               }
@@ -130,7 +143,7 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
           for (const mw of middleware) {
             mw.onActionEnd?.({
               ...actionCtx,
-              durationMs: performance.now() - actionStart,
+              durationMs: trackTiming ? performance.now() - actionStart : 0,
               result,
             });
           }
