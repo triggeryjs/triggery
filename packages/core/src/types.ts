@@ -278,6 +278,13 @@ export type SkipContext = {
   readonly reason: string;
 };
 
+export type MatchContext = {
+  readonly triggerId: string;
+  readonly eventName: string;
+  readonly payload: unknown;
+  readonly cascadeDepth: number;
+};
+
 export type ActionContext = {
   readonly triggerId: string;
   readonly runId: string;
@@ -296,6 +303,15 @@ export type CascadeContext = {
 export type Middleware = {
   readonly name: string;
   onFire?(ctx: FireContext): void | { cancel: true; reason: string };
+  /**
+   * Called once per (event, trigger) pair right after dispatch picks the
+   * trigger out of `eventIndex[eventName]`, before any concurrency gate /
+   * required-check / handler invocation. Useful for tracing "which triggers
+   * were considered for this event" without instrumenting `onSkip` and
+   * `onActionStart` separately. Purely observational — there is no `cancel`
+   * here, use `onFire` if you need to short-circuit a fire entirely.
+   */
+  onBeforeMatch?(ctx: MatchContext): void;
   onSkip?(ctx: SkipContext): void;
   onActionStart?(ctx: ActionContext): void;
   onActionEnd?(ctx: ActionContext & { durationMs: number; result?: unknown }): void;

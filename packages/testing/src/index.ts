@@ -52,6 +52,8 @@ import type {
 } from '@triggery/core';
 import { createRuntime } from '@triggery/core';
 
+export { createFakeScheduler, type FakeScheduler } from './fakeScheduler.ts';
+
 export type TestRuntimeOptions = RuntimeOptions;
 
 export type TestRuntime = Runtime & {

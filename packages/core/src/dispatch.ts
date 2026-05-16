@@ -172,6 +172,20 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
   } = deps;
   if (!trigger.enabled) return;
 
+  // ─── Middleware: onBeforeMatch ───────────────────────────────────────────
+  // Fires once per (event, trigger) pair, before any concurrency/required
+  // gate runs. Purely observational — middleware that wants to cancel should
+  // do it from `onFire` instead.
+  if (hasMiddleware) {
+    const matchCtx = {
+      triggerId: trigger.config.id,
+      eventName: fireCtx.eventName,
+      payload: fireCtx.payload,
+      cascadeDepth: fireCtx.cascadeDepth,
+    } as const;
+    for (const mw of middleware) mw.onBeforeMatch?.(matchCtx);
+  }
+
   // ─── Concurrency gate ────────────────────────────────────────────────────
   // take-first / exhaust: if anything is in flight, skip this run.
   if (concurrency === 'take-first' || concurrency === 'exhaust') {

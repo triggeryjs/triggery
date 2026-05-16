@@ -8,3 +8,5 @@ export {
   useScope,
 } from './context.ts';
 export { TriggerRuntimeProvider, TriggerScope } from './providers.ts';
+export { type UseInlineTriggerConfig, useInlineTrigger } from './useInlineTrigger.ts';
+export { useInspect, useInspectHistory } from './useInspect.ts';

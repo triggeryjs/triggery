@@ -60,6 +60,7 @@ export type {
   FireContext,
   InternalHandlerCtx,
   InternalTriggerConfig,
+  MatchContext,
   MetaCtx,
   Middleware,
   NamedHooks,
