@@ -28,17 +28,16 @@ jobs:
       # benchmark suites:
       #
       # - `core` — Triggery's own dispatch hot path. Pure JS, no system calls,
-      #   so we use `simulation` (Valgrind-based cycle counting) for maximum
-      #   regression sensitivity.
+      #   so `simulation` (Valgrind-based cycle counting) is the right choice
+      #   for maximum regression sensitivity.
       #
       # - `vs` — side-by-side comparisons against effector / rxjs / saga /
-      #   xstate / reatom / mobx. Some of these libraries make system calls
-      #   under load (RxJS schedulers via `performance.now()`, sagas via
-      #   setTimeout/queueMicrotask, MobX/Reatom reactivity graphs), and
-      #   CodSpeed's instrumentation mode cannot consistently account for
-      #   syscalls (the "34 system calls, totalling 2.6s ignored" warning).
-      #   Switching to `walltime` measures real wall-clock and gives an honest
-      #   apples-to-apples comparison across libraries.
+      #   xstate / reatom / mobx. Also `simulation`. CodSpeed will warn that
+      #   ~20 syscalls (~50µs total per bench) are ignored — that's truly
+      #   negligible vs the ±20% noise walltime on shared Hosted Runners
+      #   produces (CodSpeed itself surfaces this as "Unknown Walltime
+      #   execution environment"). Walltime would need their paid Macro
+      #   Runners to be stable.
       #
       # Same CI run, two clean suites on https://codspeed.io/triggeryjs/triggery.
 
@@ -51,5 +50,5 @@ jobs:
       - name: Bench — vs (side-by-side comparisons)
         uses: CodSpeedHQ/action@v4
         with:
-          mode: walltime
+          mode: simulation
           run: cd benchmarks && pnpm exec vitest bench --run bench/vs
