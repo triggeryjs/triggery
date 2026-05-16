@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Triggery devtools smoke test</title>
+    <style>
+      body {
+        font: 14px/1.4 system-ui, -apple-system, sans-serif;
+        max-width: 720px;
+        margin: 40px auto;
+        padding: 0 16px;
+      }
+      h1 {
+        font-size: 18px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 12px 0;
+      }
+      button {
+        background: #0969da;
+        color: #fff;
+        border: 0;
+        padding: 6px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button.muted {
+        background: #6e7681;
+      }
+      button.warn {
+        background: #cf222e;
+      }
+      pre {
+        background: #f6f8fa;
+        border: 1px solid #d0d7de;
+        padding: 10px;
+        border-radius: 6px;
+        max-height: 320px;
+        overflow: auto;
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .hint {
+        color: #57606a;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Triggery devtools smoke test</h1>
+    <p class="hint">
+      Open Chrome DevTools and switch to the <strong>Triggery</strong> panel. The
+      bridge installs on page load — every button below produces an entry in the
+      panel.
+    </p>
+
+    <div class="row">
+      <button id="tick">fireSync tick (sync)</button>
+      <button id="async">fire tick (async, microtask)</button>
+      <button id="cascade">cascade: a → b</button>
+    </div>
+    <div class="row">
+      <button id="skip" class="warn">fire secure (skipped — no session)</button>
+      <button id="register" class="muted">register session condition</button>
+      <button id="unregister" class="muted">unregister session</button>
+    </div>
+    <div class="row">
+      <button id="error" class="warn">fire boom (errored)</button>
+      <button id="dispose" class="muted">dispose bridge</button>
+    </div>
+
+    <p class="hint">In-page log (mirror, not the panel):</p>
+    <pre id="log"></pre>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "@triggery/core": "/packages/core/dist/index.js",
+          "@triggery/devtools-bridge": "/packages/devtools-bridge/dist/index.js"
+        }
+      }
+    </script>
+
+    <script type="module">
+      import { createRuntime, createTrigger } from '@triggery/core';
+      import { installDevtoolsBridge } from '@triggery/devtools-bridge';
+
+      const logEl = document.getElementById('log');
+      const log = (line) => {
+        logEl.textContent = `[${new Date().toLocaleTimeString()}] ${line}\n${logEl.textContent}`.slice(
+          0,
+          4000,
+        );
+      };
+
+      const runtime = createRuntime();
+      // Expose for ad-hoc poking in the page console.
+      window.__rt = runtime;
+
+      // Trigger 1: tick → notify action.
+      createTrigger(
+        {
+          id: 'demo',
+          events: ['tick'],
+          handler: ({ event, actions }) => {
+            actions.notify?.(event.payload);
+          },
+        },
+        runtime,
+      );
+      runtime.registerAction('demo', 'notify', (n) => log(`notify(${n})`));
+
+      // Trigger 2: required condition gate.
+      createTrigger(
+        {
+          id: 'secure',
+          events: ['secure'],
+          required: ['session'],
+          handler: ({ event, conditions }) => {
+            if (!conditions.session) return;
+            log(`secure ok (session=${conditions.session.id}, msg=${event.payload})`);
+          },
+        },
+        runtime,
+      );
+
+      // Trigger 3: cascade (sync) — a fires b inside its handler.
+      createTrigger(
+        {
+          id: 't-a',
+          events: ['a'],
+          handler: ({ actions }) => actions.goB?.(),
+        },
+        runtime,
+      );
+      createTrigger(
+        {
+          id: 't-b',
+          events: ['b'],
+          handler: () => log('cascade B reached'),
+        },
+        runtime,
+      );
+      runtime.registerAction('t-a', 'goB', () => runtime.fireSync('b'));
+
+      // Trigger 4: handler throws.
+      createTrigger(
+        {
+          id: 'boom',
+          events: ['boom'],
+          handler: () => {
+            throw new Error('intentional boom');
+          },
+        },
+        runtime,
+      );
+
+      const dispose = installDevtoolsBridge(runtime);
+      log('bridge installed — open DevTools → Triggery panel');
+
+      let counter = 0;
+      document.getElementById('tick').onclick = () => runtime.fireSync('tick', ++counter);
+      document.getElementById('async').onclick = () => runtime.fire('tick', ++counter);
+      document.getElementById('cascade').onclick = () => runtime.fireSync('a');
+      document.getElementById('skip').onclick = () => runtime.fireSync('secure', 'hello');
+      document.getElementById('error').onclick = () => runtime.fireSync('boom');
+
+      let sessionToken;
+      document.getElementById('register').onclick = () => {
+        if (sessionToken) return log('session already registered');
+        sessionToken = runtime.registerCondition('secure', 'session', () => ({ id: 'u1' }));
+        log('session registered');
+      };
+      document.getElementById('unregister').onclick = () => {
+        if (!sessionToken) return log('no session to unregister');
+        sessionToken.unregister();
+        sessionToken = undefined;
+        log('session unregistered');
+      };
+
+      document.getElementById('dispose').onclick = () => {
+        dispose();
+        log('bridge disposed (panel status dot should go grey)');
+      };
+    </script>
+  </body>
+</html>
