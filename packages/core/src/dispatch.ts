@@ -1,4 +1,4 @@
-import { withDispatch } from './cascadeContext.ts';
+import { type DispatchContext, withDispatch } from './cascadeContext.ts';
 import { createCheck } from './check.ts';
 import type { InspectorImpl } from './inspector.ts';
 import type {
@@ -146,6 +146,9 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
   return runHandler(deps, concurrency);
 }
 
+/** Shared empty array — reused by skip/short-circuit paths to avoid alloc. */
+const EMPTY_STRING_ARRAY: readonly string[] = Object.freeze([]) as readonly string[];
+
 function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void | Promise<void> {
   const { trigger, fireCtx, inspector, middleware, runtimeId } = deps;
   if (!trigger.enabled) return;
@@ -171,15 +174,15 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
         status: 'skipped',
         reason,
         durationMs: 0,
-        executedActions: [],
-        snapshotKeys: [],
+        executedActions: EMPTY_STRING_ARRAY,
+        snapshotKeys: EMPTY_STRING_ARRAY,
       });
       return;
     }
   }
 
   // take-latest: abort everything still in flight.
-  if (concurrency === 'take-latest') {
+  if (concurrency === 'take-latest' && trigger.inFlight.size > 0) {
     for (const prev of trigger.inFlight) prev.abort('superseded-by-latest');
     trigger.inFlight.clear();
   }
@@ -187,10 +190,10 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
   // ─── Run setup ──────────────────────────────────────────────────────────
   const runId = genRunId();
   const startedAt = trackTiming ? performance.now() : 0;
-  const executedActions: string[] = [];
-  const snapshotKeys: string[] = [];
 
-  // Required gate — every required condition must be registered.
+  // Required gate — every required condition must be registered. This check
+  // hits `trigger.conditions` (the mirror Map) directly, not the lazy proxy,
+  // so it stays cheap even when nothing else in the handler runs.
   for (const requiredName of trigger.config.required) {
     if (!trigger.conditions.has(requiredName)) {
       const reason = `missing-required-condition:${requiredName}`;
@@ -207,14 +210,19 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
         status: 'skipped',
         reason,
         durationMs: trackTiming ? performance.now() - startedAt : 0,
-        executedActions: [],
-        snapshotKeys: [],
+        executedActions: EMPTY_STRING_ARRAY,
+        snapshotKeys: EMPTY_STRING_ARRAY,
       });
       return;
     }
   }
 
-  // Conditions snapshot — lazy proxy with a cache.
+  // Snapshot bookkeeping (mutated by the conditions proxy + action proxy).
+  const executedActions: string[] = [];
+  const snapshotKeys: string[] = [];
+
+  // Conditions snapshot — lazy proxy with a cache (consistency guarantee:
+  // a handler reading the same condition twice in one run sees the same value).
   const snapshotCache = new Map<string, unknown>();
   const conditionsProxy = new Proxy({} as Record<string, unknown>, {
     get(_target, prop: string | symbol) {
@@ -320,13 +328,9 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
     },
   });
 
-  // ─── Abort controller + cascade context ──────────────────────────────────
+  // ─── Abort controller + handler ctx ──────────────────────────────────────
   const controller = new AbortController();
   trigger.inFlight.add(controller);
-
-  // The cascade chain visible to nested `fire` calls includes this trigger.
-  const nextVisited = new Set(fireCtx.visitedChain ?? []);
-  nextVisited.add(trigger.config.id);
 
   const handlerCtx: InternalHandlerCtx = {
     event: { name: fireCtx.eventName, payload: fireCtx.payload },
@@ -360,7 +364,8 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
 
   // Invoke the handler. The synchronous prologue runs inside `withDispatch`,
   // so any `runtime.fire` called from it (or from sync actions) sees the
-  // cascade context.
+  // cascade context. The parent chain is a linked list — no Set allocation
+  // per fire; cycle checks walk the chain.
   try {
     const result = withDispatch(
       {
@@ -368,7 +373,7 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
         triggerId: trigger.config.id,
         runId,
         cascadeDepth: fireCtx.cascadeDepth,
-        visitedChain: nextVisited,
+        parent: (fireCtx.parentContext as DispatchContext | undefined) ?? null,
       },
       () => trigger.config.handler(handlerCtx),
     );

@@ -7,6 +7,10 @@
  * dispatch context is set right before the handler runs and restored after it
  * returns (synchronously).
  *
+ * Internally each context links to its parent (the trigger that fired the
+ * cascade ancestor). Cycle detection walks the chain via `chainHas` — O(depth)
+ * instead of allocating a new `Set` on every fire to mimic the same behaviour.
+ *
  * V1 limitation: cascade tracking only follows the synchronous part of an
  * async handler. After the first `await`, the context is restored to the
  * caller's frame and any subsequent `fire` is treated as a fresh top-level
@@ -19,7 +23,8 @@ export type DispatchContext = {
   readonly triggerId: string;
   readonly runId: string;
   readonly cascadeDepth: number;
-  readonly visitedChain: ReadonlySet<string>;
+  /** The parent context (the dispatch that called `fire` from inside a handler). */
+  readonly parent: DispatchContext | null;
 };
 
 let current: DispatchContext | null = null;
@@ -41,4 +46,17 @@ export function withDispatch<T>(ctx: DispatchContext, fn: () => T): T {
   } finally {
     current = prev;
   }
+}
+
+/**
+ * Walk the parent chain looking for a given trigger id. Used by the runtime
+ * to detect cascade cycles without ever building a Set on the hot path.
+ */
+export function chainHas(ctx: DispatchContext | null | undefined, triggerId: string): boolean {
+  let cur = ctx ?? null;
+  while (cur) {
+    if (cur.triggerId === triggerId) return true;
+    cur = cur.parent;
+  }
+  return false;
 }

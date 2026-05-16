@@ -234,10 +234,15 @@ export type FireContext = {
   readonly parentRunId?: string;
   readonly parentTriggerId?: string;
   /**
-   * Set of trigger ids already visited in the current cascade chain.
-   * Used by the dispatcher to detect cycles (a trigger re-entering itself).
+   * Linked-list reference to the parent dispatch context (the trigger
+   * currently running whose handler/action called this `fire`). The
+   * dispatcher walks this chain to detect cycles without ever allocating a
+   * `Set` of visited ids on the hot path. `undefined` on top-level fires.
+   *
+   * The full `DispatchContext` shape is internal — middleware should treat
+   * this field as opaque.
    */
-  readonly visitedChain?: ReadonlySet<string>;
+  readonly parentContext?: { readonly triggerId: string; readonly parent: unknown } | undefined;
 };
 
 export type SkipContext = {

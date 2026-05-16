@@ -1,4 +1,4 @@
-import { getCurrentDispatch } from './cascadeContext.ts';
+import { chainHas, getCurrentDispatch } from './cascadeContext.ts';
 import { cancelAllTimers, executeTrigger, type RegisteredTrigger } from './dispatch.ts';
 import { createInspector } from './inspector.ts';
 import { createScheduler } from './scheduler.ts';
@@ -243,9 +243,9 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
    * account (so an action emitting a new event is tagged as a cascade rather
    * than as a top-level fire).
    *
-   * Top-level fires intentionally leave `visitedChain` undefined — this keeps
-   * the empty-registry hot path allocation-free. `dispatch` and `executeTrigger`
-   * treat `undefined` as an empty chain.
+   * Top-level fires leave `parentContext` undefined — keeps the empty-registry
+   * hot path allocation-free. Cascade fires carry a linked-list reference to
+   * the parent dispatch so the cycle check can walk the chain.
    */
   const buildFireContext = (eventName: string, payload: unknown): FireContext => {
     const parent = getCurrentDispatch();
@@ -256,7 +256,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
         cascadeDepth: parent.cascadeDepth + 1,
         parentRunId: parent.runId,
         parentTriggerId: parent.triggerId,
-        visitedChain: parent.visitedChain,
+        parentContext: parent,
       };
     }
     return { eventName, payload, cascadeDepth: 0 };
@@ -289,13 +289,17 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     if (!set || set.size === 0) return;
 
     // Snapshot the matching triggers at fire-time (registry changes during the
-    // handler don't affect this run).
-    const triggersForEvent = Array.from(set);
+    // handler don't affect this run). For the common single-subscriber case we
+    // skip the array allocation entirely.
+    const triggersForEvent: readonly RegisteredTrigger[] =
+      set.size === 1 ? [set.values().next().value as RegisteredTrigger] : Array.from(set);
+    const parentCtx = fireCtx.parentContext;
     for (const trigger of triggersForEvent) {
       if (!trigger.enabled) continue;
 
-      // Cycle detection: this trigger is already in the current cascade chain.
-      if (fireCtx.visitedChain?.has(trigger.config.id)) {
+      // Cycle detection: walk the parent chain looking for this trigger's id.
+      // O(cascade-depth); cascade max is 3 by default so this is effectively O(1).
+      if (parentCtx !== undefined && chainHas(parentCtx as never, trigger.config.id)) {
         emitCascade({
           parentTriggerId: fireCtx.parentTriggerId ?? '',
           parentRunId: fireCtx.parentRunId ?? '',
