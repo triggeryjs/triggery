@@ -15,8 +15,13 @@
  * Counter is bumped only by B's handler so we know the chain completed.
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { createEffect, createEvent, forward } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { put, takeEvery } from 'redux-saga/effects';
@@ -134,5 +139,35 @@ describe('comparison — cascade (event A → handler → event B → handler)',
   const xstateActor = createActor(xstateMachine).start();
   bench('xstate', () => {
     xstateActor.send({ type: 'A', payload: 1 });
+  });
+
+  // ─── Reatom (atomA → atomB → counter) ────────────────────────────────────
+  const reatomAcc = { n: 0 };
+  const $reatomA = atom(0);
+  const $reatomB = atom(0);
+  $reatomA.subscribe(() => $reatomB.set((v) => v + 1));
+  $reatomB.subscribe(() => {
+    reatomAcc.n += 1;
+  });
+  bench('reatom', () => {
+    $reatomA.set((v) => v + 1);
+  });
+
+  // ─── MobX (boxA → reaction → boxB → reaction → counter) ──────────────────
+  const mobxAcc = { n: 0 };
+  const mobxA = observable.box(0);
+  const mobxB = observable.box(0);
+  reaction(
+    () => mobxA.get(),
+    () => mobxB.set(mobxB.get() + 1),
+  );
+  reaction(
+    () => mobxB.get(),
+    () => {
+      mobxAcc.n += 1;
+    },
+  );
+  bench('mobx', () => {
+    mobxA.set(mobxA.get() + 1);
   });
 });

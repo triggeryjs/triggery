@@ -14,8 +14,13 @@
  *   - xstate:   transition with `guard`
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { createEffect, createEvent, createStore, sample } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { select, takeEvery } from 'redux-saga/effects';
@@ -150,5 +155,28 @@ describe('comparison — conditional dispatch (alternating guard, 50% pass)', ()
   const xstateActor = createActor(xstateMachine).start();
   bench('xstate', () => {
     xstateActor.send({ type: 'E', payload: 1 });
+  });
+
+  // ─── Reatom (atom + subscribe with conditional add) ──────────────────────
+  const reatomAcc = { n: 0 };
+  const $reatomState = atom(0);
+  $reatomState.subscribe(() => {
+    if (flagFor()) reatomAcc.n += 1;
+  });
+  bench('reatom', () => {
+    $reatomState.set((v) => v + 1);
+  });
+
+  // ─── MobX (observable + reaction with conditional add) ───────────────────
+  const mobxAcc = { n: 0 };
+  const mobxBox = observable.box(0);
+  reaction(
+    () => mobxBox.get(),
+    () => {
+      if (flagFor()) mobxAcc.n += 1;
+    },
+  );
+  bench('mobx', () => {
+    mobxBox.set(mobxBox.get() + 1);
   });
 });

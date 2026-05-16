@@ -22,8 +22,13 @@
  * tests, role changes during a session).
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger, type Trigger } from '@triggery/core';
 import { createEffect, createEvent, createStore, sample } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware, { type Task } from 'redux-saga';
 import { takeEvery } from 'redux-saga/effects';
@@ -156,5 +161,32 @@ describe('comparison — toggle enable/disable (every iter: toggle + fire)', () 
   bench('xstate', () => {
     xstateActor.send({ type: 'TOGGLE' });
     xstateActor.send({ type: 'E', payload: 1 });
+  });
+
+  // ─── Reatom (flag atom + event atom; subscriber gates on flag) ───────────
+  const reatomAcc = { n: 0 };
+  const $reatomFlag = atom(true);
+  const $reatomEvent = atom(0);
+  $reatomEvent.subscribe(() => {
+    if ($reatomFlag()) reatomAcc.n += 1;
+  });
+  bench('reatom', () => {
+    $reatomFlag.set((v) => !v);
+    $reatomEvent.set((v) => v + 1);
+  });
+
+  // ─── MobX (flag box + event box; reaction gates on flag) ─────────────────
+  const mobxAcc = { n: 0 };
+  const mobxFlag = observable.box(true);
+  const mobxEvent = observable.box(0);
+  reaction(
+    () => mobxEvent.get(),
+    () => {
+      if (mobxFlag.get()) mobxAcc.n += 1;
+    },
+  );
+  bench('mobx', () => {
+    mobxFlag.set(!mobxFlag.get());
+    mobxEvent.set(mobxEvent.get() + 1);
   });
 });

@@ -23,8 +23,13 @@
  * dominates the measurement, not user work.
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { createEffect, createEvent, sample } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { delay, takeLatest } from 'redux-saga/effects';
@@ -135,5 +140,39 @@ describe('comparison — take-latest (each fire cancels prior in-flight)', () =>
   const xstateActor = createActor(xstateMachine).start();
   bench('xstate', () => {
     xstateActor.send({ type: 'E' });
+  });
+
+  // ─── Reatom (manual AbortController per atom change) ─────────────────────
+  // Reatom has no native take-latest primitive; the idiomatic pattern is to
+  // store the active AbortController on a ref, abort the previous on each
+  // change, and check `signal.aborted` after the await.
+  const $reatomTrigger = atom(0);
+  let reatomCtl: AbortController | undefined;
+  $reatomTrigger.subscribe(async () => {
+    reatomCtl?.abort('superseded');
+    const ctl = new AbortController();
+    reatomCtl = ctl;
+    await Promise.resolve();
+    if (ctl.signal.aborted) return;
+  });
+  bench('reatom', () => {
+    $reatomTrigger.set((v) => v + 1);
+  });
+
+  // ─── MobX (manual AbortController in reaction callback) ──────────────────
+  const mobxTrigger = observable.box(0);
+  let mobxCtl: AbortController | undefined;
+  reaction(
+    () => mobxTrigger.get(),
+    async () => {
+      mobxCtl?.abort('superseded');
+      const ctl = new AbortController();
+      mobxCtl = ctl;
+      await Promise.resolve();
+      if (ctl.signal.aborted) return;
+    },
+  );
+  bench('mobx', () => {
+    mobxTrigger.set(mobxTrigger.get() + 1);
   });
 });

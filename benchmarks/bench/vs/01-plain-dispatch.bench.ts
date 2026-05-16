@@ -15,14 +15,20 @@
  * dispatch + handler cost.
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { createEffect, createEvent, sample } from 'effector';
+import { configure, observable, reaction } from 'mobx';
 import { applyMiddleware, createStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { takeEvery } from 'redux-saga/effects';
 import { Subject } from 'rxjs';
 import { bench, describe } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
+
+// MobX warns by default when you mutate observable state outside `action()`.
+// Bench code mutates synchronously, so we silence the warning once globally.
+configure({ enforceActions: 'never' });
 
 describe('comparison — plain dispatch (event → +1 action)', () => {
   // ─── Triggery (default — inspector on; matches dev/test envs) ────────────
@@ -111,5 +117,31 @@ describe('comparison — plain dispatch (event → +1 action)', () => {
   const xstateActor = createActor(xstateMachine).start();
   bench('xstate', () => {
     xstateActor.send({ type: 'E', payload: 1 });
+  });
+
+  // ─── Reatom (atom + subscribe) ───────────────────────────────────────────
+  // Reatom 1001 doesn't have an "event" primitive in the same sense — the
+  // closest pattern for "fire X, run handler" is "mutate atom, subscriber
+  // reacts". We use a counter atom and count subscriber invocations.
+  const reatomAcc = { n: 0 };
+  const $reatomState = atom(0);
+  $reatomState.subscribe(() => {
+    reatomAcc.n += 1;
+  });
+  bench('reatom', () => {
+    $reatomState.set((v) => v + 1);
+  });
+
+  // ─── MobX (observable + reaction) ────────────────────────────────────────
+  const mobxAcc = { n: 0 };
+  const mobxBox = observable.box(0);
+  reaction(
+    () => mobxBox.get(),
+    (val, prev) => {
+      mobxAcc.n += val - prev;
+    },
+  );
+  bench('mobx', () => {
+    mobxBox.set(mobxBox.get() + 1);
   });
 });

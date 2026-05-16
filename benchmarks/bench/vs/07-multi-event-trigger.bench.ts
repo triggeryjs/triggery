@@ -19,8 +19,13 @@
  * unit, no transition table duplication.
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { createEvent, merge } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { takeEvery } from 'redux-saga/effects';
@@ -130,5 +135,36 @@ describe('comparison — one trigger reacts to 5 event types (rotating fires)', 
   const xstateActor = createActor(xstateMachine).start();
   bench('xstate', () => {
     xstateActor.send({ type: nextEvent(), payload: 1 });
+  });
+
+  // ─── Reatom (5 atoms, each with the same subscriber callback) ────────────
+  const reatomAcc = { n: 0 };
+  const reatomAtoms = EVENT_NAMES.map(() => atom(0));
+  const reatomBump = () => {
+    reatomAcc.n += 1;
+  };
+  for (const a of reatomAtoms) {
+    a.subscribe(reatomBump);
+  }
+  bench('reatom', () => {
+    const i = tick % EVENT_NAMES.length;
+    tick++;
+    reatomAtoms[i]?.set((v) => v + 1);
+  });
+
+  // ─── MobX (5 observables, each with the same reaction callback) ──────────
+  const mobxAcc = { n: 0 };
+  const mobxBoxes = EVENT_NAMES.map(() => observable.box(0));
+  const mobxBump = () => {
+    mobxAcc.n += 1;
+  };
+  for (const b of mobxBoxes) {
+    reaction(() => b.get(), mobxBump);
+  }
+  bench('mobx', () => {
+    const i = tick % EVENT_NAMES.length;
+    tick++;
+    const box = mobxBoxes[i];
+    if (box) box.set(box.get() + 1);
   });
 });

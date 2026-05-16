@@ -19,8 +19,13 @@
  *   - pull-only conditions (factor read only when handler reaches it)
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { createEffect, createEvent, createStore, sample } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { takeEvery } from 'redux-saga/effects';
@@ -175,5 +180,38 @@ describe('comparison — realistic app bus (30 events × 30 triggers + condition
   const xActor = createActor(xMachine).start();
   bench('xstate', () => {
     xActor.send({ type: `e${tick++ % N}`, payload: 1 });
+  });
+
+  // ─── Reatom (30 atoms, each with flag + factor in its subscriber) ────────
+  const reAcc = { n: 0 };
+  const reatomAtoms = Array.from({ length: N }, (_, i) => {
+    const factor = i + 1;
+    const $a = atom(0);
+    $a.subscribe((value) => {
+      // simulate "flag is always true"; use last delta as payload
+      reAcc.n += value * factor;
+    });
+    return $a;
+  });
+  bench('reatom', () => {
+    reatomAtoms[tick++ % N]?.set((v) => v + 1);
+  });
+
+  // ─── MobX (30 observables + 30 reactions, each with own factor) ──────────
+  const moAcc = { n: 0 };
+  const mobxBoxes = Array.from({ length: N }, (_, i) => {
+    const factor = i + 1;
+    const box = observable.box(0);
+    reaction(
+      () => box.get(),
+      (value) => {
+        moAcc.n += value * factor;
+      },
+    );
+    return box;
+  });
+  bench('mobx', () => {
+    const box = mobxBoxes[tick++ % N];
+    if (box) box.set(box.get() + 1);
   });
 });

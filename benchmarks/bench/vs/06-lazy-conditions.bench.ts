@@ -21,8 +21,13 @@
  *   - xstate: machine with 5 context fields; CLOCK transition reads s1.
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { combine, createEffect, createEvent, createStore, sample } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { select, takeEvery } from 'redux-saga/effects';
@@ -214,5 +219,48 @@ describe('comparison — lazy conditions (5 sources update each iter, handler re
     xstateActor.send({ type: 'UPDATE', key: 'v4', value: 1 });
     xstateActor.send({ type: 'UPDATE', key: 'v5', value: 1 });
     xstateActor.send({ type: 'CLOCK' });
+  });
+
+  // ─── Reatom (5 atoms + clock subscriber reads v1) ────────────────────────
+  const reatomAcc = { n: 0 };
+  const $r1 = atom(0);
+  const $r2 = atom(0);
+  const $r3 = atom(0);
+  const $r4 = atom(0);
+  const $r5 = atom(0);
+  const $rClock = atom(0);
+  $rClock.subscribe(() => {
+    reatomAcc.n += $r1();
+  });
+  bench('reatom', () => {
+    $r1.set(1);
+    $r2.set(1);
+    $r3.set(1);
+    $r4.set(1);
+    $r5.set(1);
+    $rClock.set((v) => v + 1);
+  });
+
+  // ─── MobX (5 observables + clock observable + reaction reads v1) ─────────
+  const mobxAcc = { n: 0 };
+  const mv1 = observable.box(0);
+  const mv2 = observable.box(0);
+  const mv3 = observable.box(0);
+  const mv4 = observable.box(0);
+  const mv5 = observable.box(0);
+  const mClock = observable.box(0);
+  reaction(
+    () => mClock.get(),
+    () => {
+      mobxAcc.n += mv1.get();
+    },
+  );
+  bench('mobx', () => {
+    mv1.set(1);
+    mv2.set(1);
+    mv3.set(1);
+    mv4.set(1);
+    mv5.set(1);
+    mClock.set(mClock.get() + 1);
   });
 });

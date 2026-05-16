@@ -19,8 +19,13 @@
  *   - xstate: ONE machine, 100 transitions in `on:`. Tabular dispatch.
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { createEvent } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { takeEvery } from 'redux-saga/effects';
@@ -130,5 +135,33 @@ describe('comparison — sparse event bus (100 event types, fire 1)', () => {
   const xstateActor = createActor(xstateMachine).start();
   bench('xstate', () => {
     xstateActor.send({ type: TARGET, payload: 1 });
+  });
+
+  // ─── Reatom (100 atoms, each its own subscriber — atom-as-event) ─────────
+  const reatomAcc = { n: 0 };
+  const reatomAtoms = Array.from({ length: N }, () => atom(0));
+  for (const a of reatomAtoms) {
+    a.subscribe(() => {
+      reatomAcc.n += 1;
+    });
+  }
+  bench('reatom', () => {
+    reatomAtoms[TARGET_INDEX]?.set((v) => v + 1);
+  });
+
+  // ─── MobX (100 observables + 100 reactions) ──────────────────────────────
+  const mobxAcc = { n: 0 };
+  const mobxBoxes = Array.from({ length: N }, () => observable.box(0));
+  for (const b of mobxBoxes) {
+    reaction(
+      () => b.get(),
+      () => {
+        mobxAcc.n += 1;
+      },
+    );
+  }
+  bench('mobx', () => {
+    const box = mobxBoxes[TARGET_INDEX];
+    if (box) box.set(box.get() + 1);
   });
 });

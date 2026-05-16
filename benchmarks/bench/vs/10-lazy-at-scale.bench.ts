@@ -19,8 +19,13 @@
  * sources on every iter — work the handler doesn't end up using.
  */
 
+import { atom } from '@reatom/core';
 import { createRuntime, createTrigger } from '@triggery/core';
 import { combine, createEffect, createEvent, createStore, sample } from 'effector';
+import { configure, observable, reaction } from 'mobx';
+
+configure({ enforceActions: 'never' });
+
 import { applyMiddleware, createStore as createReduxStore } from 'redux';
 import createSagaMiddleware from 'redux-saga';
 import { select, takeEvery } from 'redux-saga/effects';
@@ -193,5 +198,34 @@ describe('comparison — lazy conditions at scale (10 sources update each iter, 
   bench('xstate', () => {
     for (let i = 0; i < N; i++) xActor.send({ type: 'UPDATE', idx: i, value: i + 1 });
     xActor.send({ type: 'CLOCK', payload: tick++ });
+  });
+
+  // ─── Reatom (10 atoms + clock atom; subscriber reads one) ────────────────
+  const reAcc = { n: 0 };
+  const reAtoms = Array.from({ length: N }, () => atom(0));
+  const $reClock = atom(0);
+  $reClock.subscribe((value) => {
+    const idx = value % N;
+    reAcc.n += reAtoms[idx]?.() ?? 0;
+  });
+  bench('reatom', () => {
+    for (let i = 0; i < N; i++) reAtoms[i]?.set(i + 1);
+    $reClock.set((v) => v + 1);
+  });
+
+  // ─── MobX (10 observables + clock observable; reaction reads one) ────────
+  const moAcc = { n: 0 };
+  const moBoxes = Array.from({ length: N }, () => observable.box(0));
+  const moClock = observable.box(0);
+  reaction(
+    () => moClock.get(),
+    (value) => {
+      const idx = value % N;
+      moAcc.n += moBoxes[idx]?.get() ?? 0;
+    },
+  );
+  bench('mobx', () => {
+    for (let i = 0; i < N; i++) moBoxes[i]?.set(i + 1);
+    moClock.set(moClock.get() + 1);
   });
 });
