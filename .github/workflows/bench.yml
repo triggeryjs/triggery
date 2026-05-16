@@ -41,14 +41,27 @@ jobs:
       #
       # Same CI run, two clean suites on https://codspeed.io/triggeryjs/triggery.
 
+      # `continue-on-error: true` keeps the workflow green even when CodSpeed
+      # reports a regression. The dashboard at codspeed.io/triggeryjs/triggery
+      # and the PR comment still surface the number, but a -7% blip on a
+      # shared GitHub runner doesn't block merges. Pre-1.0 we care about the
+      # trend, not the per-PR gate.
+      #
+      # NB: CodSpeed's "Threshold" knob in the project Settings only changes
+      # when the PR alert comment fires — it does not silence the GitHub
+      # status check. To silence the status check, the right knob is this
+      # `continue-on-error`, not the UI.
+
       - name: Bench — core (Triggery dispatch hot path)
         uses: CodSpeedHQ/action@v4
+        continue-on-error: true
         with:
           mode: simulation
           run: cd benchmarks && pnpm exec vitest bench --run bench/core
 
       - name: Bench — vs (side-by-side comparisons)
         uses: CodSpeedHQ/action@v4
+        continue-on-error: true
         with:
           mode: simulation
           run: cd benchmarks && pnpm exec vitest bench --run bench/vs
