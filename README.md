@@ -143,7 +143,7 @@ Bench source: [`benchmarks/bench/core/dispatch.bench.ts`](./benchmarks/bench/cor
 
 ### vs effector / rxjs / redux-saga / xstate
 
-Eight scenarios bench-ed against four neighbour libraries. Headline numbers (local M1 Pro, ops/sec; **bold = winner per row**). `Triggery (prod)` is `createRuntime({ inspector: false })` — the auto default in production builds.
+Ten scenarios bench-ed against four neighbour libraries. Headline numbers (local M1 Pro, ops/sec; **bold = winner per row**). `Triggery (prod)` is `createRuntime({ inspector: false })` — the auto default in production builds.
 
 | Scenario | Triggery | Triggery (prod) | effector | rxjs | redux-saga | xstate |
 |---|---:|---:|---:|---:|---:|---:|
@@ -155,10 +155,12 @@ Eight scenarios bench-ed against four neighbour libraries. Headline numbers (loc
 | Lazy conditions (5 sources, read 1) | 549k | 629k | 217k | **2.55M** | 326k | 126k |
 | Multi-event single trigger | 588k | 663k | 3.75M | **14.4M** | 525k | 781k |
 | Toggle enable/disable + fire | 1.05M | 1.21M | 520k | **6.50M** | 289k | 473k |
+| Realistic app bus (30 events × 30 triggers + condition + action) | 474k | 557k | 341k | **1.2M** | 417k | 714k |
+| Lazy conditions at scale (10 sources, read 1 rotating) | 530k | 599k | 158k | **1.4M** | 306k | 72k |
 
 `inspector: false` saves the ring-buffer write, snapshot allocation and subscribe-listener fan-out per fire — consistent **+10-15% on dispatch-bound scenarios**, flat on take-latest (microtask cost dominates). Devtools (`@triggery/devtools-redux`, `@triggery/devtools-bridge`, `useInspectHistory`) require the inspector to be on; production code that doesn't ship devtools gets the lean path for free.
 
-rxjs wins raw throughput (thin `Subject` + operators, no graph/observability/cascade). Triggery is **competitive everywhere** and pulls ahead where its design matches the workload: **scenario 5** (indexed dispatch beats rxjs and saga), **scenario 6** (pull-only conditions beat effector, saga and xstate), **scenario 8** (first-class enable/disable beats effector, saga and xstate — only rxjs is faster).
+rxjs wins raw throughput (thin `Subject` + operators, no graph/observability/cascade). Triggery is **competitive everywhere** and pulls ahead where its design matches the workload: **scenario 5** (indexed dispatch beats rxjs and saga), **scenarios 6 + 10** (pull-only conditions beat effector, saga and xstate — by **3-7×** at scale), **scenario 8** (first-class enable/disable beats effector, saga and xstate — only rxjs is faster).
 
 Full breakdown + idiomatic implementations in [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
 

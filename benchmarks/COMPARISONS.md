@@ -146,6 +146,38 @@ A trigger is bound to a feature flag that flips between renders. Each iteration:
 
 [`08-toggle.bench.ts`](./bench/vs/08-toggle.bench.ts)
 
+### 9. Realistic app bus — 30 events × 30 triggers, each with condition + action
+The shape of a real medium app: 30 distinct event types, each with one trigger that gates on a required condition (`flag`), reads a second condition (`factor`) and dispatches an action. Bench rotates through all 30 events so every fire takes a different route.
+
+| Library | ops/sec | vs Triggery |
+|---|---:|---:|
+| **rxjs** | 1,200,000 | 2.53× |
+| **xstate** | 714,000 | 1.51× |
+| **Triggery (prod)** | 557,000 | 1.18× |
+| **Triggery** | 474,000 | 1.00× |
+| **redux-saga** | 417,000 | 0.88× |
+| **effector** | 341,000 | 0.72× |
+
+Mid-pack. The combination of indexed dispatch + required-gate + condition reads + action call lands us above effector and saga but below rxjs (bare-`Subject` filter cascade) and xstate (tabular transition lookup). The bench combines three Triggery hot-path advantages — indexed routing, required-gate, pull-only conditions — into one realistic shape. We get a useful proof that the combined per-fire cost in a real-app pattern stays competitive even when no single advantage dominates.
+
+[`09-realistic-bus.bench.ts`](./bench/vs/09-realistic-bus.bench.ts)
+
+### 10. Lazy conditions at scale — 10 sources update each iter, handler reads 1 rotating
+Scaled-up version of scenario 6. The runtime knows about 10 sources, all mutated on every iteration ("source churn"), but the handler reads only ONE — and which one rotates between iters based on `event.payload % 10`.
+
+| Library | ops/sec | vs Triggery |
+|---|---:|---:|
+| **rxjs** | 1,400,000 | 2.64× |
+| **Triggery (prod)** | 599,000 | 1.13× |
+| **Triggery** | 530,000 | 1.00× |
+| **redux-saga** | 306,000 | 0.58× |
+| **effector** | 158,000 | 0.30× |
+| **xstate** | 72,000 | 0.14× |
+
+🟢 Scenario 6's story, intensified. Triggery's pull-only conditions treat source updates as plain variable writes — zero notify cost — so the 10 source mutations per iter cost almost nothing, and the handler's one Proxy read is the entire work. **We beat effector by 3.4×, saga by 1.7×, xstate by 7×.** effector's `combine` recomputes the 10-store snapshot on every update; xstate's `assign` rebuilds context; saga reducer copies state. rxjs's `BehaviorSubject` + `withLatestFrom` uses the same lazy strategy through operators and stays ahead — replace with `combineLatest` and rxjs joins us in this range.
+
+[`10-lazy-at-scale.bench.ts`](./bench/vs/10-lazy-at-scale.bench.ts)
+
 ## Where each library shines
 
 | If you want… | Pick |
