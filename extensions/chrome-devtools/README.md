@@ -1,23 +1,70 @@
-# Triggery DevTools — Chrome extension (V1 stub)
+# Triggery DevTools — Chrome extension
 
-Minimal scaffold for a Chrome DevTools panel. Load it as an unpacked extension to verify wiring:
+Live inspector for [Triggery](https://github.com/triggeryjs/triggery) runtimes, attached to Chrome DevTools.
 
-1. `chrome://extensions` → toggle **Developer mode** → **Load unpacked** → select this directory.
-2. Open DevTools on any page → a **Triggery** panel appears alongside Elements / Console.
+Status: **functional V1**. Streams every run from the inspected page into a DevTools panel; click a row to see the full snapshot.
 
-The panel currently shows a static placeholder. The content-script bridge that streams runtime events from the inspected page lands in **V1.1** — until then use the in-app `<InspectorView />` from [`@triggery/devtools-panel`](../../packages/devtools-panel) or the [`reduxDevtoolsMiddleware`](../../packages/devtools-redux) for Redux DevTools.
+## Load it (5 minutes, end-to-end)
+
+1. Wire the bridge into your app (one-time, DEV-only):
+
+   ```ts
+   import { createRuntime } from '@triggery/core';
+   import { installDevtoolsBridge } from '@triggery/devtools-bridge';
+
+   const runtime = createRuntime();
+   if (import.meta.env.DEV) installDevtoolsBridge(runtime);
+   ```
+
+2. Load the extension in Chrome:
+   - Open `chrome://extensions`.
+   - Toggle **Developer mode** (top-right).
+   - Click **Load unpacked** → select this directory (`extensions/chrome-devtools`).
+
+3. Open your app. Open DevTools (`⌥⌘I` / `Ctrl+Shift+I`). The **Triggery** panel sits next to **Elements / Console**.
+
+4. Fire an event from the app — it shows up in the panel within a few ms.
+
+## What you see
+
+* Status dot — green when the page has called `installDevtoolsBridge`.
+* Run counter, runtime id.
+* Each row: status, duration, `triggerId ← eventName (skip-reason?) → executedActions`, runId.
+* Click a row → JSON snapshot.
+* Clear button to drop the local view (page-side history is untouched).
+
+## Architecture
+
+```
+page                 isolated world           extension
+─────────────────    ──────────────────       ───────────────────
+runtime
+  │ subscribe
+  ▼
+@triggery/devtools-bridge
+  │ window.postMessage
+  ▼
+window listener (in content-script.js)
+                                    │ chrome.runtime.sendMessage
+                                    ▼
+                              service-worker.js
+                                    │ port.postMessage (per-tab)
+                                    ▼
+                              panel.js  ──renders→  panel.html
+```
+
+The wire format is the `DevtoolsMessage` union from [`@triggery/devtools-bridge`](../../packages/devtools-bridge). The panel doesn't import any Triggery package — it speaks the protocol directly, so it works against any page that ships the bridge.
 
 ## Files
 
 | File | Role |
 |---|---|
-| `manifest.json` | Manifest V3 declaration, `devtools_page` points at `devtools.html` |
-| `devtools.html` + `devtools.js` | Registers the **Triggery** panel via `chrome.devtools.panels.create` |
-| `panel.html` + `panel.js` | The panel UI itself (static for now) |
-| `icons/icon{16,48,128}.png` | Toolbar / panel icons — drop your own PNGs in place |
+| `manifest.json` | Manifest v3 — content script + service worker + devtools page |
+| `content-script.js` | Forwards `window.postMessage` envelopes from the page-side bridge into the extension |
+| `service-worker.js` | Per-tab router — keeps a `Map<tabId, panel port>` and pushes events through |
+| `devtools.html` / `devtools.js` | Registers the **Triggery** panel via `chrome.devtools.panels.create` |
+| `panel.html` / `panel.js` | The panel itself — connects back to the service worker as `panel:<tabId>`, renders incoming snapshots to DOM |
 
-## Roadmap (V1.1)
+## Roadmap
 
-* Service worker that injects a content script into the inspected page.
-* Content script subscribes to the page's runtime via `runtime.subscribe()` and forwards snapshots over `chrome.runtime.connect`.
-* Panel renders the live inspector list (vendored React bundle of `@triggery/devtools-panel`).
+V1.1: per-trigger filters, time-travel replay via `@triggery/devtools-replay`, cascade-tree view. Vanilla DOM rendering stays — Chrome extension panels are isolated enough that the simplicity of plain JS beats bundling React.

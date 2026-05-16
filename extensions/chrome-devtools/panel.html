@@ -7,61 +7,182 @@
       :root {
         color-scheme: light dark;
       }
+      html,
       body {
         margin: 0;
-        padding: 24px;
+        padding: 0;
+        height: 100%;
+        background: #fff;
+        color: #24292e;
         font-family:
           system-ui,
           -apple-system,
           'Segoe UI',
           sans-serif;
-        color: #24292e;
-        background: #fff;
+        font-size: 13px;
       }
-      h1 {
-        margin: 0 0 12px;
-        font-size: 18px;
+      header {
+        padding: 8px 12px;
+        background: #f6f8fa;
+        border-bottom: 1px solid #d0d7de;
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 14px;
+      }
+      header .meta {
+        color: #586069;
+        font-size: 12px;
+        margin-left: auto;
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+      header button {
+        background: transparent;
+        border: 1px solid #d0d7de;
+        border-radius: 4px;
+        padding: 2px 8px;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      header button:hover {
+        background: #fff;
       }
       .status {
         display: inline-block;
-        padding: 2px 8px;
-        border-radius: 999px;
-        background: #fff3bf;
-        color: #846008;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #d0d7de;
+      }
+      .status.connected {
+        background: #1a7f37;
+      }
+      .empty {
+        padding: 24px;
+        text-align: center;
+        color: #586069;
+      }
+      ul.runs {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      ul.runs li {
+        border-bottom: 1px solid #eee;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 70px 60px 1fr auto auto;
+        gap: 8px;
+        align-items: baseline;
+        padding: 6px 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         font-size: 12px;
+        cursor: pointer;
+      }
+      .row:hover {
+        background: #f6f8fa;
+      }
+      .row .status-tag {
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .status-tag.fired {
+        color: #1a7f37;
+      }
+      .status-tag.skipped {
+        color: #846008;
+      }
+      .status-tag.errored {
+        color: #a01a1a;
+      }
+      .status-tag.aborted {
+        color: #586069;
+      }
+      .row .duration {
+        color: #586069;
+      }
+      .row .trigger {
         font-weight: 600;
       }
-      .hint {
-        margin-top: 16px;
+      .row .event {
         color: #586069;
-        font-size: 13px;
-        line-height: 1.5;
       }
-      code {
-        background: #f6f8fa;
-        padding: 1px 4px;
-        border-radius: 3px;
+      .row .actions {
+        color: #0969da;
+      }
+      .row .reason {
+        font-style: italic;
+        color: #846008;
+      }
+      details {
+        background: #fafbfc;
+        padding: 8px 12px 12px;
+      }
+      details pre {
+        margin: 6px 0 0;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        background: #f6f8fa;
+        border: 1px solid #eaecef;
+        padding: 8px;
+        border-radius: 4px;
+        overflow: auto;
+        max-height: 320px;
       }
-      a {
-        color: #0366d6;
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background: #0d1117;
+          color: #c9d1d9;
+        }
+        header {
+          background: #161b22;
+          border-bottom-color: #30363d;
+        }
+        header button {
+          border-color: #30363d;
+          color: inherit;
+        }
+        header button:hover {
+          background: #21262d;
+        }
+        .row:hover {
+          background: #161b22;
+        }
+        ul.runs li {
+          border-bottom-color: #21262d;
+        }
+        details {
+          background: #161b22;
+        }
+        details pre {
+          background: #0d1117;
+          border-color: #30363d;
+        }
       }
     </style>
   </head>
   <body>
-    <h1>Triggery <span class="status">V1 stub</span></h1>
-    <p class="hint">
-      This panel is a scaffold. The content-script bridge that streams runtime
-      events from the inspected page lands in V1.1. Until then, drop the
-      in-app inspector into your app:
-    </p>
-    <pre><code>import { InspectorView } from '@triggery/devtools-panel';
-
-&lt;InspectorView limit={50} /&gt;</code></pre>
-    <p class="hint">
-      For Redux DevTools integration use <code>reduxDevtoolsMiddleware()</code>
-      from <code>@triggery/devtools-redux</code> — fully functional today.
-    </p>
+    <header>
+      <h1>Triggery</h1>
+      <div class="meta">
+        <span><span class="status" id="status-dot"></span> <span id="status-label">waiting…</span></span>
+        <span id="counter">0 runs</span>
+        <span id="runtime-id" style="color: #586069"></span>
+        <button type="button" id="clear">Clear</button>
+      </div>
+    </header>
+    <main id="root">
+      <div class="empty">
+        Waiting for the page to call <code>installDevtoolsBridge(runtime)</code>…
+      </div>
+    </main>
     <script src="panel.js"></script>
   </body>
 </html>
