@@ -9,7 +9,7 @@ Side-by-side micro-benchmarks of the dispatch hot path against four libraries th
 * Same business outcome per scenario; each library implemented idiomatically (effector via `sample`/`merge`, rxjs via `pipe`/`merge`, saga via `take*`, xstate via transitions/invoke).
 * Bench fn does one logical unit per iteration. Setup happens once per `describe`.
 * Counter is incremented in the handler so the work isn't optimised away.
-* Source: `benchmarks/bench/comparisons/*.bench.ts`.
+* Source: `benchmarks/bench/vs/*.bench.ts`.
 * `Triggery` uses the dev/test default (`inspector: on`). `Triggery (prod)` mirrors the production default (`createRuntime({ inspector: false })`) — same setup, no per-fire snapshot allocation or subscribe-listener fan-out. Devtools (`@triggery/devtools-redux`, `@triggery/devtools-bridge`, `useInspectHistory`) require the inspector to be on.
 
 ## Why rxjs is so fast on the simple scenarios
@@ -36,7 +36,7 @@ One subscriber, one action, no conditions.
 | **redux-saga** | 418,000 | 0.70× |
 | **effector** | 371,000 | 0.62× |
 
-[`01-plain-dispatch.bench.ts`](./bench/comparisons/01-plain-dispatch.bench.ts)
+[`01-plain-dispatch.bench.ts`](./bench/vs/01-plain-dispatch.bench.ts)
 
 ### 2. Conditional dispatch — guard on every fire
 Toggled boolean guard, 50% of events pass.
@@ -50,7 +50,7 @@ Toggled boolean guard, 50% of events pass.
 | **effector** | 531,000 | 0.95× |
 | **redux-saga** | 371,000 | 0.66× |
 
-[`02-conditional.bench.ts`](./bench/comparisons/02-conditional.bench.ts)
+[`02-conditional.bench.ts`](./bench/vs/02-conditional.bench.ts)
 
 ### 3. Cascade — event A → handler → event B → handler
 Both events fire synchronously in the same tick; counter is bumped only by B's handler.
@@ -64,7 +64,7 @@ Both events fire synchronously in the same tick; counter is bumped only by B's h
 | **Triggery** | 301,000 | 1.00× |
 | **redux-saga** | 222,000 | 0.74× |
 
-[`03-cascade.bench.ts`](./bench/comparisons/03-cascade.bench.ts)
+[`03-cascade.bench.ts`](./bench/vs/03-cascade.bench.ts)
 
 ### 4. Take-latest — every fire cancels prior in-flight async work
 Async handler awaits one microtask, then checks the cancel signal.
@@ -80,7 +80,7 @@ Async handler awaits one microtask, then checks the cancel signal.
 
 `prod` is flat here — microtask + Promise resolution dominates the per-iteration cost, so skipping the inspector buffer is in the noise.
 
-[`04-take-latest.bench.ts`](./bench/comparisons/04-take-latest.bench.ts)
+[`04-take-latest.bench.ts`](./bench/vs/04-take-latest.bench.ts)
 
 ### 5. Sparse event bus — 100 event types, fire targets one
 "Shared dispatcher routes typed events to typed handlers" — common in large apps. The fire hits one channel out of 100.
@@ -96,7 +96,7 @@ Async handler awaits one microtask, then checks the cancel signal.
 
 🟢 Triggery's indexed `Map<eventName, Set<Trigger>>` stays O(1) on every fire. **We beat rxjs (shared `Subject` + 100 filters = O(N)) and saga (middleware + 100 takeEvery).** effector and xstate win this one because their per-event primitive is even tighter (each `createEvent` is its own minimal pub-sub; xstate's transitions are tabular lookup).
 
-[`05-sparse-bus.bench.ts`](./bench/comparisons/05-sparse-bus.bench.ts)
+[`05-sparse-bus.bench.ts`](./bench/vs/05-sparse-bus.bench.ts)
 
 ### 6. Lazy conditions — 5 sources update each iter, handler reads 1
 The runtime knows about 5 sources of state but the trigger only needs one of them in this branch of logic. Sources update on every iteration; the handler reads source #1.
@@ -112,7 +112,7 @@ The runtime knows about 5 sources of state but the trigger only needs one of the
 
 🟢 Triggery's pull-only condition model treats source updates as plain variable writes — zero notify cost. **We beat effector, saga and xstate by 2-5×** because they all pay for state mutation per update (combine recomputes, reducer replaces state, assign builds new context). rxjs `BehaviorSubject` + `withLatestFrom` is essentially the same lazy strategy implemented through operators — replace it with `combineLatest` and rxjs joins us in the same range.
 
-[`06-lazy-conditions.bench.ts`](./bench/comparisons/06-lazy-conditions.bench.ts)
+[`06-lazy-conditions.bench.ts`](./bench/vs/06-lazy-conditions.bench.ts)
 
 ### 7. Multi-event single trigger — one handler reacts to 5 event types
 Common in real apps: one logical reaction listens to many event types (any of save/format/undo/redo bumps the auto-save debouncer).
@@ -128,7 +128,7 @@ Common in real apps: one logical reaction listens to many event types (any of sa
 
 Mid-pack — `prod` keeps up with xstate's tabular lookup. Our `events: ['e1', ..., 'e5']` declaration is ergonomically nice (one trigger config vs `merge(...)` / array-of-types / 5 duplicated transitions). effector's `merge` and rxjs's `merge` still get optimised internally beyond what we do.
 
-[`07-multi-event-trigger.bench.ts`](./bench/comparisons/07-multi-event-trigger.bench.ts)
+[`07-multi-event-trigger.bench.ts`](./bench/vs/07-multi-event-trigger.bench.ts)
 
 ### 8. Toggle enable/disable — every iter flips on/off, then fires
 A trigger is bound to a feature flag that flips between renders. Each iteration: toggle, then fire. Half the fires are blocked, half pass through.
@@ -144,7 +144,7 @@ A trigger is bound to a feature flag that flips between renders. Each iteration:
 
 🟢 **Triggery wins #2 overall** (with `prod` widening the lead) — first-class `enable()` / `disable()` is a boolean flip. Every other library here has to fake "off" by either tearing down the subscription (rxjs/saga), gating via a store/guard (effector/xstate), or both. rxjs's `Subject.subscribe()` is fast enough to overtake us, but **we beat effector, xstate and saga by 2-4×**.
 
-[`08-toggle.bench.ts`](./bench/comparisons/08-toggle.bench.ts)
+[`08-toggle.bench.ts`](./bench/vs/08-toggle.bench.ts)
 
 ## Where each library shines
 

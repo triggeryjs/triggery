@@ -23,8 +23,21 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - name: Run benchmarks
+
+      # Two separate CodSpeed uploads so the dashboard shows two distinct
+      # benchmark suites: Triggery's own dispatch hot-path benches (`core`)
+      # versus the side-by-side comparisons against effector/rxjs/saga/xstate
+      # (`vs`). Same CI run, clean separation on
+      # https://codspeed.io/triggeryjs/triggery.
+
+      - name: Bench — core (Triggery dispatch hot path)
         uses: CodSpeedHQ/action@v4
         with:
           mode: simulation
-          run: cd benchmarks && pnpm exec vitest bench --run
+          run: cd benchmarks && pnpm exec vitest bench --run bench/core
+
+      - name: Bench — vs (side-by-side comparisons)
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: cd benchmarks && pnpm exec vitest bench --run bench/vs

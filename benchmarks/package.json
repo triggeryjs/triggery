@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "bench": "vitest bench --run"
+    "bench": "vitest bench --run",
+    "bench:core": "vitest bench --run bench/core",
+    "bench:vs": "vitest bench --run bench/vs"
   },
   "dependencies": {
     "@triggery/core": "workspace:*"

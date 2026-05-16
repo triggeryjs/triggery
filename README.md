@@ -139,7 +139,7 @@ Measured on CodSpeed CPU-simulation runners (deterministic cycle counts, not wal
 | Single trigger, 0 conditions, 1 action | **634k ops/sec** |
 | 10 triggers, each with 2 conditions and 1 action | **44k ops/sec** |
 
-Bench source: [`benchmarks/bench/dispatch.bench.ts`](./benchmarks/bench/dispatch.bench.ts). Live dashboard: [codspeed.io/triggeryjs/triggery](https://codspeed.io/triggeryjs/triggery).
+Bench source: [`benchmarks/bench/core/dispatch.bench.ts`](./benchmarks/bench/core/dispatch.bench.ts). Live dashboard: [codspeed.io/triggeryjs/triggery](https://codspeed.io/triggeryjs/triggery). Two suites are published: **`core`** (Triggery's own dispatch hot path) and **`vs`** (side-by-side with effector/rxjs/redux-saga/xstate).
 
 ### vs effector / rxjs / redux-saga / xstate
 
