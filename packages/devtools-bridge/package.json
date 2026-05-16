@@ -1,7 +1,7 @@
 {
   "name": "@triggery/devtools-bridge",
-  "version": "0.1.0",
-  "description": "Page-side bridge for Triggery devtools \u2014 broadcasts runtime events over window.postMessage. Framework-agnostic. Zero runtime dependencies.",
+  "version": "0.1.1",
+  "description": "Page-side bridge for Triggery devtools — broadcasts runtime events over window.postMessage. Framework-agnostic. Zero runtime dependencies.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",

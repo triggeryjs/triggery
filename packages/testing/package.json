@@ -1,7 +1,7 @@
 {
   "name": "@triggery/testing",
-  "version": "0.1.0",
-  "description": "Testing utilities for Triggery \u2014 isolated runtime, fake scheduler, mock conditions/actions. Zero runtime dependencies, works with Vitest / Jest / node:test.",
+  "version": "0.1.1",
+  "description": "Testing utilities for Triggery — isolated runtime, fake scheduler, mock conditions/actions. Zero runtime dependencies, works with Vitest / Jest / node:test.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io/triggery",
