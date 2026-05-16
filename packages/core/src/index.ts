@@ -63,6 +63,7 @@ export type {
   MetaCtx,
   Middleware,
   NamedHooks,
+  RegisterScopeOptions,
   RegistrationToken,
   Runtime,
   RuntimeOptions,

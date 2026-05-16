@@ -7,6 +7,7 @@ import type {
   ConditionGetter,
   FireContext,
   InternalTriggerConfig,
+  RegisterScopeOptions,
   RegistrationToken,
   Runtime,
   RuntimeOptions,
@@ -116,6 +117,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     name: string,
     fn: unknown,
     label: 'condition' | 'action',
+    scope: string,
   ): RegistrationToken => {
     const trigger = triggers.get(triggerId);
     if (!trigger) {
@@ -124,6 +126,25 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
         console.warn(
           `[triggery] register${label === 'condition' ? 'Condition' : 'Action'}: trigger "${triggerId}" not found`,
         );
+      }
+      return { unregister() {} };
+    }
+    // Scope-match gate. A trigger declared with `scope: 'chat'` only sees
+    // registrations made in scope `'chat'`; a global trigger (no scope) only
+    // sees global registrations. Mismatches are silent no-ops at runtime, but
+    // we warn-once in DEV so the user notices the wiring is off.
+    if (trigger.config.scope !== scope) {
+      if (isDev()) {
+        const collisionKey = `scope-mismatch:${label}:${triggerId}:${scope}:${name}`;
+        if (!warnedCollisions.has(collisionKey)) {
+          warnedCollisions.add(collisionKey);
+          // eslint-disable-next-line no-console -- DEV warn
+          console.warn(
+            `[triggery] register${label === 'condition' ? 'Condition' : 'Action'}: scope mismatch — ` +
+              `trigger "${triggerId}" has scope "${trigger.config.scope || '(global)'}" but the ` +
+              `registration came from scope "${scope || '(global)'}". The registration is ignored.`,
+          );
+        }
       }
       return { unregister() {} };
     }
@@ -199,13 +220,16 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     triggerId: string,
     name: string,
     getter: ConditionGetter,
-  ): RegistrationToken => registerStacked(triggerId, name, getter, 'condition');
+    options?: RegisterScopeOptions,
+  ): RegistrationToken =>
+    registerStacked(triggerId, name, getter, 'condition', options?.scope ?? '');
 
   const registerAction = (
     triggerId: string,
     name: string,
     handler: UntypedActionFn,
-  ): RegistrationToken => registerStacked(triggerId, name, handler, 'action');
+    options?: RegisterScopeOptions,
+  ): RegistrationToken => registerStacked(triggerId, name, handler, 'action', options?.scope ?? '');
 
   // ─── cascade helpers ──────────────────────────────────────────────────
   const emitCascade = (info: CascadeContext) => {

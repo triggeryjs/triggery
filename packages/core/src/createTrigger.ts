@@ -81,6 +81,7 @@ export function createTrigger<S extends TriggerSchema>(
     concurrency: config.concurrency ?? 'take-latest',
     required: (config.required ?? []) as readonly string[],
     events: config.events as readonly string[],
+    scope: config.scope ?? '',
     handler: internalHandler,
   };
 

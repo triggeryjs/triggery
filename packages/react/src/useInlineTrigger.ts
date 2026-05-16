@@ -1,6 +1,6 @@
 import { createTrigger, type Trigger, type TriggerSchema } from '@triggery/core';
 import { useEffect, useMemo, useRef } from 'react';
-import { useRuntime } from './context.ts';
+import { useRuntime, useScope } from './context.ts';
 
 let inlineCounter = 0;
 
@@ -35,6 +35,7 @@ export type UseInlineTriggerConfig<S extends TriggerSchema> = {
  */
 export function useInlineTrigger<S extends TriggerSchema>(config: UseInlineTriggerConfig<S>): void {
   const runtime = useRuntime();
+  const scope = useScope();
   // Stable id — auto-generated unless the caller pinned one.
   const idRef = useRef<string | undefined>(undefined);
   if (idRef.current === undefined) {
@@ -73,9 +74,10 @@ export function useInlineTrigger<S extends TriggerSchema>(config: UseInlineTrigg
         // biome-ignore lint/suspicious/noExplicitAny: inline trigger has runtime-only schema
         events: [eventNameRef.current] as any,
         handler: stableHandler,
+        ...(scope !== '' && { scope }),
       },
       runtime,
     ) as Trigger<S>;
     return () => trigger.dispose();
-  }, [runtime, stableHandler]);
+  }, [runtime, stableHandler, scope]);
 }

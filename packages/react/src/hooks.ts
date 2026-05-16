@@ -9,7 +9,7 @@ import type {
   TriggerSchema,
 } from '@triggery/core';
 import { useCallback, useEffect, useRef } from 'react';
-import { useRuntime } from './context.ts';
+import { useRuntime, useScope } from './context.ts';
 
 /**
  * Return an event emitter. Its identity is stable across renders (`useCallback`
@@ -53,6 +53,7 @@ export function useCondition<S extends TriggerSchema, K extends ConditionKey<S>>
   deps: readonly unknown[] = [],
 ): void {
   const runtime = useRuntime();
+  const scope = useScope();
   // Keep the latest getter in a ref — the runtime reads through a stable wrapper.
   const getterRef = useRef(getter);
   getterRef.current = getter;
@@ -60,9 +61,9 @@ export function useCondition<S extends TriggerSchema, K extends ConditionKey<S>>
   const stableGetter = useCallback(() => getterRef.current(), deps);
 
   useEffect(() => {
-    const token = runtime.registerCondition(trigger.id, name, stableGetter);
+    const token = runtime.registerCondition(trigger.id, name, stableGetter, { scope });
     return () => token.unregister();
-  }, [runtime, trigger.id, name, stableGetter]);
+  }, [runtime, trigger.id, name, stableGetter, scope]);
 }
 
 /**
@@ -82,15 +83,19 @@ export function useAction<S extends TriggerSchema, K extends ActionKey<S>>(
     : (payload: ActionMap<S>[K]) => void | Promise<void>,
 ): void {
   const runtime = useRuntime();
+  const scope = useScope();
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
 
   useEffect(() => {
-    const token = runtime.registerAction(trigger.id, name, (payload) =>
-      (handlerRef.current as (payload: unknown) => void | Promise<void>)(payload),
+    const token = runtime.registerAction(
+      trigger.id,
+      name,
+      (payload) => (handlerRef.current as (payload: unknown) => void | Promise<void>)(payload),
+      { scope },
     );
     return () => token.unregister();
-  }, [runtime, trigger.id, name]);
+  }, [runtime, trigger.id, name, scope]);
 }
 
 /**

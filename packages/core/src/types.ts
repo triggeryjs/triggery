@@ -271,6 +271,18 @@ export type Middleware = {
   onCascade?(ctx: CascadeContext): void;
 };
 
+/**
+ * Optional scoping for `registerCondition` / `registerAction`. A scope is just
+ * a string id — registrations live in their own bucket per scope. A trigger
+ * whose `scope` matches receives that bucket; triggers without scope see the
+ * global bucket (scope `''`).
+ *
+ * @see `<TriggerScope id="…">` in `@triggery/react`.
+ */
+export type RegisterScopeOptions = {
+  readonly scope?: string;
+};
+
 export type Runtime = {
   readonly id: string;
 
@@ -278,10 +290,20 @@ export type Runtime = {
   registerTrigger(config: InternalTriggerConfig): RegistrationToken;
 
   /** Register a condition getter for a trigger. */
-  registerCondition(triggerId: string, name: string, getter: ConditionGetter): RegistrationToken;
+  registerCondition(
+    triggerId: string,
+    name: string,
+    getter: ConditionGetter,
+    options?: RegisterScopeOptions,
+  ): RegistrationToken;
 
   /** Register an action handler for a trigger. */
-  registerAction(triggerId: string, name: string, handler: UntypedActionFn): RegistrationToken;
+  registerAction(
+    triggerId: string,
+    name: string,
+    handler: UntypedActionFn,
+    options?: RegisterScopeOptions,
+  ): RegistrationToken;
 
   /** Fire an event asynchronously (through the scheduler). */
   fire(eventName: string, payload?: unknown): void;
@@ -309,6 +331,8 @@ export type InternalTriggerConfig = {
   readonly concurrency: ConcurrencyStrategy;
   readonly required: readonly string[];
   readonly events: readonly string[];
+  /** Scope key — `undefined`/`''` means global. See `RegisterScopeOptions`. */
+  readonly scope: string;
   readonly handler: (ctx: InternalHandlerCtx) => void | Promise<void>;
 };
 

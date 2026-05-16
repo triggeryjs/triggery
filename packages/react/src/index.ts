@@ -12,13 +12,14 @@
  * trigger object as their first argument — stable identity, no string lookups.
  */
 
-export { TriggerRuntimeContext, useRuntime } from './context.ts';
+export { TriggerRuntimeContext, TriggerScopeContext, useRuntime, useScope } from './context.ts';
 export { useAction, useCondition, useEvent, useInspect } from './hooks.ts';
 export { createNamedHooks } from './namedHooks.ts';
 export {
   TriggerRuntimeProvider,
   type TriggerRuntimeProviderProps,
 } from './TriggerRuntimeProvider.tsx';
+export { TriggerScope, type TriggerScopeProps } from './TriggerScope.tsx';
 export {
   type UseInlineTriggerConfig,
   useInlineTrigger,

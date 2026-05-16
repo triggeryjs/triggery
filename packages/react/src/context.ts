@@ -12,3 +12,15 @@ export function useRuntime(): Runtime {
   const ctxRuntime = useContext(TriggerRuntimeContext);
   return ctxRuntime ?? getDefaultRuntime();
 }
+
+/**
+ * Scope context — string id provided by `<TriggerScope id="…">`. Default is
+ * `''` (global). Hooks pass it through to `registerCondition`/`registerAction`
+ * so the runtime can match the registration against a trigger's `scope`.
+ */
+export const TriggerScopeContext = createContext<string>('');
+
+/** Read the active scope from context. `''` means "global / no scope". */
+export function useScope(): string {
+  return useContext(TriggerScopeContext);
+}
