@@ -7,10 +7,12 @@ sidebar:
 
 import { LinkCard, CardGrid } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import GitHubButton from '~/components/GitHubButton.astro';
 
 «Hello world» для Triggery. Две кнопки запускают события `increment`/`decrement`; компонент-счётчик реагирует через `useAction` и ререндерит сам себя. Больше ничего.
 
 <StackBlitzButton path="examples/vite-react-counter" label="Открыть в StackBlitz" />
+<GitHubButton path="examples/vite-react-counter" label="Открыть пример на GitHub" />
 
 ## Триггер
 

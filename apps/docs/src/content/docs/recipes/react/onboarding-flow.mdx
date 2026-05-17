@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import GitHubButton from '~/components/GitHubButton.astro';
 
 Onboarding flows are notorious for sprawling logic: "show step 2 only if step 1 is done AND the user is on this route AND they haven't dismissed the tour AND they actually have access to the feature". You either hard-code it in one giant `useEffect` chain, or you reach for a tour library that owns half your UI. Triggery's third path: keep the *rules* in one trigger and let *each step component* announce itself to the trigger.
 
 <StackBlitzButton path="examples/vite-react-onboarding" label="Open in StackBlitz" />
+<GitHubButton path="examples/vite-react-onboarding" label="Open example on GitHub" />
 
 ## Scenario
 

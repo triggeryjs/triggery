@@ -64,11 +64,9 @@ for (const name of entries) {
   let title = name;
   let description = '';
 
-  // Normalise package.json so the inline sandbox CTAs (StackBlitz + CSB)
-  // actually boot. Both expect a `start` script — CSB runs `npm start` by
-  // default; SB's node template falls back to `dev` only after `start`.
-  // Vite examples ship with `dev`/`build`/`preview`, so we mirror `dev`
-  // into `start` if it's missing.
+  // Normalise package.json so StackBlitz's node template boots cleanly:
+  // we mirror `dev` into `start` if missing — `npm start` is what the
+  // WebContainer runs by default for `template: 'node'`.
   const pkgRaw = files['package.json'];
   if (pkgRaw) {
     try {
@@ -83,24 +81,6 @@ for (const name of entries) {
     } catch {
       // Leave package.json untouched if it's not parseable.
     }
-  }
-
-  // Tell CodeSandbox what to run + which port to expose. Without this
-  // CSB occasionally creates the sandbox, opens an empty preview iframe
-  // and never starts the dev server — terminal hidden, no way to debug.
-  if (!files['sandbox.config.json']) {
-    files['sandbox.config.json'] = `${JSON.stringify(
-      {
-        template: 'node',
-        container: {
-          node: '20',
-          port: 5173,
-          startScript: 'dev',
-        },
-      },
-      null,
-      2,
-    )}\n`;
   }
 
   const bundle = { name, title, description, files };

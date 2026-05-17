@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import GitHubButton from '~/components/GitHubButton.astro';
 
 Сценарии онбординга печально известны разрастающейся логикой: «показать шаг 2, только если шаг 1 пройден, пользователь на нужном маршруте, он не закрыл тур и у него вообще есть доступ к фиче». Либо это хардкодится в одну гигантскую цепочку `useEffect`, либо тянется тур-библиотека, которая владеет половиной UI. Третий путь Triggery — держать *правила* в одном триггере, а *каждый компонент шага* пусть сам сообщает о себе триггеру.
 
 <StackBlitzButton path="examples/vite-react-onboarding" label="Открыть в StackBlitz" />
+<GitHubButton path="examples/vite-react-onboarding" label="Открыть пример на GitHub" />
 
 ## Сценарий
 
