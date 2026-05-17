@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
-    "start": "astro dev",
-    "build": "astro build",
+    "dev": "node scripts/bundle-examples.mjs && astro dev",
+    "start": "node scripts/bundle-examples.mjs && astro dev",
+    "build": "node scripts/bundle-examples.mjs && astro build",
+    "bundle-examples": "node scripts/bundle-examples.mjs",
     "preview": "astro preview --port 4321",
     "astro": "astro",
     "check": "astro check"
@@ -15,6 +16,7 @@
     "@astrojs/check": "^0.9.4",
     "@astrojs/sitemap": "^3.7.2",
     "@astrojs/starlight": "^0.37.7",
+    "@stackblitz/sdk": "^1.11.0",
     "@triggery/core": "workspace:*",
     "@triggery/react": "workspace:*",
     "@triggery/solid": "workspace:*",

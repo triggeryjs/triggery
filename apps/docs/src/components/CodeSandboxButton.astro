@@ -10,7 +10,11 @@ interface Props {
 }
 
 const { path, label = 'Open in CodeSandbox', ref = 'main' } = Astro.props;
-const href = `https://codesandbox.io/p/github/triggeryjs/triggery/${ref}/${path}`;
+// `/p/github/...` and `/p/devbox/...` resolve to a CodeSandbox **team**
+// workspace, which throws "Unable to access this workspace" for anonymous
+// readers. `/s/github/...` is the public classic-sandbox URL that anyone
+// can open, edit and fork.
+const href = `https://codesandbox.io/s/github/triggeryjs/triggery/tree/${ref}/${path}?file=/README.md`;
 ---
 
 <a class="csb-btn" href={href} target="_blank" rel="noreferrer noopener">
@@ -23,6 +27,7 @@ const href = `https://codesandbox.io/p/github/triggeryjs/triggery/${ref}/${path}
     margin-top: 0.5rem;
     display: inline-flex;
     align-items: center;
+    vertical-align: top;
     gap: 0.5rem;
     padding: 0.5rem 1rem;
     background: #151515;

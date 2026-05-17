@@ -19,7 +19,7 @@
       "!apps/docs/src/components/**/*.astro",
       "!apps/docs/src/content.config.ts",
       "!apps/docs/src/content/docs",
-      "!examples/**/src/**",
+      "!examples/**/src",
       "!examples/**/CHANGELOG.md"
     ]
   },
