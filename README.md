@@ -6,17 +6,18 @@
 
 > **Write business logic, not boilerplate.**
 
-[![CI](https://github.com/triggeryjs/triggery/actions/workflows/ci.yml/badge.svg)](https://github.com/triggeryjs/triggery/actions/workflows/ci.yml)
-[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/triggeryjs/triggery?utm_source=badge)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/triggeryjs/triggery)
-[![npm version](https://img.shields.io/npm/v/@triggery/core?label=%40triggery%2Fcore)](https://www.npmjs.com/package/@triggery/core)
-[![Bundle size](https://img.shields.io/bundlejs/size/@triggery/core?label=core%20gzip)](https://bundlejs.com/?q=%40triggery%2Fcore)
-[![npm downloads](https://img.shields.io/npm/dm/@triggery/core?label=downloads)](https://www.npmjs.com/package/@triggery/core)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/triggeryjs/triggery?style=social)](https://github.com/triggeryjs/triggery/stargazers)
-[![Sponsor on Patreon](https://img.shields.io/badge/sponsor-patreon-ff424d?logo=patreon&logoColor=white)](https://www.patreon.com/triggery)
-[![Sponsor on Boosty](https://img.shields.io/badge/sponsor-boosty-f15f2c?logo=boosty&logoColor=white)](https://boosty.to/triggery)
-[![Discussions](https://img.shields.io/github/discussions/triggeryjs/triggery)](https://github.com/triggeryjs/triggery/discussions)
+<a href="https://github.com/triggeryjs/triggery/actions/workflows/ci.yml" target="_blank" rel="noopener noreferrer"><img src="https://github.com/triggeryjs/triggery/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://codspeed.io/triggeryjs/triggery?utm_source=badge" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge.json" alt="CodSpeed"></a>
+<a href="https://github.com/triggeryjs/triggery/actions/workflows/ci.yml" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/coverage-%E2%89%A595%25-brightgreen" alt="Coverage ≥95%"></a>
+<a href="https://deepwiki.com/triggeryjs/triggery" target="_blank" rel="noopener noreferrer"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+<a href="https://www.npmjs.com/package/@triggery/core" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/npm/v/@triggery/core?label=%40triggery%2Fcore" alt="npm version"></a>
+<a href="https://bundlejs.com/?q=%40triggery%2Fcore" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/bundlejs/size/@triggery/core?label=core%20gzip" alt="Bundle size"></a>
+<a href="https://www.npmjs.com/package/@triggery/core" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/npm/dm/@triggery/core?label=downloads" alt="npm downloads"></a>
+<a href="./LICENSE" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+<a href="https://www.patreon.com/triggery" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/sponsor-patreon-ff424d?logo=patreon&logoColor=white" alt="Sponsor on Patreon"></a>
+<a href="https://boosty.to/triggery" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/sponsor-boosty-f15f2c?logo=boosty&logoColor=white" alt="Sponsor on Boosty"></a>
+<a href="https://github.com/triggeryjs/triggery/discussions" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/github/discussions/triggeryjs/triggery" alt="Discussions"></a>
+<a href="https://github.com/triggeryjs/triggery/stargazers" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/github/stars/triggeryjs/triggery?style=social" alt="GitHub stars"></a>
 
 **Not an event emitter. Not a state manager. Triggery orchestrates business logic across your app.**
 
