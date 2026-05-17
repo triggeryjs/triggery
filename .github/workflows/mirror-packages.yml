@@ -1,0 +1,117 @@
+name: Mirror to GitHub Packages
+
+# Mirrors every @triggery/* package's CURRENT version onto GitHub
+# Packages (`npm.pkg.github.com`) so they show up on the org's
+# https://github.com/orgs/triggeryjs/packages page.
+#
+# Why a separate workflow (not part of release.yml)?
+#   - release.yml is OIDC-bound to npm.js Trusted Publishers; the npm.js
+#     publish is the canonical one and shouldn't be tangled with a
+#     secondary registry's auth model.
+#   - This one runs `workflow_run` after release.yml finishes (auto-mirror
+#     on every successful npm.js release) and is also dispatchable
+#     manually so we can backfill historical versions whenever needed.
+#
+# Auth: `GITHUB_TOKEN` exposed as `NODE_AUTH_TOKEN`. `packages: write`
+# permission is what lets the token PUT packages.
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ['Release']
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: mirror-gh-packages
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Publish to GitHub Packages
+    runs-on: ubuntu-latest
+    # Run after a successful Release workflow OR on manual dispatch.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6
+
+      # `registry-url` + `scope` together write a per-scope auth block
+      # into ~/.npmrc so `npm publish` of any @triggery/* package routes
+      # to GitHub Packages and presents NODE_AUTH_TOKEN.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@triggery'
+
+      - run: pnpm install --frozen-lockfile
+
+      # Build dist/ for every package so we publish artefacts, not sources.
+      - run: pnpm build
+
+      - name: Publish each @triggery/* package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `publishConfig.provenance: true` is in each package.json for
+          # the npm.js Trusted Publishers OIDC flow. GitHub Packages
+          # rejects external Sigstore attestations, so we disable the
+          # CLI's provenance for this mirror.
+          NPM_CONFIG_PROVENANCE: 'false'
+        run: |
+          set +e  # one failed publish (e.g. already-published 409) must
+                  # not abort the rest of the mirror
+          published=0
+          skipped=0
+          for pkg_dir in packages/*/; do
+            pkg_dir="${pkg_dir%/}"
+            pkg_json="$pkg_dir/package.json"
+            [ -f "$pkg_json" ] || continue
+
+            pkg_name=$(node -p "require('./$pkg_json').name")
+            pkg_version=$(node -p "require('./$pkg_json').version")
+            is_private=$(node -p "require('./$pkg_json').private === true")
+
+            if [ "$is_private" = "true" ]; then
+              echo "› skip $pkg_name (private)"
+              skipped=$((skipped+1))
+              continue
+            fi
+
+            echo ""
+            echo "→ publish $pkg_name@$pkg_version"
+            (
+              cd "$pkg_dir"
+              npm publish \
+                --registry=https://npm.pkg.github.com \
+                --access=public \
+                --no-git-checks
+            )
+            rc=$?
+            if [ $rc -eq 0 ]; then
+              published=$((published+1))
+            else
+              # 409 EPUBLISHCONFLICT means "this version already exists" —
+              # fine for a mirror. Anything else is logged but doesn't
+              # fail the run; check the logs to triage.
+              echo "  ⚠ exit=$rc — skipping (likely already published)"
+              skipped=$((skipped+1))
+            fi
+          done
+
+          echo ""
+          echo "=== summary: published=$published, skipped=$skipped ==="
+          # Always succeed — a green workflow means "we tried every
+          # package", not "every one was newly published".
+          exit 0
