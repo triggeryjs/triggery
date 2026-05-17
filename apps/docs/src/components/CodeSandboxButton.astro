@@ -1,7 +1,22 @@
 ---
 /**
- * "Open in CodeSandbox" CTA. Companion to StackBlitzButton for users who
- * prefer CodeSandbox. Same path semantics.
+ * "Open in CodeSandbox" CTA.
+ *
+ * Same inline-open trick as StackBlitzButton: on click, fetch the
+ * build-time-bundled JSON of the example folder, hand it to CodeSandbox's
+ * Define API (`getParameters` from the `codesandbox` package), and open
+ * the resulting sandbox in a new tab.
+ *
+ * Why not `codesandbox.io/s/github/<owner>/<repo>/tree/<branch>/<path>`?
+ * CodeSandbox redirects that to `/p/sandbox/github/...` (the new editor)
+ * which tries to boot the **whole** monorepo from the repo root, ignores
+ * the subpath, and routinely fails with "Unable to start the microVM"
+ * because the workspace package.json is a pnpm root (private, no scripts).
+ *
+ * The Define API sidesteps all of that — CodeSandbox creates a brand-new
+ * sandbox from the inline files, no repo cloning involved.
+ *
+ * Falls back to the GitHub-import URL if the bundle is unavailable.
  */
 interface Props {
   path: string;
@@ -10,17 +25,53 @@ interface Props {
 }
 
 const { path, label = 'Open in CodeSandbox', ref = 'main' } = Astro.props;
-// `/p/github/...` and `/p/devbox/...` resolve to a CodeSandbox **team**
-// workspace, which throws "Unable to access this workspace" for anonymous
-// readers. `/s/github/...` is the public classic-sandbox URL that anyone
-// can open, edit and fork.
+const name = path.split('/').filter(Boolean).pop() ?? path;
+// Fallback URL — last-resort. Uses /s/github/ which CSB still recognises
+// even though it redirects to /p/sandbox/github/.
 const href = `https://codesandbox.io/s/github/triggeryjs/triggery/tree/${ref}/${path}?file=/README.md`;
+const bundleUrl = `/example-bundles/${name}.json`;
 ---
 
-<a class="csb-btn" href={href} target="_blank" rel="noreferrer noopener">
+<a class="csb-btn" href={href} data-csb-bundle={bundleUrl} target="_blank" rel="noreferrer noopener">
   <span class="csb-mark" aria-hidden="true">CSB</span>
   <span>{label}</span>
 </a>
+
+<script>
+  document.querySelectorAll<HTMLAnchorElement>('a.csb-btn[data-csb-bundle]').forEach((a) => {
+    a.addEventListener('click', async (e) => {
+      const bundleUrl = a.dataset.csbBundle;
+      if (!bundleUrl) return;
+      e.preventDefault();
+      try {
+        const [{ getParameters }, res] = await Promise.all([
+          import('codesandbox/lib/api/define'),
+          fetch(bundleUrl),
+        ]);
+        if (!res.ok) throw new Error(`bundle ${bundleUrl}: ${res.status}`);
+        const bundle = (await res.json()) as {
+          name: string;
+          title?: string;
+          files: Record<string, string>;
+        };
+        // CSB Define API expects `files: { [path]: { content, isBinary? } }`.
+        const csbFiles: Record<string, { content: string }> = {};
+        for (const [p, c] of Object.entries(bundle.files)) {
+          csbFiles[p] = { content: c };
+        }
+        const parameters = getParameters({ files: csbFiles });
+        const url =
+          'https://codesandbox.io/api/v1/sandboxes/define' +
+          `?parameters=${parameters}` +
+          `&query=${encodeURIComponent('file=/README.md')}`;
+        window.open(url, '_blank', 'noreferrer,noopener');
+      } catch (err) {
+        console.warn('CodeSandbox inline open failed, falling back to GitHub URL:', err);
+        window.open(a.href, '_blank', 'noreferrer,noopener');
+      }
+    });
+  });
+</script>
 
 <style>
   .csb-btn {
