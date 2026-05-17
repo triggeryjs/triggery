@@ -8,6 +8,13 @@ A simulated WebSocket frame fans out to three independent reactors:
 
 The fake socket fires every 2 seconds. Switch the active tab or toggle DND — the trigger's gates re-evaluate on the next fire because conditions are pulled lazily.
 
+## Try it
+
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-websocket-sync/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/websocket-sync/>
+
+Or run it locally:
+
 ```bash
 pnpm install
 pnpm dev

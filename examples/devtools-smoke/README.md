@@ -2,6 +2,11 @@
 
 Standalone HTML page that wires `@triggery/devtools-bridge` to a runtime and exposes buttons for every panel-relevant scenario (sync fire, async, cascade, skipped, errored, dispose).
 
+> **Not runnable in StackBlitz.** This example requires the unpacked Chrome extension from `extensions/chrome-devtools/`, so the `/play/devtools-smoke/` launcher is intentionally omitted. Run it locally instead.
+>
+> - **Bridge package** — <https://triggeryjs.github.io/packages/devtools-bridge/>
+> - **Panel package** — <https://triggeryjs.github.io/packages/devtools-panel/>
+
 ## Run it
 
 From the repo root:

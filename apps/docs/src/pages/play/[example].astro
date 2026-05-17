@@ -28,8 +28,12 @@ export async function getStaticPaths() {
   // so the directory is guaranteed to exist at SSG time.
   const bundleDir = fileURLToPath(new URL('../../../public/example-bundles/', import.meta.url));
   const entries = readdirSync(bundleDir, { withFileTypes: true });
+  // devtools-smoke is a manual Chrome-extension smoke test (no package.json
+  // in the bundle, no Vite app) — it won't boot in a StackBlitz WebContainer.
+  // Its README links to the devtools-panel docs directly instead.
+  const skip = new Set(['devtools-smoke.json']);
   return entries
-    .filter((e) => e.isFile() && e.name.endsWith('.json') && !e.name.startsWith('_'))
+    .filter((e) => e.isFile() && e.name.endsWith('.json') && !e.name.startsWith('_') && !skip.has(e.name))
     .map((e) => ({ params: { example: e.name.replace(/\.json$/, '') } }));
 }
 

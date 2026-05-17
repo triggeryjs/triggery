@@ -9,6 +9,13 @@ The flagship Triggery scenario: a chat message arrives and three side effects fa
 
 No prop drilling, no shared context, no global emitter. Tweak the trigger file and the whole scenario follows.
 
+## Try it
+
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-notifications/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/notification-pipeline/>
+
+Or run it locally:
+
 ```bash
 pnpm install
 pnpm dev

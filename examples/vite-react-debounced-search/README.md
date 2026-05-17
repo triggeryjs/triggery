@@ -8,6 +8,13 @@ Autocomplete with three guarantees declared in *one* trigger:
 
 The producer is a 5-line `<SearchBox>`; the reactor a 5-line `<ResultList>`. Compare with the ~40-line `useEffect`-with-refs version usually needed.
 
+## Try it
+
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-debounced-search/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/debounced-search/>
+
+Or run it locally:
+
 ```bash
 pnpm install
 pnpm dev

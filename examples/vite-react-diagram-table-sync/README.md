@@ -19,6 +19,13 @@ events: {
 
 Either pane fires; either pane reacts. No prop drilling, no shared parent.
 
+## Try it
+
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-diagram-table-sync/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/diagram-table-sync/>
+
+Or run it locally:
+
 ```bash
 pnpm install
 pnpm dev
