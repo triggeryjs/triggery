@@ -73,7 +73,7 @@
     "@types/estree": "^1.0.6",
     "@typescript-eslint/parser": "^8.0.0",
     "@typescript-eslint/rule-tester": "^8.0.0",
-    "eslint": "^9.0.0",
+    "eslint": "^10.4.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"
