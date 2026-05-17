@@ -1,7 +1,7 @@
 {
   "name": "@triggery/vite",
-  "version": "0.1.2",
-  "description": "Vite plugin for Triggery — auto-imports every *.trigger.ts via a virtual module + HMR. Framework-agnostic (works alongside React, Solid, Vue).",
+  "version": "0.9.1",
+  "description": "Vite plugin for Triggery \u2014 auto-imports every *.trigger.ts via a virtual module + HMR. Framework-agnostic (works alongside React, Solid, Vue).",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io",
