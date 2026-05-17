@@ -59,7 +59,10 @@ const bundleUrl = `/example-bundles/${name}.json`;
         for (const [p, c] of Object.entries(bundle.files)) {
           csbFiles[p] = { content: c };
         }
-        const parameters = getParameters({ files: csbFiles });
+        // `template: 'node'` forces a CSB container (Node WebContainer) rather
+        // than letting CSB guess from package.json — guessing sometimes lands
+        // on a static template that never starts the dev server.
+        const parameters = getParameters({ files: csbFiles, template: 'node' });
         const url =
           'https://codesandbox.io/api/v1/sandboxes/define' +
           `?parameters=${parameters}` +

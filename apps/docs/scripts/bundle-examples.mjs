@@ -61,16 +61,48 @@ let total = 0;
 for (const name of entries) {
   const root = join(EXAMPLES, name);
   const files = walk(root, root);
-  const pkgJson = files['package.json'];
   let title = name;
   let description = '';
-  if (pkgJson) {
+
+  // Normalise package.json so the inline sandbox CTAs (StackBlitz + CSB)
+  // actually boot. Both expect a `start` script — CSB runs `npm start` by
+  // default; SB's node template falls back to `dev` only after `start`.
+  // Vite examples ship with `dev`/`build`/`preview`, so we mirror `dev`
+  // into `start` if it's missing.
+  const pkgRaw = files['package.json'];
+  if (pkgRaw) {
     try {
-      const pkg = JSON.parse(pkgJson);
+      const pkg = JSON.parse(pkgRaw);
       title = pkg.name ?? name;
       description = pkg.description ?? '';
-    } catch {}
+      pkg.scripts = pkg.scripts ?? {};
+      if (!pkg.scripts.start) {
+        pkg.scripts.start = pkg.scripts.dev ?? 'vite';
+      }
+      files['package.json'] = `${JSON.stringify(pkg, null, 2)}\n`;
+    } catch {
+      // Leave package.json untouched if it's not parseable.
+    }
   }
+
+  // Tell CodeSandbox what to run + which port to expose. Without this
+  // CSB occasionally creates the sandbox, opens an empty preview iframe
+  // and never starts the dev server — terminal hidden, no way to debug.
+  if (!files['sandbox.config.json']) {
+    files['sandbox.config.json'] = `${JSON.stringify(
+      {
+        template: 'node',
+        container: {
+          node: '20',
+          port: 5173,
+          startScript: 'dev',
+        },
+      },
+      null,
+      2,
+    )}\n`;
+  }
+
   const bundle = { name, title, description, files };
   const payload = JSON.stringify(bundle);
   writeFileSync(join(OUT, `${name}.json`), payload);
