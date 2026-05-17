@@ -125,7 +125,12 @@ const bundleUrl = `/example-bundles/${example}.json`;
     </style>
   </head>
   <body>
-    <main>
+    <main
+      id="play-root"
+      data-bundle-url={bundleUrl}
+      data-fallback-url={fallbackUrl}
+      data-example={example}
+    >
       <div class="spark" aria-hidden="true">⚡</div>
       <h1>Opening playground for <code>{example}</code>…</h1>
       <p>
@@ -138,13 +143,20 @@ const bundleUrl = `/example-bundles/${example}.json`;
       </p>
     </main>
 
-    <script define:vars={{ bundleUrl, fallbackUrl, example }}>
+    <script>
+      // Plain <script> (no define:vars) — Astro routes this through Vite,
+      // so the bare `@stackblitz/sdk` specifier is bundled into a real URL.
+      // Config travels via data-attributes on #play-root, set at SSG time.
+      import sdk from '@stackblitz/sdk';
+
+      const root = document.getElementById('play-root') as HTMLElement;
+      const bundleUrl = root.dataset.bundleUrl!;
+      const fallbackUrl = root.dataset.fallbackUrl!;
+      const example = root.dataset.example!;
+
       (async () => {
         try {
-          const [{ default: sdk }, res] = await Promise.all([
-            import('@stackblitz/sdk'),
-            fetch(bundleUrl),
-          ]);
+          const res = await fetch(bundleUrl);
           if (!res.ok) throw new Error(`bundle ${bundleUrl}: ${res.status}`);
           const bundle = await res.json();
           // newWindow: false → replaces the current tab. The user came
