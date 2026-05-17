@@ -1,5 +1,5 @@
 import { useAction, useEvent } from '@triggery/react';
-import { useState } from 'react';
+import { setHoveredId, setSelectedId, useSelection } from './store.ts';
 import { selectionTrigger } from './triggers/index.ts';
 
 type Entity = { id: string; label: string; x: number; y: number };
@@ -32,11 +32,11 @@ export function App() {
     >
       <h1>Triggery — diagram ⇄ table selection sync</h1>
       <p>
-        The same entity is rendered in a diagram (SVG) and a table. Hovering a row highlights the
-        matching node; hovering a node highlights the row. Clicking either pins the selection. Both
-        panes are completely independent — they only share a typed event.
+        The same entity is rendered in a diagram (SVG) and a table. Hovering or clicking either
+        pane reflects in the other — without lifted state, prop drilling or a shared parent. The
+        trigger handler routes events into a tiny store; both panes read from it.
       </p>
-      <SelectionDecorator />
+      <StoreBridge />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
         <Diagram />
         <Table />
@@ -46,20 +46,13 @@ export function App() {
 }
 
 /**
- * One component owns local UI state (hovered + selected) and registers
- * the two actions of the trigger. Both panes call into the trigger — the
- * decorator stays the single source of truth.
+ * The single reactor for the trigger. Registers `setHovered` / `setSelected`
+ * exactly once and forwards the payload to the module-scoped store. Mount
+ * it anywhere under the app — no Diagram/Table coupling needed.
  */
-function SelectionDecorator() {
-  const [hovered, setHovered] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  useAction(selectionTrigger, 'setHovered', setHovered);
-  useAction(selectionTrigger, 'setSelected', setSelected);
-
-  // Decoration is done via two CSS custom-props on `<body>` — both panes
-  // read them in their inline `style`. Keeps panes side-effect-free.
-  document.body.style.setProperty('--hovered', hovered ? `"${hovered}"` : '""');
-  document.body.style.setProperty('--selected', selected ? `"${selected}"` : '""');
+function StoreBridge() {
+  useAction(selectionTrigger, 'setHovered', setHoveredId);
+  useAction(selectionTrigger, 'setSelected', setSelectedId);
   return null;
 }
 
@@ -70,13 +63,14 @@ function Diagram() {
     <section>
       <h3>Diagram</h3>
       <svg width="100%" viewBox="0 0 560 280" style={{ background: '#fafafa', borderRadius: 8 }}>
-        {EDGES.map(([from, to], i) => {
+        <title>Entity diagram</title>
+        {EDGES.map(([from, to]) => {
           const a = ENTITIES.find((e) => e.id === from);
           const b = ENTITIES.find((e) => e.id === to);
           if (!a || !b) return null;
           return (
             <line
-              key={`${from}-${to}-${i}`}
+              key={`${from}-${to}`}
               x1={a.x}
               y1={a.y}
               x2={b.x}
@@ -103,19 +97,12 @@ function Node({
   onHover: (id: string | null) => void;
   onSelect: (id: string | null) => void;
 }) {
-  const [state, setState] = useState<{ hovered: boolean; selected: boolean }>({
-    hovered: false,
-    selected: false,
-  });
-  useAction(selectionTrigger, 'setHovered', (id) =>
-    setState((s) => ({ ...s, hovered: id === entity.id })),
-  );
-  useAction(selectionTrigger, 'setSelected', (id) =>
-    setState((s) => ({ ...s, selected: id === entity.id })),
-  );
+  const { hoveredId, selectedId } = useSelection();
+  const hovered = hoveredId === entity.id;
+  const selected = selectedId === entity.id;
 
-  const fill = state.selected ? '#af37c5' : state.hovered ? '#e6dffa' : '#fff';
-  const stroke = state.selected ? '#450452' : state.hovered ? '#af37c5' : '#888';
+  const fill = selected ? '#af37c5' : hovered ? '#e6dffa' : '#fff';
+  const stroke = selected ? '#450452' : hovered ? '#af37c5' : '#888';
 
   return (
     <g
@@ -132,14 +119,14 @@ function Node({
         rx={6}
         fill={fill}
         stroke={stroke}
-        strokeWidth={state.selected ? 3 : 2}
+        strokeWidth={selected ? 3 : 2}
       />
       <text
         x={entity.x}
         y={entity.y + 4}
         textAnchor="middle"
         fontSize={13}
-        fill={state.selected ? '#fff' : '#333'}
+        fill={selected ? '#fff' : '#333'}
       >
         {entity.label}
       </text>
@@ -179,19 +166,13 @@ function Row({
   onHover: (id: string | null) => void;
   onSelect: (id: string | null) => void;
 }) {
-  const [state, setState] = useState<{ hovered: boolean; selected: boolean }>({
-    hovered: false,
-    selected: false,
-  });
-  useAction(selectionTrigger, 'setHovered', (id) =>
-    setState((s) => ({ ...s, hovered: id === entity.id })),
-  );
-  useAction(selectionTrigger, 'setSelected', (id) =>
-    setState((s) => ({ ...s, selected: id === entity.id })),
-  );
+  const { hoveredId, selectedId } = useSelection();
+  const hovered = hoveredId === entity.id;
+  const selected = selectedId === entity.id;
 
-  const background = state.selected ? '#af37c5' : state.hovered ? '#e6dffa' : 'transparent';
-  const color = state.selected ? '#fff' : '#000';
+  const background = selected ? '#af37c5' : hovered ? '#e6dffa' : 'transparent';
+  const color = selected ? '#fff' : '#000';
+
   return (
     <tr
       style={{ background, color, cursor: 'pointer' }}

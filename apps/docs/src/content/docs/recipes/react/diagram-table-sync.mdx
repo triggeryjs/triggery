@@ -1,6 +1,6 @@
 ---
 title: "Diagram ⇄ table selection sync"
-description: "Bidirectional hover and selection across two unrelated UI panes. Hover a row in the table — highlight the matching node in the diagram, and vice versa. No prop drilling, no shared parent."
+description: "Bidirectional hover and selection across two unrelated UI panes — diagram and table. Without prop drilling or a shared parent component."
 sidebar:
   order: 10
 ---
@@ -11,11 +11,15 @@ import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 The same entity is rendered twice in the UI — once as a node on a diagram, once as a row in a table. Hovering or clicking either pane should reflect in the other. Classic UI problem, ugly in every framework:
 
-- **Lifted state in a parent** couples diagram and table forever.
-- **Prop-drill `selectedId` + `onSelect`** through every component in between — boilerplate, leaks the concern.
-- **Shared store** grows into a god-object once you add three more synced panes.
+- **Lifted state in a parent component** couples diagram and table forever.
+- **Prop-drilling `selectedId` + `onSelect`** through every component in between — boilerplate, leaks the concern.
+- **A shared store wired to every leaf** grows into a god-object once you add three more synced panes.
 
-Triggery lets the two panes share only a typed event. Either pane fires; either pane reacts. No parent has to know they exist.
+Triggery splits the problem in two:
+
+- the **rule** ("hover event → 'this entity is now hovered'") lives in one trigger file,
+- the **resulting state** lives in a tiny store next to it,
+- the two panes are pure consumers — they don't know about each other, only about the store.
 
 <StackBlitzButton path="examples/vite-react-diagram-table-sync" label="Open in StackBlitz" />
 <CodeSandboxButton path="examples/vite-react-diagram-table-sync" label="Open in CodeSandbox" />
@@ -58,20 +62,62 @@ export const selectionTrigger = createTrigger<{
 });
 ```
 
-Two events, two actions — that's the whole rule.
+Two events, two actions — the rule itself.
 
-## The two panes
+## The tiny store
 
-Each pane lives in its own component, knows nothing about the other.
+`useAction` registrations are **last-mount-wins** — only the latest-mounted reactor for a given action actually runs. That's correct for "I am THE side-effect". It's wrong for fanout-to-N rows. Instead, one reactor writes to a store and every row/node reads from it.
 
-```tsx title="src/Diagram.tsx (one pane)"
+```ts title="src/store.ts"
+import { useSyncExternalStore } from 'react';
+
+type State = { hoveredId: string | null; selectedId: string | null };
+let state: State = { hoveredId: null, selectedId: null };
+const listeners = new Set<() => void>();
+
+const subscribe = (l: () => void) => {
+  listeners.add(l);
+  return () => listeners.delete(l);
+};
+const getSnapshot = () => state;
+
+export const setHoveredId  = (id: string | null) => {
+  if (state.hoveredId  === id) return;
+  state = { ...state, hoveredId: id };  for (const l of listeners) l();
+};
+export const setSelectedId = (id: string | null) => {
+  if (state.selectedId === id) return;
+  state = { ...state, selectedId: id }; for (const l of listeners) l();
+};
+export const useSelection = () => useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+```
+
+In a larger app this would be Zustand / Redux / Jotai / Signals. Here we keep it dependency-free.
+
+## Wire the trigger to the store — once
+
+```tsx title="src/App.tsx"
+function StoreBridge() {
+  useAction(selectionTrigger, 'setHovered',  setHoveredId);
+  useAction(selectionTrigger, 'setSelected', setSelectedId);
+  return null;
+}
+```
+
+One mount. No competing reactors. Drop it anywhere under the runtime provider.
+
+## The two panes consume the store
+
+Each pane fires events on mouse-in / click and reads selection from `useSelection()`. They never talk to each other.
+
+```tsx title="Diagram node (one pane)"
 function Node({ entity }: { entity: Entity }) {
   const hover  = useEvent(selectionTrigger, 'entity:hover');
   const select = useEvent(selectionTrigger, 'entity:select');
+  const { hoveredId, selectedId } = useSelection();
 
-  const [state, setState] = useState({ hovered: false, selected: false });
-  useAction(selectionTrigger, 'setHovered',  id => setState(s => ({ ...s, hovered:  id === entity.id })));
-  useAction(selectionTrigger, 'setSelected', id => setState(s => ({ ...s, selected: id === entity.id })));
+  const hovered  = hoveredId  === entity.id;
+  const selected = selectedId === entity.id;
 
   return (
     <g
@@ -79,52 +125,51 @@ function Node({ entity }: { entity: Entity }) {
       onMouseLeave={() => hover(null)}
       onClick={()      => select(entity.id)}
     >
-      <rect fill={state.selected ? '#af37c5' : state.hovered ? '#e6dffa' : '#fff'} … />
+      <rect fill={selected ? '#af37c5' : hovered ? '#e6dffa' : '#fff'} … />
     </g>
   );
 }
 ```
 
-```tsx title="src/Table.tsx (the other pane)"
+```tsx title="Table row (the other pane)"
 function Row({ entity }: { entity: Entity }) {
   const hover  = useEvent(selectionTrigger, 'entity:hover');
   const select = useEvent(selectionTrigger, 'entity:select');
-
-  const [state, setState] = useState({ hovered: false, selected: false });
-  useAction(selectionTrigger, 'setHovered',  id => setState(s => ({ ...s, hovered:  id === entity.id })));
-  useAction(selectionTrigger, 'setSelected', id => setState(s => ({ ...s, selected: id === entity.id })));
+  const { hoveredId, selectedId } = useSelection();
 
   return (
     <tr
       onMouseEnter={() => hover(entity.id)}
       onMouseLeave={() => hover(null)}
       onClick={()      => select(entity.id)}
-      style={{ background: state.selected ? '#af37c5' : state.hovered ? '#e6dffa' : 'transparent' }}
+      style={{ background: selectedId === entity.id ? '#af37c5'
+                         : hoveredId  === entity.id ? '#e6dffa' : 'transparent' }}
     >
-      <td>{entity.id}</td>
-      <td>{entity.label}</td>
+      <td>{entity.id}</td><td>{entity.label}</td>
     </tr>
   );
 }
 ```
 
-That's it. Two panes, no shared parent, no prop-drilling, no global store. Removing the table pane breaks nothing — `entity:hover` events still fire, no reactor listens, life goes on.
+Two panes, no shared parent, no `selectedId` / `onSelect` prop-drilling. Removing the table breaks nothing — `entity:hover` events still fire, the store still updates, nobody reads them, life goes on.
 
-## Why this works
+## What Triggery gives you here
 
-- **Both panes are producers AND reactors.** Each one fires the event on mouse-in / click, and each one registers an action that updates its own local state when *any* pane fires the event.
-- **No coordination layer.** Without Triggery you'd either reach into the parent and lift state, or build a shared store. Both glue the panes together. Here they remain independent.
-- **Trivial to add a third pane.** A small "selected entity details" sidebar would need three lines of code: subscribe to `setSelected`, render the payload. The existing two panes don't change.
-- **Scoped variants for free.** If the same `<Diagram>` + `<Table>` pair lives in two side-by-side dashboards, wrap each in `<TriggerScope id="left">` / `<TriggerScope id="right">` and the trigger reads only events from the matching scope. See [Scopes](/guide/architecture/scopes/).
+The store-based pattern alone could be done without Triggery. What Triggery adds:
+
+- **One file holds the rule.** Today it's "event → store write". Tomorrow it might branch — fire analytics on `entity:select`, ignore hover events during DND, suppress events from the table when the diagram is fullscreen. Each new branch is a line in the trigger handler, not a sprinkle across components.
+- **The producer code doesn't change when the rule changes.** A `<Node>` only knows how to fire `entity:hover` with its id. Whatever new behaviour the rule sprouts — debounce, scope-per-tab, redirect to a different store — is invisible to the producer.
+- **Scoped variants come for free.** If the same `<Diagram>` + `<Table>` pair lives in two side-by-side dashboards, wrap each in `<TriggerScope id="left">` / `<TriggerScope id="right">` and the trigger reads only events from the matching scope. See [Scopes](/guide/architecture/scopes/).
+- **The trigger is independently testable.** Fire `entity:hover`, assert the store mock was called with the right id. No DOM, no rendering, no providers — see [Unit testing](/guide/testing/unit-testing/).
 
 ## Variants
 
-- **Multi-select** — change the event payload from `string | null` to `Array<string>`. Reactors deduplicate or replace as they prefer.
-- **Keyboard navigation** — fire `entity:hover` from a `keydown` handler on the diagram or the table; the other pane reflects it without knowing where it came from.
-- **Wire a third UI** (chart, JSON inspector) — register one more `useAction(selectionTrigger, 'setSelected', …)` reactor in that component and it joins the conversation.
+- **Multi-select** — change the event payload from `string | null` to `Array<string>`. The store-write helper decides how to merge.
+- **Keyboard navigation** — fire `entity:hover` from a `keydown` handler on the diagram or the table; both panes update without knowing where the event came from.
+- **Wire a third UI** (chart, JSON inspector) — read from `useSelection()` in that component. Existing panes don't change.
 
 <CardGrid>
   <LinkCard title="Modal stack" description="Same orchestration pattern for modals." href="/recipes/react/modal-stack/" />
-  <LinkCard title="Scopes" description="When the same entity sync should be per-tab or per-panel." href="/guide/architecture/scopes/" />
-  <LinkCard title="useEvent / useCondition / useAction" description="The three primitive hooks behind every recipe." href="/guide/essentials/events/" />
+  <LinkCard title="Scopes" description="Per-panel and per-tab variants of this pattern." href="/guide/architecture/scopes/" />
+  <LinkCard title="Ownership" description="Why action registrations are last-mount-wins, and how to compose values from several sources." href="/guide/architecture/ownership/" />
 </CardGrid>
