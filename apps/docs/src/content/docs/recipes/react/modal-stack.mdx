@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 Every non-trivial app eventually grows a modal mess: "Confirm delete" opens "Resolve conflict" opens "Reauthenticate" — all from different features, none of them wanting to know about each other. Triggery turns this into a one-liner per feature: fire `modal:open`, fire `modal:close`, listen if you care. Per-route stacks come for free with `<TriggerScope>`.
 
 <StackBlitzButton path="examples/vite-react-modal-stack" label="Open in StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-modal-stack" label="Open in CodeSandbox" />
 
 ## Scenario
 

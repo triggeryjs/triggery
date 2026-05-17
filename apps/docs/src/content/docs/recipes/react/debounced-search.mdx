@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 The classic autocomplete: user types into a search field, the app fetches suggestions from an API, late responses don't overwrite newer ones, the network isn't hammered. Without Triggery this is a 40-line `useEffect` riddled with refs, race-condition bookkeeping, and an `AbortController` you carry around by hand. With Triggery the input fires one event per keystroke and the trigger handles concurrency, cancellation and debouncing declaratively.
 
 <StackBlitzButton path="examples/vite-react-debounced-search" label="Open in StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-debounced-search" label="Open in CodeSandbox" />
 
 ## Scenario
 

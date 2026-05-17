@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 События авторизации — архитектурный кошмар в любом приложении: access-токен истёк *в момент, когда пользователь дозаполнял форму*, или у него отозвали права *прямо когда открыт привилегированный экран*. Без координатора каждая форма и каждый экран должны подписываться на «события авторизации» и решать сами. С Triggery решает *триггер*, а фичи лишь регистрируют своё состояние и обработчики.
 
 <StackBlitzButton path="examples/vite-react-auth-reactions" label="Открыть в StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-auth-reactions" label="Открыть в CodeSandbox" />
 
 ## Сценарий
 

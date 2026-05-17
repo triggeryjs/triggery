@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 A trigger's event payload is typed at compile time, but runtime data — form submissions, URL params, WebSocket frames — comes in unstructured. Triggery's recommended pattern: validate **at the producer's boundary**, fire only what passes. The trigger handler then sees a fully typed, runtime-checked payload. This recipe shows the idiom and packages it as a small `useValidatedEvent` helper so every producer in the app is a one-liner.
 
 <StackBlitzButton path="examples/vite-react-form-zod" label="Open in StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-form-zod" label="Open in CodeSandbox" />
 
 ## Scenario
 

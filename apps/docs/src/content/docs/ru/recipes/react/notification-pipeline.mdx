@@ -7,6 +7,7 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, TabItem, Steps, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 import PackageManagers from '~/components/PackageManagers.astro';
 
 Канонический сценарий: приходит новое сообщение в чате, и в *разных компонентах* случаются три побочных эффекта, отсечённые *пользовательским состоянием, которым владеет ещё один компонент*. Друг про друга они ничего не знают. Прочитал файл триггера — продакт-менеджер понял, что происходит; прочитал компоненты — каждый рассказывает только про свою работу.
@@ -14,6 +15,7 @@ import PackageManagers from '~/components/PackageManagers.astro';
 С этим сценарием в остальной документации и сравниваются альтернативы на `useEffect`, sagas и listener-middleware.
 
 <StackBlitzButton path="examples/vite-react-notifications" label="Открыть полный пример в StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-notifications" label="Открыть полный пример в CodeSandbox" />
 
 ## Сценарий
 

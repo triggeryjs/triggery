@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 Частый продуктовый паттерн: когда пользователя @-упомянули в чате, можно опционально переслать упоминание в исходящую интеграцию (Slack, Discord, произвольный URL вебхука), затем отреагировать на результат ретрансляции — и дать пользователю повторить или выключить интеграцию без переписывания кода. Triggery аккуратно обрабатывает *цепочку* асинхронной работы: одно событие на входе, один триггер ведёт весь пайплайн, побочные эффекты остаются в компонентах, которым они принадлежат.
 
 <StackBlitzButton path="examples/vite-react-chat-mentions" label="Открыть в StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-chat-mentions" label="Открыть в CodeSandbox" />
 
 ## Сценарий
 

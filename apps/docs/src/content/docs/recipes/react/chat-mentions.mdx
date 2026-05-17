@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 A common product pattern: when the user is @-mentioned in chat, optionally relay the mention to an outbound integration (Slack, Discord, a webhook URL), then react to whether the relay succeeded — and let the user retry or disable the integration without writing it again. Triggery handles the *chain* of async work cleanly: one event in, one trigger drives the whole pipeline, side effects stay inside the components that own them.
 
 <StackBlitzButton path="examples/vite-react-chat-mentions" label="Open in StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-chat-mentions" label="Open in CodeSandbox" />
 
 ## Scenario
 

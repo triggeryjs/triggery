@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 Чат-приложение подписано на `socket.io`. Каждое входящее сообщение должно разойтись веером: инвалидировать запрос разговора, дописать сообщение в кеш списка и увеличить счётчик непрочитанных — но только для каналов, которые пользователю реально нужны, и только когда он сейчас на это сообщение не смотрит. Сам сокет остаётся в *одном* файле. Логика маршрутизации — в *одном* триггере. Побочные эффекты — у тех компонентов, которым они принадлежат.
 
 <StackBlitzButton path="examples/vite-react-websocket-sync" label="Открыть в StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-websocket-sync" label="Открыть в CodeSandbox" />
 
 ## Сценарий
 

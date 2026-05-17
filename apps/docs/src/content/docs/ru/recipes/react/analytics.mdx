@@ -7,10 +7,12 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 Аналитический антипаттерн: каждая кнопка и каждая форма импортируют хелпер `track(...)`, который тянет Segment SDK, который тянет Amplitude, и всё это ещё за фича-флагом — и в момент, когда захочешь сменить провайдера, поменяется половина кодовой базы. Triggery переворачивает картину: компоненты запускают общий `ui:event`, один триггер маршрутизирует его в нужное место, а смена провайдера — изменение одного файла.
 
 <StackBlitzButton path="examples/vite-react-analytics" label="Открыть в StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-analytics" label="Открыть в CodeSandbox" />
 
 ## Сценарий
 
