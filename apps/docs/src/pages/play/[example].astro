@@ -1,0 +1,165 @@
+---
+/**
+ * One-click playground launcher.
+ *
+ * Each example folder has a pre-bundled JSON (built by
+ * `scripts/bundle-examples.mjs` into `apps/docs/public/example-bundles/`).
+ * This page is a tiny landing — it fetches the corresponding bundle on
+ * load, hands it to `@stackblitz/sdk`'s `openProject` and the browser
+ * tab immediately replaces itself with StackBlitz running the project.
+ *
+ * Why a landing page, not a direct link?
+ * StackBlitz' regular `stackblitz.com/github/<owner>/<repo>/tree/<branch>/<path>`
+ * URL clones the WHOLE monorepo (~47 MB), then mounts the subdir — a 30-60 s
+ * wait. The Define API used here uploads only the files of one example
+ * (~5-10 KB) so the WebContainer boots in 1-2 s. README links to this page
+ * instead of the slow GitHub-import URL.
+ *
+ * Fallback: if `@stackblitz/sdk` fails to load OR the bundle JSON returns
+ * 404, the user sees a manual "click here" link to the slow GitHub-import
+ * URL, so nobody is left without a path.
+ */
+import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+export async function getStaticPaths() {
+  // Enumerate available bundles. The bundler always runs before this
+  // page is built (it's part of `pnpm build` → `node scripts/bundle-examples.mjs && astro build`)
+  // so the directory is guaranteed to exist at SSG time.
+  const bundleDir = fileURLToPath(new URL('../../../public/example-bundles/', import.meta.url));
+  const entries = readdirSync(bundleDir, { withFileTypes: true });
+  return entries
+    .filter((e) => e.isFile() && e.name.endsWith('.json') && !e.name.startsWith('_'))
+    .map((e) => ({ params: { example: e.name.replace(/\.json$/, '') } }));
+}
+
+const { example } = Astro.params;
+const fallbackUrl = `https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/${example}?file=README.md`;
+const bundleUrl = `/example-bundles/${example}.json`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Triggery — opening {example}…</title>
+    <link rel="icon" href="/favicon.png" />
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #06051e;
+        --fg: #f4eefb;
+        --accent: #af37c5;
+        --muted: #b294c4;
+      }
+      :root[data-theme='light'] {
+        --bg: #ffffff;
+        --fg: #06051e;
+        --muted: #5b4d8e;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        min-height: 100vh;
+        padding: 1.5rem;
+        text-align: center;
+      }
+      .spark {
+        font-size: 3rem;
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% {
+          opacity: 0.55;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1.05);
+        }
+      }
+      h1 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+        max-width: 36rem;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        color: var(--accent);
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 600;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="spark" aria-hidden="true">⚡</div>
+      <h1>Opening playground for <code>{example}</code>…</h1>
+      <p>
+        Mounting the example in a fresh StackBlitz WebContainer. This page replaces itself with
+        the editor in 1–2 seconds.
+      </p>
+      <p>
+        If nothing happens, <a id="fallback" href={fallbackUrl}>open it directly on StackBlitz</a>
+        — slower path that clones the whole monorepo.
+      </p>
+    </main>
+
+    <script define:vars={{ bundleUrl, fallbackUrl, example }}>
+      (async () => {
+        try {
+          const [{ default: sdk }, res] = await Promise.all([
+            import('@stackblitz/sdk'),
+            fetch(bundleUrl),
+          ]);
+          if (!res.ok) throw new Error(`bundle ${bundleUrl}: ${res.status}`);
+          const bundle = await res.json();
+          // newWindow: false → replaces the current tab. The user came
+          // here from a README link, the only thing they want is the
+          // editor — no reason to leave a tab behind.
+          sdk.openProject(
+            {
+              title: bundle.title ?? example,
+              description: bundle.description ?? '',
+              template: 'node',
+              files: bundle.files,
+            },
+            { openFile: 'README.md', newWindow: false },
+          );
+        } catch (err) {
+          console.warn('Inline open failed, redirecting to GitHub-import URL:', err);
+          window.location.replace(fallbackUrl);
+        }
+      })();
+    </script>
+  </body>
+</html>

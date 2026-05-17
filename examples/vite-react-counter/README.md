@@ -13,8 +13,12 @@ like a spec.
 
 ## Try it
 
-- **StackBlitz** — <https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/vite-react-counter>
-- **CodeSandbox** — <https://codesandbox.io/p/github/triggeryjs/triggery/main?path=%2Fexamples%2Fvite-react-counter>
+**Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-counter/>
+
+The link routes through a tiny launcher on the Triggery docs site that
+uploads only this example's files to a fresh StackBlitz WebContainer —
+boots in ~2 s instead of the 30-60 s the legacy `stackblitz.com/github/…`
+URL spends cloning the whole monorepo.
 
 Or locally:
 

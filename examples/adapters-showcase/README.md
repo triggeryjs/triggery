@@ -4,8 +4,12 @@ One Vite + React app demoing every Triggery adapter side by side. Each tab in th
 
 ## Try it
 
-- **StackBlitz** — <https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/adapters-showcase>
-- **CodeSandbox** — <https://codesandbox.io/p/github/triggeryjs/triggery/main?path=%2Fexamples%2Fadapters-showcase>
+**Open in StackBlitz** — <https://triggeryjs.github.io/play/adapters-showcase/>
+
+The link routes through a tiny launcher on the Triggery docs site that
+uploads only this example's files to a fresh StackBlitz WebContainer —
+boots in ~2 s instead of the 30-60 s the legacy `stackblitz.com/github/…`
+URL spends cloning the whole monorepo.
 
 Or locally:
 

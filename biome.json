@@ -17,6 +17,7 @@
       "!templates",
       "!apps/docs/.astro",
       "!apps/docs/src/components/**/*.astro",
+      "!apps/docs/src/pages/**/*.astro",
       "!apps/docs/src/content.config.ts",
       "!apps/docs/src/content/docs",
       "!examples/**/src",

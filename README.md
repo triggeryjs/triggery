@@ -118,18 +118,23 @@ The site is built with Astro Starlight under [`apps/docs/`](./apps/docs) and dep
 
 ## Try it in 5 seconds
 
-A runnable Vite + React example lives in [`examples/vite-react-counter`](./examples/vite-react-counter). Open it without cloning:
+A runnable Vite + React example lives in [`examples/vite-react-counter`](./examples/vite-react-counter). Open it without cloning — these links boot a fresh StackBlitz WebContainer with the example's files inlined (no monorepo clone, ~2 s cold start):
 
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/vite-react-counter)
-[![Open in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/triggeryjs/triggery/main?path=%2Fexamples%2Fvite-react-counter)
+[![Open the counter in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://triggeryjs.github.io/play/vite-react-counter/)
+[![Open the notifications pipeline in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://triggeryjs.github.io/play/vite-react-notifications/)
 
-**Try it without installing:**
+Other ready-to-play scenarios (each opens straight in StackBlitz with no waiting):
 
-[![Open in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/vite-notifications)
-[![Open in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/triggeryjs/triggery/main?file=examples/vite-notifications/src/triggers/message.trigger.ts)
+- [`vite-react-debounced-search`](https://triggeryjs.github.io/play/vite-react-debounced-search/) — `take-latest` + 300 ms debounce + AbortSignal
+- [`vite-react-modal-stack`](https://triggeryjs.github.io/play/vite-react-modal-stack/) — modal coordinator with focus restore + scroll-lock
+- [`vite-react-diagram-table-sync`](https://triggeryjs.github.io/play/vite-react-diagram-table-sync/) — diagram ⇄ table bidirectional selection sync
+- [`vite-solid-notifications`](https://triggeryjs.github.io/play/vite-solid-notifications/) and [`vite-vue-notifications`](https://triggeryjs.github.io/play/vite-vue-notifications/) — same trigger, other bindings
+
+Or open the full repo in Codespaces if you want to poke at multiple packages at once:
+
 [![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/triggeryjs/triggery)
 
-> The examples folder is part of the now-shipped [0.4 milestone](./ROADMAP.md). The buttons above clone the corresponding directory of this monorepo into the chosen sandbox so you can poke at the code right away.
+> Each `play/…` link goes through a tiny launcher page on the docs site that uploads the example's source straight to a StackBlitz WebContainer via their inline-files API. Way faster than the legacy `stackblitz.com/github/…` URL which clones the whole 47 MB monorepo before mounting the subdir.
 
 ## Packages
 
