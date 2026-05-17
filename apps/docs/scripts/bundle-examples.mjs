@@ -11,15 +11,7 @@
  * Run via `pnpm bundle-examples` (added to the `build` script so CI picks
  * it up on every docs deploy).
  */
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,18 +23,31 @@ const OUT = join(REPO, 'apps', 'docs', 'public', 'example-bundles');
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.turbo', '.cache', '.changeset']);
 const SKIP_FILES = new Set(['CHANGELOG.md', 'pnpm-lock.yaml', '.DS_Store']);
 
+/**
+ * Walks `dir` and returns `{ [relativePath]: utf8Contents }` for every file
+ * not matched by the skip lists. Uses `withFileTypes: true` so we get the
+ * `Dirent.isDirectory()` / `Dirent.isFile()` info from the single
+ * `readdir` syscall — no separate `statSync()` follow-up, no TOCTOU race
+ * between check and read (CodeQL `js/file-system-race`).
+ */
 function walk(dir, base) {
   const out = {};
-  for (const name of readdirSync(dir)) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const name = entry.name;
     if (SKIP_DIRS.has(name) || SKIP_FILES.has(name) || name.startsWith('.')) continue;
     const full = join(dir, name);
-    const st = statSync(full);
-    if (st.isDirectory()) {
+    if (entry.isDirectory()) {
       Object.assign(out, walk(full, base));
-    } else {
-      const rel = relative(base, full);
-      // StackBlitz SDK expects forward-slash relative paths.
-      out[rel.split(/[\\/]/).join('/')] = readFileSync(full, 'utf-8');
+    } else if (entry.isFile()) {
+      try {
+        const content = readFileSync(full, 'utf-8');
+        const rel = relative(base, full);
+        // StackBlitz SDK expects forward-slash relative paths.
+        out[rel.split(/[\\/]/).join('/')] = content;
+      } catch {
+        // File vanished between readdir and read — skip it. Build still
+        // produces a bundle for the rest of the example.
+      }
     }
   }
   return out;
@@ -51,10 +56,11 @@ function walk(dir, base) {
 if (existsSync(OUT)) rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
-const entries = readdirSync(EXAMPLES).filter((name) => {
-  const full = join(EXAMPLES, name);
-  return !name.startsWith('.') && statSync(full).isDirectory();
-});
+// Same `withFileTypes` trick at the top level — list only directories
+// directly under `examples/` without a follow-up `statSync`.
+const entries = readdirSync(EXAMPLES, { withFileTypes: true })
+  .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+  .map((e) => e.name);
 
 const manifest = [];
 let total = 0;
