@@ -43,7 +43,7 @@ export default defineConfig({
       social: [
         { icon: 'github', label: 'GitHub', href: REPO },
         { icon: 'x.com', label: 'X', href: 'https://x.com/triggeryjs' },
-        { icon: 'discord', label: 'Discord', href: 'https://discord.gg/triggery' },
+        { icon: 'discord', label: 'Discord', href: `${SITE}${BASE}/discord/` },
       ],
       editLink: {
         baseUrl: `${REPO}/edit/main/apps/docs/`,

@@ -17,6 +17,7 @@
 [![Sponsor on Patreon](https://img.shields.io/badge/sponsor-patreon-ff424d?logo=patreon&logoColor=white)](https://www.patreon.com/triggery)
 [![Sponsor on Boosty](https://img.shields.io/badge/sponsor-boosty-f15f2c?logo=boosty&logoColor=white)](https://boosty.to/triggery)
 [![Discussions](https://img.shields.io/github/discussions/triggeryjs/triggery)](https://github.com/triggeryjs/triggery/discussions)
+[![Discord](https://img.shields.io/badge/chat-discord-5865f2?logo=discord&logoColor=white)](https://triggeryjs.github.io/discord/)
 [![GitHub stars](https://img.shields.io/github/stars/triggeryjs/triggery?style=social)](https://github.com/triggeryjs/triggery/stargazers)
 
 **Not an event emitter. Not a state manager. Triggery orchestrates business logic across your app.**
@@ -266,8 +267,8 @@ Pre-1.0 — public API can still change between minor versions. Roadmap to 1.0 l
 
 ## Community
 
-- [**GitHub Discussions**](https://github.com/triggeryjs/triggery/discussions) — questions, ideas, show-and-tell. Primary community channel until 1.0.
-- **Discord** — opening at the 1.0 release. Until then async Discussions is the place.
+- [**Discord**](https://triggeryjs.github.io/discord/) — live chat, help with React/Solid/Vue + adapter packages, RFC discussions, devlog.
+- [**GitHub Discussions**](https://github.com/triggeryjs/triggery/discussions) — long-form Q&A, searchable answers that survive past the chat scroll.
 - **X / Twitter** — [`@triggeryjs`](https://x.com/triggeryjs).
 - **Bluesky** — [`@triggeryjs.bsky.social`](https://bsky.app/profile/triggeryjs.bsky.social) (reserved).
 - **Stack Overflow** — tag your question with [`triggery`](https://stackoverflow.com/questions/tagged/triggery).

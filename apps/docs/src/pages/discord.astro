@@ -1,0 +1,134 @@
+---
+/**
+ * Discord invite launcher.
+ *
+ * Stable URL — `https://triggeryjs.github.io/discord/` — that the rest of the
+ * project (README, X, in-app links, future Vanity URL switch) can hard-code
+ * once and forget. The actual invite code lives only here, so rotating it on
+ * server changes is a one-line edit.
+ *
+ * Three layers of redirect so it survives even hostile environments:
+ *   1. `<meta http-equiv="refresh">` — works with JS disabled.
+ *   2. `window.location.replace()` — immediate, no history entry.
+ *   3. Visible CTA — if both above are blocked (corporate proxy, NoScript),
+ *      the user still sees a single button to click.
+ */
+const INVITE_URL = 'https://discord.gg/E3gmmUrGxm';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta http-equiv="refresh" content={`0; url=${INVITE_URL}`} />
+    <link rel="canonical" href={INVITE_URL} />
+    <title>Triggery — joining Discord…</title>
+    <link rel="icon" href="/favicon.png" />
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #06051e;
+        --fg: #f4eefb;
+        --accent: #af37c5;
+        --muted: #b294c4;
+        --discord: #5865f2;
+      }
+      :root[data-theme='light'] {
+        --bg: #ffffff;
+        --fg: #06051e;
+        --muted: #5b4d8e;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1rem;
+        min-height: 100vh;
+        padding: 1.5rem;
+        text-align: center;
+      }
+      .spark {
+        font-size: 3rem;
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        0%, 100% {
+          opacity: 0.55;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1.05);
+        }
+      }
+      h1 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+        max-width: 36rem;
+      }
+      a.cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+        padding: 0.75rem 1.25rem;
+        background: var(--discord);
+        color: #ffffff;
+        text-decoration: none;
+        font-weight: 600;
+        border-radius: 0.5rem;
+        transition: filter 120ms ease;
+      }
+      a.cta:hover {
+        filter: brightness(1.08);
+      }
+      a.fallback {
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 600;
+      }
+      a.fallback:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="discord-root" data-invite={INVITE_URL}>
+      <div class="spark" aria-hidden="true">⚡</div>
+      <h1>Joining the Triggery Discord…</h1>
+      <p>
+        You'll be redirected to <a class="fallback" href={INVITE_URL}>{INVITE_URL}</a> in a moment.
+      </p>
+      <a class="cta" href={INVITE_URL} rel="noopener">Open Discord invite →</a>
+    </main>
+
+    <script>
+      const root = document.getElementById('discord-root') as HTMLElement;
+      const invite = root.dataset.invite!;
+      // `replace` — no extra history entry, back button takes the user to where
+      // they came from (README/X/etc.) instead of looping back to this page.
+      window.location.replace(invite);
+    </script>
+  </body>
+</html>

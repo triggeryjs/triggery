@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Chat on Discord
+    url: https://triggeryjs.github.io/discord/
+    about: Live help in #help-react / #help-solid / #help-vue / #help-adapters / #help-devtools — usually the fastest path for "how do I…" questions.
   - name: Question — how do I do X with Triggery?
     url: https://github.com/triggeryjs/triggery/discussions/new?category=q-a
-    about: Use GitHub Discussions for usage questions. Faster, searchable, and the answer helps the next person.
+    about: Use GitHub Discussions for usage questions you want to be searchable. Indexed by Google, the answer helps the next person.
   - name: Idea or proposal (discussion-first)
     url: https://github.com/triggeryjs/triggery/discussions/new?category=ideas
     about: Discuss directional changes before opening a formal RFC issue.
