@@ -6,8 +6,8 @@ Demonstrates the "action does work, then fires a follow-up event" cascade patter
 
 ## Try it
 
-- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-chat-mentions/>
-- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/chat-mentions/>
+- <a href="https://triggeryjs.github.io/play/vite-react-chat-mentions/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
+- <a href="https://triggeryjs.github.io/recipes/react/chat-mentions/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
 
 Or run it locally:
 

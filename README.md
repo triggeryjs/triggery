@@ -112,7 +112,7 @@ pnpm add @triggery/core @triggery/react
 
 ## Documentation
 
-The full documentation site is at **<https://triggeryjs.github.io>** — Guide, Recipes (React / Solid / Vue), API reference for every public symbol, Packages catalogue, Migration cookbooks (from `useEffect`, RTK listenerMiddleware, Redux Saga, redux-observable), and the Contributing handbook.
+The full documentation site is at <a href="https://triggeryjs.github.io" target="_blank" rel="noopener noreferrer"><b>triggeryjs.github.io</b></a> — Guide, Recipes (React / Solid / Vue), API reference for every public symbol, Packages catalogue, Migration cookbooks (from `useEffect`, RTK listenerMiddleware, Redux Saga, redux-observable), and the Contributing handbook.
 
 The site is built with Astro Starlight under [`apps/docs/`](./apps/docs) and deployed by GitHub Pages on every push to `main`.
 
@@ -120,19 +120,19 @@ The site is built with Astro Starlight under [`apps/docs/`](./apps/docs) and dep
 
 A runnable Vite + React example lives in [`examples/vite-react-counter`](./examples/vite-react-counter). Open it without cloning — these links boot a fresh StackBlitz WebContainer with the example's files inlined (no monorepo clone, ~2 s cold start):
 
-[![Open the counter in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://triggeryjs.github.io/play/vite-react-counter/)
-[![Open the notifications pipeline in StackBlitz](https://developer.stackblitz.com/img/open_in_stackblitz.svg)](https://triggeryjs.github.io/play/vite-react-notifications/)
+<a href="https://triggeryjs.github.io/play/vite-react-counter/" target="_blank" rel="noopener noreferrer"><img src="https://developer.stackblitz.com/img/open_in_stackblitz.svg" alt="Open the counter in StackBlitz"></a>
+<a href="https://triggeryjs.github.io/play/vite-react-notifications/" target="_blank" rel="noopener noreferrer"><img src="https://developer.stackblitz.com/img/open_in_stackblitz.svg" alt="Open the notifications pipeline in StackBlitz"></a>
 
 Other ready-to-play scenarios (each opens straight in StackBlitz with no waiting):
 
-- [`vite-react-debounced-search`](https://triggeryjs.github.io/play/vite-react-debounced-search/) — `take-latest` + 300 ms debounce + AbortSignal
-- [`vite-react-modal-stack`](https://triggeryjs.github.io/play/vite-react-modal-stack/) — modal coordinator with focus restore + scroll-lock
-- [`vite-react-diagram-table-sync`](https://triggeryjs.github.io/play/vite-react-diagram-table-sync/) — diagram ⇄ table bidirectional selection sync
-- [`vite-solid-notifications`](https://triggeryjs.github.io/play/vite-solid-notifications/) and [`vite-vue-notifications`](https://triggeryjs.github.io/play/vite-vue-notifications/) — same trigger, other bindings
+- <a href="https://triggeryjs.github.io/play/vite-react-debounced-search/" target="_blank" rel="noopener noreferrer"><code>vite-react-debounced-search</code></a> — `take-latest` + 300 ms debounce + AbortSignal
+- <a href="https://triggeryjs.github.io/play/vite-react-modal-stack/" target="_blank" rel="noopener noreferrer"><code>vite-react-modal-stack</code></a> — modal coordinator with focus restore + scroll-lock
+- <a href="https://triggeryjs.github.io/play/vite-react-diagram-table-sync/" target="_blank" rel="noopener noreferrer"><code>vite-react-diagram-table-sync</code></a> — diagram ⇄ table bidirectional selection sync
+- <a href="https://triggeryjs.github.io/play/vite-solid-notifications/" target="_blank" rel="noopener noreferrer"><code>vite-solid-notifications</code></a> and <a href="https://triggeryjs.github.io/play/vite-vue-notifications/" target="_blank" rel="noopener noreferrer"><code>vite-vue-notifications</code></a> — same trigger, other bindings
 
 Or open the full repo in Codespaces if you want to poke at multiple packages at once:
 
-[![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/triggeryjs/triggery)
+<a href="https://codespaces.new/triggeryjs/triggery" target="_blank" rel="noopener noreferrer"><img src="https://github.com/codespaces/badge.svg" alt="Open in Codespaces"></a>
 
 > Each `play/…` link goes through a tiny launcher page on the docs site that uploads the example's source straight to a StackBlitz WebContainer via their inline-files API. Way faster than the legacy `stackblitz.com/github/…` URL which clones the whole 47 MB monorepo before mounting the subdir.
 

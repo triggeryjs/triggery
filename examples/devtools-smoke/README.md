@@ -4,8 +4,8 @@ Standalone HTML page that wires `@triggery/devtools-bridge` to a runtime and exp
 
 > **Not runnable in StackBlitz.** This example requires the unpacked Chrome extension from `extensions/chrome-devtools/`, so the `/play/devtools-smoke/` launcher is intentionally omitted. Run it locally instead.
 >
-> - **Bridge package** — <https://triggeryjs.github.io/packages/devtools-bridge/>
-> - **Panel package** — <https://triggeryjs.github.io/packages/devtools-panel/>
+> - <a href="https://triggeryjs.github.io/packages/devtools-bridge/" target="_blank" rel="noopener noreferrer"><b>Bridge package</b></a>
+> - <a href="https://triggeryjs.github.io/packages/devtools-panel/" target="_blank" rel="noopener noreferrer"><b>Panel package</b></a>
 
 ## Run it
 

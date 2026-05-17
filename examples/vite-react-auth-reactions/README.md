@@ -6,8 +6,8 @@ Saves drafts, closes dependent routes, redirects, shows a toast — all from one
 
 ## Try it
 
-- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-auth-reactions/>
-- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/auth-reactions/>
+- <a href="https://triggeryjs.github.io/play/vite-react-auth-reactions/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
+- <a href="https://triggeryjs.github.io/recipes/react/auth-reactions/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
 
 Or run it locally:
 

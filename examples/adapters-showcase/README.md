@@ -4,8 +4,8 @@ One Vite + React app demoing every Triggery adapter side by side. Each tab in th
 
 ## Try it
 
-- **Open in StackBlitz** — <https://triggeryjs.github.io/play/adapters-showcase/>
-- **Read the adapters overview** — <https://triggeryjs.github.io/ecosystem/adapters/>
+- <a href="https://triggeryjs.github.io/play/adapters-showcase/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
+- <a href="https://triggeryjs.github.io/ecosystem/adapters/" target="_blank" rel="noopener noreferrer"><b>Read the adapters overview</b></a>
 
 The StackBlitz link routes through a tiny launcher on the Triggery docs site
 that uploads only this example's files to a fresh WebContainer — boots in

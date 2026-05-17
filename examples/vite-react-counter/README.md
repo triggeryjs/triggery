@@ -13,8 +13,8 @@ like a spec.
 
 ## Try it
 
-- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-counter/>
-- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/counter/>
+- <a href="https://triggeryjs.github.io/play/vite-react-counter/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
+- <a href="https://triggeryjs.github.io/recipes/react/counter/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
 
 The StackBlitz link routes through a tiny launcher on the Triggery docs site
 that uploads only this example's files to a fresh WebContainer — boots in
