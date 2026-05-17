@@ -1,19 +1,20 @@
 name: Mirror to GitHub Packages
 
-# Mirrors every @triggery/* package's CURRENT version onto GitHub
-# Packages (`npm.pkg.github.com`) so they show up on the org's
-# https://github.com/orgs/triggeryjs/packages page.
+# Mirrors every @triggery/* package onto GitHub Packages under the
+# @triggeryjs/* scope so the org's /packages page
+# (https://github.com/orgs/triggeryjs/packages) shows them.
 #
-# Why a separate workflow (not part of release.yml)?
-#   - release.yml is OIDC-bound to npm.js Trusted Publishers; the npm.js
-#     publish is the canonical one and shouldn't be tangled with a
-#     secondary registry's auth model.
-#   - This one runs `workflow_run` after release.yml finishes (auto-mirror
-#     on every successful npm.js release) and is also dispatchable
-#     manually so we can backfill historical versions whenever needed.
+# Why the rename:
+# GitHub Packages enforces "scope name must equal owner name" for npm
+# publishes — a GITHUB_TOKEN bound to the `triggeryjs` org can ONLY
+# publish into the `@triggeryjs` scope. Publishing as `@triggery/core`
+# returns 403 "The requested installation does not exist". So this
+# workflow renames `name` from `@triggery/X` → `@triggeryjs/X` right
+# before each publish (then reverts via git checkout).
 #
-# Auth: `GITHUB_TOKEN` exposed as `NODE_AUTH_TOKEN`. `packages: write`
-# permission is what lets the token PUT packages.
+# Result: the npm.js canonical name stays `@triggery/X`. The GH
+# Packages mirror is a visibility-only decoration with the same version
+# numbers, published under `@triggeryjs/X`.
 
 on:
   workflow_dispatch:
@@ -33,9 +34,8 @@ concurrency:
 
 jobs:
   mirror:
-    name: Publish to GitHub Packages
+    name: Publish @triggeryjs/* mirror
     runs-on: ubuntu-latest
-    # Run after a successful Release workflow OR on manual dispatch.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
@@ -46,32 +46,28 @@ jobs:
 
       - uses: pnpm/action-setup@v6
 
-      # `registry-url` + `scope` together write a per-scope auth block
-      # into ~/.npmrc so `npm publish` of any @triggery/* package routes
-      # to GitHub Packages and presents NODE_AUTH_TOKEN.
+      # registry-url + scope writes the per-scope auth block into
+      # ~/.npmrc so `npm publish` of @triggeryjs/* routes to GH Packages
+      # and uses NODE_AUTH_TOKEN.
       - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: pnpm
           registry-url: 'https://npm.pkg.github.com'
-          scope: '@triggery'
+          scope: '@triggeryjs'
 
       - run: pnpm install --frozen-lockfile
 
-      # Build dist/ for every package so we publish artefacts, not sources.
       - run: pnpm build
 
-      - name: Publish each @triggery/* package
+      - name: Publish renamed packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # `publishConfig.provenance: true` is in each package.json for
-          # the npm.js Trusted Publishers OIDC flow. GitHub Packages
-          # rejects external Sigstore attestations, so we disable the
-          # CLI's provenance for this mirror.
+          # publishConfig.provenance is for npm.js Trusted Publishers
+          # OIDC; GH Packages rejects external Sigstore attestations.
           NPM_CONFIG_PROVENANCE: 'false'
         run: |
-          set +e  # one failed publish (e.g. already-published 409) must
-                  # not abort the rest of the mirror
+          set +e
           published=0
           skipped=0
           for pkg_dir in packages/*/; do
@@ -83,14 +79,27 @@ jobs:
             pkg_version=$(node -p "require('./$pkg_json').version")
             is_private=$(node -p "require('./$pkg_json').private === true")
 
-            if [ "$is_private" = "true" ]; then
-              echo "› skip $pkg_name (private)"
+            if [ "$is_private" = "true" ] || [ "$pkg_name" = "null" ] || [ "$pkg_name" = "undefined" ]; then
               skipped=$((skipped+1))
               continue
             fi
 
+            gh_name=${pkg_name/@triggery\//@triggeryjs/}
             echo ""
-            echo "→ publish $pkg_name@$pkg_version"
+            echo "→ publish $gh_name@$pkg_version (from $pkg_name)"
+
+            # Rewrite ONLY the `name` field in-place. Internal
+            # @triggery/* imports stay; consumers who pull from GH
+            # Packages will fetch @triggery/* deps from npm.js
+            # transparently via default registry.
+            node -e "
+              const fs = require('fs');
+              const p = './$pkg_json';
+              const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+              pkg.name = pkg.name.replace('@triggery/', '@triggeryjs/');
+              fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+            "
+
             (
               cd "$pkg_dir"
               npm publish \
@@ -99,19 +108,19 @@ jobs:
                 --no-git-checks
             )
             rc=$?
+
+            # Always restore the on-disk package.json so the next loop
+            # iteration / a future workflow re-run starts clean.
+            git checkout -- "$pkg_json"
+
             if [ $rc -eq 0 ]; then
               published=$((published+1))
             else
-              # 409 EPUBLISHCONFLICT means "this version already exists" —
-              # fine for a mirror. Anything else is logged but doesn't
-              # fail the run; check the logs to triage.
-              echo "  ⚠ exit=$rc — skipping (likely already published)"
+              echo "  ⚠ exit=$rc (likely already published or auth error)"
               skipped=$((skipped+1))
             fi
           done
 
           echo ""
           echo "=== summary: published=$published, skipped=$skipped ==="
-          # Always succeed — a green workflow means "we tried every
-          # package", not "every one was newly published".
           exit 0
