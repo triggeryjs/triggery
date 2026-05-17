@@ -1,0 +1,288 @@
+---
+title: Validation (Standard Schema)
+description: "Runtime validation of event, condition and action payloads via Standard Schema — zod, valibot, arktype. The V1 boundary pattern and the V1.1 declarative API."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+TypeScript checks that *your code* uses the schema correctly. It can't check that the **WebSocket frame** you got at runtime actually matches its declared payload type. For that you need *runtime validation* — parsing untyped data through a validator that either narrows to the declared shape or throws.
+
+Triggery doesn't bring its own validator; it embraces the [Standard Schema](https://standardschema.dev) contract that zod, valibot, arktype, runtypes and the rest agreed on in 2024. The Standard Schema is the **only thing the library needs to know about** — bring whichever validation library you already use, validate at the boundary you choose, and the rest of the system stays clean.
+
+## The two boundaries that need validation
+
+A trigger has three port surfaces (events, conditions, actions). Of the three, only **events** typically need runtime validation:
+
+- **Events** carry data from the outside world: a WebSocket frame, a fetch response, a postMessage. The producer doesn't know the payload is well-formed.
+- **Conditions** are values the app already holds in typed state (Zustand store, useState, ref). The getter is yours; no untrusted boundary.
+- **Actions** are called from inside the trigger handler with typed values you constructed. Same — no untrusted boundary.
+
+So validation is almost always a **producer-side concern**: parse before you fire.
+
+```ts title="src/features/messaging/socket.ts"
+import { z } from 'zod';
+import { messageTrigger } from '../../triggers/message.trigger';
+import type { Runtime } from '@triggery/core';
+
+const messageSchema = z.object({
+  author:    z.string().min(1),
+  text:      z.string().min(1).max(10_000),
+  channelId: z.string().uuid(),
+});
+
+export function wireSocket(runtime: Runtime, socket: WebSocket) {
+  socket.addEventListener('message', (frame) => {
+    const parsed = messageSchema.safeParse(JSON.parse(frame.data));
+    if (!parsed.success) {
+      console.warn('[chat] dropped malformed message', parsed.error.format());
+      return;
+    }
+    runtime.fire('new-message', parsed.data);
+  });
+}
+```
+
+The handler trusts its `event.payload` types because **the producer enforced them**. Downstream code (handler, action reactors) never re-validates — it would be wasted work.
+
+## Using Standard Schema (`'~standard'`) — library-agnostic
+
+If you don't want to lock the validation site to one library, use the Standard Schema contract directly. Every supporting library exposes a `~standard` property:
+
+```ts title="src/lib/validate.ts"
+import type { StandardSchemaV1 } from '@standard-schema/spec';
+
+export async function validate<T>(schema: StandardSchemaV1<unknown, T>, value: unknown): Promise<T> {
+  let result = schema['~standard'].validate(value);
+  if (result instanceof Promise) result = await result;
+  if (result.issues) {
+    throw new Error(
+      `Validation failed: ${result.issues.map((i) => `${i.path?.join('.')}: ${i.message}`).join('; ')}`,
+    );
+  }
+  return result.value;
+}
+```
+
+Then any library you like:
+
+```ts
+import { z }       from 'zod';                  // works
+import * as v      from 'valibot';              // works
+import { type }    from 'arktype';              // works
+
+const Zod      = z.object({ name: z.string() });
+const Valibot  = v.object({ name: v.string() });
+const Arktype  = type({ name: 'string' });
+
+const a = await validate(Zod,     payload);
+const b = await validate(Valibot, payload);
+const c = await validate(Arktype, payload);
+```
+
+Triggery doesn't depend on any specific library. Your choice is your choice; the contract is the contract.
+
+## A reusable producer hook
+
+In React the cleanest pattern is a producer hook that bakes the validator in next to the event call:
+
+```ts title="src/lib/useValidatedEvent.ts"
+import type {
+  EventKey, EventMap, Trigger, TriggerSchema,
+} from '@triggery/core';
+import type { StandardSchemaV1 } from '@standard-schema/spec';
+import { useEvent } from '@triggery/react';
+import { useCallback } from 'react';
+
+export function useValidatedEvent<S extends TriggerSchema, K extends EventKey<S>>(
+  trigger: Trigger<S>,
+  eventName: K,
+  schema: StandardSchemaV1<unknown, EventMap<S>[K]>,
+) {
+  const fire = useEvent(trigger, eventName);
+  return useCallback(
+    (raw: unknown) => {
+      const result = schema['~standard'].validate(raw);
+      if (result instanceof Promise) {
+        throw new Error('async validators not supported in useValidatedEvent');
+      }
+      if (result.issues) {
+        console.warn(`[${trigger.id}] ${eventName} dropped:`, result.issues);
+        return;
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: union narrowed by the cast at the call site
+      (fire as (p: EventMap<S>[K]) => void)(result.value);
+    },
+    [fire, schema, trigger.id, eventName],
+  );
+}
+```
+
+Call it the same way you'd call `useEvent`, but pass a schema:
+
+```tsx
+import { z } from 'zod';
+import { useValidatedEvent } from '../lib/useValidatedEvent';
+
+const newMessageSchema = z.object({
+  author: z.string(),
+  text: z.string(),
+  channelId: z.string().uuid(),
+});
+
+function SocketBridge() {
+  const fireNewMessage = useValidatedEvent(messageTrigger, 'new-message', newMessageSchema);
+
+  useEffect(() => {
+    const onFrame = (e: MessageEvent) => fireNewMessage(JSON.parse(e.data));
+    socket.addEventListener('message', onFrame);
+    return () => socket.removeEventListener('message', onFrame);
+  }, [fireNewMessage]);
+
+  return null;
+}
+```
+
+Same idea works for `useEvent` in Solid and Vue.
+
+## The declarative API — `validate:`
+
+<Aside type="caution" title="Planned for V1.1">
+The `validate:` option on `createTrigger` — validation declared next to the schema, applied automatically by the runtime — ships in V1.1. The shape below is the planned API, kept stable on purpose so today's `useValidatedEvent` pattern can be migrated by replacing the producer hook, no handler changes. The code in this section won't compile against V1.
+</Aside>
+
+The V1.1 form lives where the schema lives — inside `createTrigger`:
+
+```ts title="V1.1 — declarative validation"
+import { createTrigger } from '@triggery/core';
+import { z } from 'zod';
+
+const newMessage = z.object({
+  author:    z.string().min(1),
+  text:      z.string().min(1).max(10_000),
+  channelId: z.string().uuid(),
+});
+
+const settings = z.object({
+  sound:         z.boolean(),
+  notifications: z.boolean(),
+});
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': z.infer<typeof newMessage> };
+  conditions: { settings: z.infer<typeof settings> };
+  actions:    { showToast: { title: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+
+  validate: {
+    events:     { 'new-message': newMessage },
+    conditions: { settings },
+  },
+
+  handler({ event, conditions, actions }) {
+    // event.payload and conditions.settings are validated before the handler runs.
+    if (!conditions.settings) return;
+    if (conditions.settings.notifications) {
+      actions.showToast?.({ title: event.payload.author });
+    }
+  },
+});
+```
+
+What the runtime will do in V1.1:
+
+- **Events**: on every `fire('new-message', payload)`, run the schema against `payload` before scheduling the handler. Failure → inspector skip with `reason: 'validate-event: <issues>'`, handler not called.
+- **Conditions**: when the handler runs, validate each condition getter's return value before exposing it in `ctx.conditions`. Failure → skip with `reason: 'validate-condition: <name>'`. Useful for "trust the typed-state contract, double-check at runtime in dev".
+- **Actions**: validate `ctx.actions.foo?.(payload)` calls before dispatching to reactors. Same skip semantics.
+
+Until V1.1, use the boundary pattern above. The mental model is identical; only the call site moves.
+
+## Cost model — you pay only when you opt in
+
+Validation is opt-in everywhere:
+
+- The V1 boundary pattern is in your code. The runtime never validates anything on the hot path.
+- The V1.1 `validate:` map is opt-in per port. Unvalidated ports take zero overhead.
+- The Standard Schema contract itself is a single property access (`schema['~standard'].validate`) — no global registry, no plugin system, no init.
+
+Concretely, a runtime with no `validate:` clauses on any trigger has exactly the same dispatch path as one without validation support at all. The fast path is the no-validation path.
+
+When you do opt in, the cost is one validator call per port-touch. Zod parses are typically tens of microseconds; valibot and arktype run closer to single microseconds. For high-volume events (e.g. a stream of cursor positions), validate at the *first* event and trust subsequent ones, or sample (validate 1 in 100). The `validate:` API in V1.1 will accept a function form for exactly this:
+
+```ts
+validate: {
+  events: {
+    'cursor:move': (payload) => Math.random() < 0.01
+      ? cursorMoveSchema.parse(payload)
+      : payload as CursorMove,
+  },
+}
+```
+
+## A note on conditions — defensive validation
+
+Even though conditions come from your own state, there are reasons to validate them in development:
+
+- A migration changed the persisted state shape; the old shape is still in `localStorage` of some users.
+- A backend response leaks into the store untyped (`any` somewhere in the chain).
+- A third-party library you wrap returns `unknown` and you want runtime confidence the shape didn't change.
+
+The V1.1 form handles this — a one-line `validate.conditions.settings = settingsSchema` and the runtime checks at every fire-time read. The cost is one validator call per fired event per condition, which is usually negligible.
+
+Today, the equivalent is a wrapper around the condition getter:
+
+```ts
+function validatedCondition<T>(getter: () => T, schema: StandardSchemaV1<unknown, T>): () => T {
+  return () => {
+    const value = getter();
+    const r = schema['~standard'].validate(value);
+    if (r instanceof Promise) throw new Error('async not supported');
+    if (r.issues) {
+      console.warn('condition validation failed:', r.issues);
+      // Fall back to the raw value — log only, don't crash.
+    }
+    return value;
+  };
+}
+
+useCondition(messageTrigger, 'settings', validatedCondition(() => settings, settingsSchema), [settings]);
+```
+
+In production builds, swap the wrapper for the identity function via a build flag — same producer, zero runtime cost.
+
+## Future direction — pattern matching and asserting
+
+The roadmap mentions one more direction: **trigger-level asserts**. A scenario like "after `'checkout:completed'`, an action of name `redirectTo` *must* fire" — currently expressed by reading the inspector after a test — will get a first-class `expect:` field. Same Standard-Schema shape, same opt-in cost model. See the [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) for the timeline.
+
+## Zero dependency on any specific validator
+
+The whole point of building on Standard Schema is that Triggery **never imports zod, valibot, arktype, or anything else**. Your bundle ships exactly the validator you pull in, none of the ones you don't. Switching from zod to valibot is a search-and-replace in your code, not a Triggery upgrade. Adopting whichever validator your team standardises on three years from now is a search-and-replace too.
+
+That's the contract: types are TypeScript's job, runtime invariants are Standard Schema's job, orchestration is Triggery's job. Three layers; everyone stays in their lane.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Schema typing"
+    description="The TriggerSchema generic that the validators check the runtime shape against."
+    href="/guide/typescript/schema-typing/"
+  />
+  <LinkCard
+    title="Strict mode"
+    description="Strict-TS patterns for handlers — how validated payloads compose with strict reading."
+    href="/guide/typescript/strict-mode/"
+  />
+  <LinkCard
+    title="Standard Schema"
+    description="The cross-validator contract this page is built on."
+    href="https://standardschema.dev"
+  />
+  <LinkCard
+    title="Roadmap"
+    description="The V1.1 declarative validate: API and the planned pattern-matching layer."
+    href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md"
+  />
+</CardGrid>

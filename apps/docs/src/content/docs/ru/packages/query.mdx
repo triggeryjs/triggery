@@ -1,0 +1,101 @@
+---
+title: "@triggery/query"
+description: "Адаптер TanStack Query для Triggery — читай закешированные данные запроса из условия триггера."
+sidebar:
+  order: 13
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Читай закешированные данные [TanStack Query](https://tanstack.com/query) из условия Triggery. Pull-only: `queryClient.getQueryData(key)` вызывается только при срабатывании триггера, хост-компонент никогда не подписывается на обновления кеша.
+
+[![npm](https://img.shields.io/npm/v/@triggery/query?style=flat-square)](https://www.npmjs.com/package/@triggery/query)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/query?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/query)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/query @tanstack/query-core" />
+
+Peer-зависимости: `react >= 18.0.0`, `@tanstack/query-core ^5`. `@tanstack/react-query` реэкспортирует `query-core` и работает из коробки.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `useQueryCondition(trigger, name, queryClient, queryKey, selector?)` | Регистрирует условие на основе закешированной записи TanStack Query. |
+
+## Быстрый пример
+
+```tsx
+import { QueryClient } from '@tanstack/query-core';
+import { createTrigger } from '@triggery/core';
+import { useQueryCondition } from '@triggery/query';
+
+type User = { id: string; name: string };
+
+const queryClient = new QueryClient();
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string; from: string } };
+  conditions: { user: User };
+  actions: { showToast: { body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user'],
+  handler({ event, conditions, actions }) {
+    if (event.payload.from === conditions.user.id) return; // don't toast own messages
+    actions.showToast?.({ body: event.payload.text });
+  },
+});
+
+function CurrentUserBridge() {
+  useQueryCondition(messageTrigger, 'user', queryClient, ['user', 'current']);
+  return null;
+}
+```
+
+С селектором-проекцией:
+
+```ts
+useQueryCondition(messageTrigger, 'user', queryClient, ['profile'], (p) => p?.user);
+```
+
+## Как это работает
+
+Pull-only: `queryClient.getQueryData(key)` вызывается **только** при срабатывании триггера, а не на каждое обновление кеша. Хост-компонент никогда не подписывается на запрос — рядом используй `useQuery` / `useQueryClient` в тех компонентах, которые рендерят данные.
+
+Если записи в кеше нет, значение условия — `undefined`, и `required`-проверка корректно валится, пропуская обработчик вместо того, чтобы кидать ошибку.
+
+## API
+
+```ts
+useQueryCondition<T, S, K>(
+  trigger: Trigger<S>,
+  name: K,
+  queryClient: { getQueryData<T>(key: readonly unknown[]): T | undefined },
+  queryKey: readonly unknown[],
+  selector?: (data: T | undefined) => ConditionMap<S>[K] | undefined,
+): void
+```
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Экспортирует Trigger<S>." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="useQueryCondition — это React-хук." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/zustand" description="Адаптер для client-state, не связанного с сервером." href="/ru/packages/zustand/" />
+  <LinkCard title="@triggery/redux" description="Адаптер для Redux-состояния." href="/ru/packages/redux/" />
+  <LinkCard title="@triggery/socket" description="Сочетай чтение кеша с инвалидациями по сокету." href="/ru/packages/socket/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/query)
+- [npm](https://www.npmjs.com/package/@triggery/query)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/query/CHANGELOG.md)

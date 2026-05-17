@@ -1,0 +1,152 @@
+---
+title: "triggery create"
+description: "Scaffold a new Triggery project from a starter template. Powered by giget."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Downloads a Triggery starter template into a new directory. Templates live under `templates/<name>` in the Triggery repo, so the versions stay in lockstep with `@triggery/core`. The fetch goes through [giget](https://github.com/unjs/giget) — `degit`-flavoured tar fetcher over the GitHub archive endpoint, with offline cache after the first run. No `git clone`, no Node shell-out.
+
+Available as the `triggery create` CLI command and the `createProject` programmatic API.
+
+## Import (programmatic API)
+
+```ts
+import { createProject, isKnownTemplate, type TemplateName } from '@triggery/cli';
+```
+
+## Signature
+
+```ts
+function createProject(options: CreateProjectOptions): Promise<CreateProjectResult>;
+
+type TemplateName = 'vite-react' | 'next-app' | 'react-native';
+
+interface CreateProjectOptions {
+  readonly directory: string;
+  readonly template: TemplateName;
+  readonly cwd?: string;
+  readonly force?: boolean;
+}
+
+interface CreateProjectResult {
+  readonly directory: string; // absolute path
+  readonly source: string;    // giget source spec
+}
+```
+
+## CLI usage
+
+```
+triggery create <directory> [--template <name>] [--force]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--template <name>` | `vite-react` | One of `vite-react`, `next-app`, `react-native`. |
+| `--force` | `false` | Overwrite an existing directory instead of erroring. |
+
+## Templates
+
+| Template | Stack |
+|---|---|
+| `vite-react` | Vite 5 + React 18 + TypeScript + `@triggery/react` + `@triggery/vite`. Default — fastest path to a working dev server. |
+| `next-app` | Next.js 15 (App Router) + `@triggery/react`. Triggery wired into a `<TriggerRuntimeProvider>` in `app/providers.tsx`. |
+| `react-native` | Expo + React Native + `@triggery/react`. Trigger registry imported from `App.tsx`. |
+
+## Examples
+
+### CLI — default template
+
+```
+triggery create my-chat
+```
+
+Output:
+
+```
+Scaffolded github:triggeryjs/triggery/templates/vite-react#main → /Users/you/my-chat
+```
+
+### CLI — Next.js starter
+
+```
+triggery create my-shop --template next-app
+```
+
+### CLI — overwrite existing dir
+
+```
+triggery create my-chat --force
+```
+
+### Programmatic
+
+```ts
+import { createProject } from '@triggery/cli';
+
+const { directory, source } = await createProject({
+  directory: './apps/playground',
+  template: 'vite-react',
+});
+
+console.log('scaffolded', source, '→', directory);
+```
+
+### Programmatic — template guard
+
+`isKnownTemplate` is the type predicate the CLI uses to reject unknown values:
+
+```ts
+import { createProject, isKnownTemplate, type TemplateName } from '@triggery/cli';
+
+function safeTemplate(input: string): TemplateName {
+  if (!isKnownTemplate(input)) {
+    throw new Error(`Unknown template: ${input}`);
+  }
+  return input;
+}
+
+await createProject({
+  directory: 'experiment',
+  template: safeTemplate(process.env.TRIGGERY_TEMPLATE ?? 'vite-react'),
+});
+```
+
+## What the templates contain
+
+Each template ships:
+
+- A working dev server / build command (`npm run dev` / `npm run build`).
+- A `src/triggers/` folder with one example trigger and one matching component.
+- The relevant `@triggery/*` packages already pinned in `package.json`.
+- `@triggery/vite` set up in `vite.config.ts` (Vite / Next templates) so `*.trigger.ts` auto-discovery works out of the box.
+- `tsconfig.json` with strict mode and the `@triggery/*` paths resolved.
+
+## Notes
+
+<Aside type="tip">
+`createProject` is async — it shells out to giget's network fetch on the first run, then caches the tarball locally. Subsequent runs against the same `(template, branch)` are instant.
+</Aside>
+
+<Aside type="caution" title="Overwrites are destructive">
+`--force` passes through to giget, which deletes the existing directory before unpacking. Don't aim it at a project you care about.
+</Aside>
+
+<Aside>
+The CLI itself is a thin wrapper. If you need branch / commit pinning, fork hosting, or a custom registry, call `downloadTemplate` from giget directly — Triggery doesn't add anything specific on top.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="Vite plugin" description="Auto-discovery — bundled in the vite-react template." href="/api/vite/plugin/" />
+  <LinkCard title="createTrigger" description="The starting point for every trigger file in the templates." href="/api/core/create-trigger/" />
+  <LinkCard title="Getting started guide" description="Manual project setup if you want to skip the scaffold." href="/guide/getting-started/" />
+  <LinkCard title="recommended ESLint preset" description="Add it for trigger-aware linting." href="/api/eslint-plugin/recommended/" />
+</CardGrid>

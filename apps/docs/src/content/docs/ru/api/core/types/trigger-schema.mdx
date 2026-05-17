@@ -1,0 +1,150 @@
+---
+title: "TriggerSchema"
+description: "Общая форма, которую передают в createTrigger. Три необязательные мапы: events, conditions, actions."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+`TriggerSchema` — единственный обобщённый параметр, который передают в [`createTrigger`](/ru/api/core/create-trigger/). Он описывает полную типизированную поверхность триггера: каждое событие, на которое тот реагирует, каждое условие, которое он умеет читать, и каждое действие, которое он может вызвать. Все три ключа необязательные; пустая схема (`{}`) корректна для триггеров без входов и выходов.
+
+## Импорт
+
+```ts
+import type { TriggerSchema } from '@triggery/core';
+```
+
+## Определение
+
+```ts
+type TriggerSchema = {
+  events?:     Record<string, unknown>;  // payload type per event name
+  conditions?: Record<string, unknown>;  // value type per condition name
+  actions?:    Record<string, unknown>;  // payload type per action name
+};
+```
+
+## Поля
+
+| Поле | Тип | Обязательное | Описание |
+|---|---|---|---|
+| `events` | `Record<string, unknown>` | нет | Мапа `eventName → payloadType`. Для событий без полезной нагрузки используй `void`. |
+| `conditions` | `Record<string, unknown>` | нет | Мапа `conditionName → valueType`. Значения тянутся в pull-режиме (рантайм вызывает геттер в момент срабатывания). |
+| `actions` | `Record<string, unknown>` | нет | Мапа `actionName → payloadType`. Для действий без параметров используй `void`. |
+
+## Соглашения по именованию
+
+Библиотека не навязывает конвенцию кейзинга — любая строка допустима как ключ. Распространённая практика в экосистеме Triggery:
+
+- **События**: глаголы в kebab-case с доменным префиксом — `'new-message'`, `'cta:click'`, `'session-expired'`.
+- **Условия**: существительные в camelCase — `user`, `activeChannelId`, `featureFlags`.
+- **Действия**: глаголы в camelCase — `showToast`, `playSound`, `setUser`.
+
+Это хорошо сочетается с хелпером [`createNamedHooks`](/ru/api/react/create-named-hooks/), который конвертирует kebab/camel-ключи в PascalCase-имена хуков (`'new-message'` → `useNewMessageEvent`).
+
+## Примеры
+
+### Пустая схема
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{}>({
+  id: 'demo:empty',
+  events: [],
+  handler() {
+    // No events, conditions or actions — useful for triggers driven by side
+    // channels (timers, external callbacks) where the dispatch keeps a heartbeat.
+  },
+});
+```
+
+### Схема только с событиями
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { tick: number; tock: void };
+}>({
+  id: 'clock',
+  events: ['tick', 'tock'],
+  handler({ event }) {
+    if (event.name === 'tick') {
+      console.log('tick payload', event.payload); // typed number
+    } else {
+      console.log('tock'); // typed void
+    }
+  },
+});
+```
+
+### Полная схема со всеми тремя мапами
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+type User = { id: string; name: string };
+
+createTrigger<{
+  events:     { 'new-message': { text: string; channelId: string } };
+  conditions: { user: User | null; activeChannelId: string | null };
+  actions:    { showToast: { title: string; body: string }; playSound: 'beep' | 'chime' };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    actions.showToast?.({
+      title: conditions.user?.name ?? '',
+      body:  event.payload.text,
+    });
+    actions.playSound?.('beep');
+  },
+});
+```
+
+### Дискриминированный union событий
+
+Поле `event` в контексте обработчика — дискриминированный union по `S['events']`:
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { open: { id: string }; close: { id: string; reason: 'ok' | 'cancel' } };
+}>({
+  id: 'modal',
+  events: ['open', 'close'],
+  handler({ event }) {
+    if (event.name === 'close') {
+      // narrowed: event.payload is { id; reason } here
+      console.log('closed', event.payload.reason);
+    }
+  },
+});
+```
+
+## Замечания
+
+<Aside type="tip">
+Дженерик схемы никогда не выводится автоматически — всегда передавай его явно. Id триггера, список событий и список required-условий выводятся отдельно, но типы значений в `events / conditions / actions` существуют только как информация уровня типов, которую ты предоставляешь.
+</Aside>
+
+<Aside type="caution">
+`required: [...]` не сужает `conditions.<name>` до `NonNullable<…>` внутри обработчика в V1 — для сужения используй `check.is / all / any` или ранний guard.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="Конструктор, который принимает эту схему." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="TriggerCtx" description="Контекст обработчика — выводится из схемы." href="/ru/api/core/types/trigger-ctx/" />
+  <LinkCard title="Анатомия триггера" description="Разбор поле за полем." href="/ru/guide/essentials/trigger-anatomy/" />
+  <LinkCard title="createNamedHooks" description="Сгенерировать PascalCase-хуки из схемы." href="/ru/api/react/create-named-hooks/" />
+</CardGrid>

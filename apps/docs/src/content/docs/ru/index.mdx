@@ -1,0 +1,159 @@
+---
+title: Triggery
+description: "Декларативная оркестрация бизнес-логики. Независимое от фреймворка ядро и биндинги для React, Solid и Vue."
+template: splash
+hero:
+  tagline: Пиши бизнес-логику, а не шаблонный код.
+  image:
+    file: ../../../assets/logo_trig.webp
+---
+
+import { Card, CardGrid, LinkButton } from "@astrojs/starlight/components";
+import { TabItem } from "@astrojs/starlight/components";
+
+import PackageManagers from "~/components/PackageManagers.astro";
+
+{/* `import.meta.env.BASE_URL` so the CTAs survive if the deploy moves to a sub-path. With base='', BASE_URL is '/', so the rendered href is /guide/…. */}
+
+export const base = import.meta.env.BASE_URL;
+
+<div class="hero-cta">
+  <LinkButton
+    href={`${base}ru/guide/getting-started/`}
+    variant="primary"
+    icon="right-arrow"
+  >
+    Введение
+  </LinkButton>
+  <LinkButton
+    href="https://github.com/triggeryjs/triggery"
+    variant="minimal"
+    icon="external"
+  >
+    Открыть на GitHub
+  </LinkButton>
+</div>
+
+## Triggery за 30 секунд
+
+Один файл описывает один сценарий. События приходят на вход, условия отсекают лишнее, действия выполняют побочные эффекты. Один и тот же API на хуках работает в React, Solid и Vue.
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from "@triggery/core";
+
+type Settings = { sound: boolean; notifications: boolean };
+type Payload = { author: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events: { "new-message": Payload };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions: { showToast: { title: string; body: string }; playSound: "beep" };
+}>({
+  id: "message-received",
+  required: ["settings"],
+  handler({ event, conditions, actions, check }) {
+    if (conditions.activeChannelId === event.payload.channelId) return;
+    if (!check.is("settings", (s) => s.notifications)) return;
+
+    actions.debounce(800).playSound?.("beep");
+    actions.showToast?.({
+      title: event.payload.author,
+      body: event.payload.text,
+    });
+  },
+});
+```
+
+Компоненты остаются сосредоточенными на своём порте. Никто из них не лезет в состояние соседа.
+
+```tsx title="src/Chat.tsx"
+import { useEvent, useCondition, useAction } from "@triggery/react";
+import { messageTrigger } from "./triggers/message.trigger";
+
+// Продьюсер: поле ввода в чате отправляет событие.
+const fireNewMessage = useEvent(messageTrigger, "new-message");
+
+// Провайдер: панель настроек отдаёт снимок состояния через геттер.
+useCondition(messageTrigger, "settings", () => settings, [settings]);
+
+// Реактор: тост-компонент подписывается на действие.
+useAction(messageTrigger, "showToast", (payload) =>
+  toast.success(payload.title, { description: payload.body }),
+);
+```
+
+Никакого проброса пропсов через всё дерево, никаких цепочек `useEffect`, никакой общей шины контекста. Меняешь файл триггера — меняется вся реакция, а компонентов касаться не нужно.
+
+## Почему выбирают Triggery
+
+<CardGrid stagger>
+  <Card title="Ядро без зависимостей" icon="setting">
+    Ноль зависимостей в рантайме. Используй `@triggery/core` напрямую из Node, чистого JavaScript или любого фреймворка. Биндинги — тонкие обёртки вокруг жизненного цикла, примерно по 50 строк каждая.
+  </Card>
+  <Card title="React · Solid · Vue" icon="puzzle">
+    Один и тот же API на хуках в каждом биндинге. Меняй стек, не переписывая слой оркестрации.
+  </Card>
+  <Card title="Типобезопасность по умолчанию" icon="approve-check">
+    Одна inline-обобщённая схема, три типизированные поверхности — события, условия, действия. Без приведений `as`, без `.d.ts`-файлов, без кодогенерации.
+  </Card>
+  <Card title="Тесты без React" icon="test-tube">
+    Обработчики триггеров — почти чистые функции от снимка состояния. Подмени условия, подмени действия, отправь событие. React Testing Library не обязателен.
+  </Card>
+  <Card title="DevTools из коробки" icon="magnifier">
+    Кольцевой буфер инспектора встроен в каждый рантайм. Подключи мост к Redux DevTools, поставь `<InspectorView>` или переигрывай записанные сессии.
+  </Card>
+  <Card title="ESLint и codemod-скрипты" icon="pencil">
+    Восемь правил ESLint ловят типичные ошибки. Codemod-скрипты переносят код с `useEffect`, RTK listenerMiddleware и (в 1.0) с Redux Saga.
+  </Card>
+</CardGrid>
+
+## Попробовать
+
+<PackageManagers pkg="@triggery/core @triggery/react" />
+
+Для SolidJS используй `@triggery/solid`, для Vue 3 — `@triggery/vue`. API одинаковый.
+
+<LinkButton href="/ru/guide/getting-started/" icon="right-arrow">
+  Открыть руководство
+</LinkButton>
+<LinkButton href="/ru/recipes/react/notification-pipeline/" variant="minimal">
+  Посмотреть готовый рецепт
+</LinkButton>
+<LinkButton
+  href="https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/vite-react-counter?file=README.md"
+  variant="minimal"
+  icon="external"
+>
+  Открыть в StackBlitz
+</LinkButton>
+
+## Что говорят
+
+> Triggery — единственная библиотека оркестрации, в которой один и тот же файл со сценарием понятен и джуну в понедельник, и сеньору на ревью в пятницу.
+>
+> — early adopter, 2026
+
+## Сравнение со знакомыми инструментами
+
+|                                 | Triggery | Redux Saga   | RTK listenerMiddleware | XState | RxJS    |
+| ------------------------------- | -------- | ------------ | ---------------------- | ------ | ------- |
+| **API на хуках**                | да       | нет          | частично               | да     | нет     |
+| **Файл на сценарий**            | да       | нет          | частично               | да     | нет     |
+| **Работает в любом фреймворке** | да       | только Redux | только Redux           | да     | да      |
+| **Inline-обобщённая схема**     | да       | нет          | нет                    | да     | n/a     |
+| **Встроенные DevTools**         | да       | внешние      | RTK DevTools           | да     | внешние |
+| **Размер ядра (gzip)**          | < 6 кБ   | ~17 кБ       | внутри RTK             | ~16 кБ | ~46 кБ  |
+
+Подробные сравнения — в разделе [«Миграция → Сравнение»](/ru/migration/).
+
+## Roadmap
+
+Triggery — pre-1.0, публичный API быстро стабилизируется. Рантайм уже работает в продакшене с начала 2026 года, в CI закреплены пороги покрытия (строки ≥ 95%, ветви ≥ 85%). Что дальше — смотри в [публичной дорожной карте](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md).
+
+<LinkButton
+  href="https://github.com/sponsors/awesomesk1ll"
+  icon="heart"
+  variant="secondary"
+>
+  Поддержать проект
+</LinkButton>

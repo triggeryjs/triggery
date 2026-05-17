@@ -1,0 +1,372 @@
+---
+title: "Тестовый планировщик"
+description: "Детерминированный виртуальный таймер, перехватывающий setTimeout / clearTimeout, чтобы тесты debounce, throttle и defer не флэйкали через `await new Promise(setTimeout, …)`."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`actions.debounce(800).play?.()` — крошечное удобство в продакшене и небольшой кошмар в тестах. Реальные wall-таймеры делают тесты медленными и флэйкающими; `vi.useFakeTimers()` работает внутри Vitest, но не помогает в Jest-with-ESM или `node:test`; а таймеры, запланированные изнутри обработчика микротаски, обычно попадают прямо за окном, которое ты настроил.
+
+`createFakeScheduler` из [`@triggery/testing`](/ru/packages/testing/) — тонкая, тест-раннер-агностическая замена `globalThis.setTimeout` / `globalThis.clearTimeout`. Ставишь, отправляешь события, продвигаешь таймер ровно на нужное число миллисекунд, проверяешь. Работает одинаково в Vitest, Jest, `bun:test` и `node:test`.
+
+## Форма теста debounce
+
+```ts title="src/triggers/__tests__/debounce.test.ts"
+import { createTrigger } from '@triggery/core';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(() => fs.uninstall());
+
+test('debounces a burst of fires into one action call', async () => {
+  const rt = createTestRuntime();
+  const trigger = createTrigger<{
+    events:  { 'new-message': void };
+    actions: { playSound: 'beep' };
+  }>(
+    {
+      id: 'message-received',
+      events: ['new-message'],
+      handler: ({ actions }) => actions.debounce(800).playSound?.('beep'),
+    },
+    rt,
+  );
+  const playSound = vi.fn();
+  rt.mockAction(trigger, 'playSound', playSound);
+
+  rt.fireSync('new-message');
+  rt.fireSync('new-message');
+  rt.fireSync('new-message');
+
+  expect(playSound).not.toHaveBeenCalled(); // still inside the window
+  await fs.advance(799);
+  expect(playSound).not.toHaveBeenCalled(); // 1 ms shy
+  await fs.advance(1);
+  expect(playSound).toHaveBeenCalledExactlyOnceWith('beep');
+});
+```
+
+Никаких `await new Promise((r) => setTimeout(r, 800))`. Никакого «ой, CI прогнал за 803 мс и тест прошёл случайно». Таймер двигается только когда ты его двигаешь.
+
+## Что делает `createFakeScheduler`
+
+Под капотом он подменяет две глобальные таймерные функции на виртуальный таймер:
+
+```ts title="Conceptually, what install() does"
+const originalSetTimeout   = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
+
+globalThis.setTimeout   = (fn, ms) => {
+  // record { fn, runAt: now + ms } in a private map, return a numeric id
+};
+globalThis.clearTimeout = (id) => {
+  // remove the matching record from the map
+};
+```
+
+Вот и всё. Планировщик не трогает `setInterval`, `requestAnimationFrame`, `process.nextTick`, микротаски или `Date.now`. Только `setTimeout` и `clearTimeout` — ровно то, что внутри используют обёртки `debounce` / `throttle` / `defer` Triggery.
+
+Реализация — в `@triggery/testing`, нулевые runtime-зависимости, ~60 строк.
+
+## API
+
+```ts
+import { createFakeScheduler, type FakeScheduler } from '@triggery/testing';
+
+const fs: FakeScheduler = createFakeScheduler();
+```
+
+```ts
+interface FakeScheduler {
+  install():   void;             // swap setTimeout / clearTimeout
+  uninstall(): void;             // restore native versions (idempotent)
+  now():       number;           // virtual clock value, ms since install
+  advance(ms:  number): Promise<void>;
+  flushAll():           Promise<void>;
+  pending():            number;
+}
+```
+
+### `install()` / `uninstall()`
+
+Подменяет глобалы на `install`, восстанавливает на `uninstall`. Оба идемпотентны — вызов `install()` дважды — no-op, то же с `uninstall()`. Виртуальный таймер и мапа pending-таймеров сбрасываются на `uninstall`.
+
+Стандартный паттерн — пара `beforeEach`/`afterEach` выше. Не дели один инстанс планировщика на весь файл — install/uninstall пер-тест даёт детерминированную изоляцию.
+
+```ts title="Per-test isolation"
+beforeEach(() => fs.install());
+afterEach(()  => fs.uninstall());
+```
+
+Если забудешь `uninstall`, следующий тест начнётся с подменённым `setTimeout` и может зависнуть навсегда, ожидая таймер, который никто не двигает.
+
+### `advance(ms)`
+
+Сдвинь виртуальный таймер вперёд на `ms` и запусти каждый таймер, наступающий в этом окне:
+
+```ts
+setTimeout(cbA, 100);
+setTimeout(cbB, 200);
+setTimeout(cbC, 300);
+
+await fs.advance(150); // runs cbA only
+await fs.advance(100); // runs cbB
+await fs.advance(50);  // runs cbC
+```
+
+`advance` возвращает промис, который резолвится после слива микротасок — поэтому можно сделать `await fs.advance(N)` и сразу проверять, не переживая о висящей микротаске. (Два раунда `Promise.resolve()` — внутренний приём, тот же, что у `flushMicrotasks`.)
+
+Правила порядка внутри одного `advance`:
+
+- Таймеры запускаются в порядке запланированного времени (`runAt` возрастает).
+- Одинаковый `runAt` → FIFO по порядку регистрации.
+- Таймер, запланированный *во время* обратного вызова и попадающий в `target` (новое значение таймера после advance), **запускается в том же вызове** — удобно для каскадов.
+- Таймер с `runAt > target` ждёт следующего advance.
+
+Отрицательный `ms` бросает исключение — `await expect(fs.advance(-1)).rejects.toThrow(/ms must be/)`.
+
+### `flushAll()`
+
+Запусти *все* pending-таймеры, независимо от запланированного времени, в порядке запланированного времени. Виртуальный таймер прыгает к максимальному `runAt` любого отработавшего таймера.
+
+```ts
+setTimeout(cb1, 100);
+setTimeout(cb2, 50_000);
+
+await fs.flushAll();
+expect(cb1).toHaveBeenCalledOnce();
+expect(cb2).toHaveBeenCalledOnce();
+expect(fs.now()).toBe(50_000);
+```
+
+Используй `flushAll` для проверок «мне всё равно на точное время, я хочу видеть, что в итоге произойдёт». Правильный инструмент для проверки «очередь пуста» в конце теста:
+
+```ts
+afterEach(async () => {
+  await fs.flushAll();
+  expect(fs.pending()).toBe(0); // catch leaks
+  fs.uninstall();
+});
+```
+
+### `pending()`
+
+Возвращает число таймеров в очереди. Полезно как детектор утечек:
+
+```ts
+expect(fs.pending()).toBe(0);
+```
+
+Тест, заканчивающийся с `pending() > 0`, обычно означает debounce-action, до которого ни один тест не докрутил таймер. Либо подвинь таймер до его слива, либо сделай `await fs.flushAll()` в `afterEach`.
+
+### `now()`
+
+Возвращает значение виртуального таймера в мс с момента `install`. Сбрасывается в `0` на `uninstall`.
+
+```ts
+expect(fs.now()).toBe(0);
+await fs.advance(500);
+expect(fs.now()).toBe(500);
+```
+
+## Разобранный пример — throttle
+
+```ts title="Throttle: first call goes through, follow-ups are dropped until the window expires"
+import { createTrigger } from '@triggery/core';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(() => fs.uninstall());
+
+test('throttle(2000) drops calls inside the window', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events:  { tick: number };
+    actions: { update: number };
+  }>(
+    {
+      id: 'throttled',
+      events: ['tick'],
+      handler: ({ event, actions }) => actions.throttle(2_000).update?.(event.payload),
+    },
+    rt,
+  );
+  const update = vi.fn();
+  rt.mockAction(t, 'update', update);
+
+  rt.fireSync('tick', 1);
+  expect(update).toHaveBeenCalledExactlyOnceWith(1);
+
+  rt.fireSync('tick', 2);
+  rt.fireSync('tick', 3);
+  expect(update).toHaveBeenCalledTimes(1); // both dropped
+
+  await fs.advance(2_000);
+  rt.fireSync('tick', 4);
+  expect(update).toHaveBeenCalledTimes(2);
+  expect(update).toHaveBeenLastCalledWith(4);
+});
+```
+
+## Разобранный пример — defer
+
+```ts title="Defer: schedule an action to run after a delay, regardless of further fires"
+test('defer(1000) runs the action exactly once after 1s', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{ events: { msg: string }; actions: { log: string } }>(
+    {
+      id: 'deferred',
+      events: ['msg'],
+      handler: ({ event, actions }) => actions.defer(1_000).log?.(event.payload),
+    },
+    rt,
+  );
+  const log = vi.fn();
+  rt.mockAction(t, 'log', log);
+
+  rt.fireSync('msg', 'a');
+  await fs.advance(999);
+  expect(log).not.toHaveBeenCalled();
+  await fs.advance(1);
+  expect(log).toHaveBeenCalledExactlyOnceWith('a');
+});
+```
+
+## Комбинирование с `vi.useFakeTimers()`
+
+Не надо. Обе системы подменяют `setTimeout` и будут драться за владение. `createFakeScheduler` самодостаточен — и в отличие от `vi.useFakeTimers()` работает одинаково в Jest и `node:test`, так что у тебя не появится тест-сьют, привязанный к одному тест-раннеру.
+
+Единственная валидная причина смешать их — если **другая используемая тобой библиотека** (не Triggery) опирается на `Date.now` или `process.hrtime`, и ты хочешь заморозить и их. В этом случае:
+
+1. Поставь fake-таймеры Vitest через `vi.useFakeTimers({ toFake: ['Date', 'performance'] })` — ограничь источниками времени, не `setTimeout`.
+2. Затем поставь fake-планировщик Triggery.
+
+Эти двое работают на непересекающихся поверхностях. Но это экзотика — большинству проектов это не нужно.
+
+## Тест-раннер-агностично — работает в Vitest, Jest, Bun, `node:test`
+
+У планировщика нулевые зависимости от Vitest-глобалов или `vi`. Можно использовать из любого раннера:
+
+```ts title="Jest (ESM)"
+import { describe, expect, it, jest, afterEach, beforeEach } from '@jest/globals';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(()  => fs.uninstall());
+
+it('debounces', async () => {
+  // ...same as the Vitest example, with `jest.fn()` instead of `vi.fn()`
+});
+```
+
+```ts title="node:test"
+import { afterEach, beforeEach, mock, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(()  => fs.uninstall());
+
+test('debounces', async () => {
+  // ...use mock.fn() and assert.equal(...)
+});
+```
+
+```ts title="bun:test"
+import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(()  => fs.uninstall());
+
+test('debounces', async () => {
+  // ...same shape, Bun's mock + expect
+});
+```
+
+## Паттерны и ловушки
+
+### Сливай микротаски перед проверками
+
+`advance` возвращает промис именно потому, что обработчики могут поставить микротаски. **Всегда `await`-ай.**
+
+```ts
+fs.advance(500); // ⛔ — missed `await`
+expect(action).toHaveBeenCalled(); // may pass or fail depending on timing
+```
+
+```ts
+await fs.advance(500); // ✓
+expect(action).toHaveBeenCalled();
+```
+
+### Не дели планировщик между тестовыми файлами
+
+Если ты импортируешь `fs` из хелпер-модуля, каждый файл, импортирующий его, делит один инстанс. Это нормально, пока `install`/`uninstall` пер-тест и не пересекаются — но один забытый `uninstall` отравляет следующий тест. Безопаснее: создавай свой на `describe` или на файл.
+
+### Teardown, чувствительный ко времени
+
+Если тест заканчивается с таймерами в очереди (например, ты отправил событие и не двинул таймер), `install` следующего теста их увидит. Либо сливай в `afterEach` (`await fs.flushAll()`), либо прими, что `fs.uninstall()` тоже очищает очередь — оба варианта валидны.
+
+### Сочетание с async-обработчиками
+
+Обработчик, делающий `await fetch(…)`, ставит свою post-fetch-работу как микротаску, не `setTimeout`. Fake-планировщик не трогает микротаски — тебе нужен `await rt.flushMicrotasks()`. `advance` — только для обёрток действий по времени (`debounce`/`throttle`/`defer`).
+
+```ts title="Both, in order"
+rt.fire('fetch', { url: '/x' });
+await rt.flushMicrotasks();   // let the handler reach its `await fetch`
+await fs.advance(500);        // let any debounced follow-up fire
+```
+
+### Не двигай в будущее вслепую
+
+`await fs.advance(1_000_000)` сработает, но это расточительно — планировщик запустит каждый таймер, наступающий в этом окне, отсортированный по `runAt`. Если нужно слить «всё, что в очереди», `await fs.flushAll()` честнее.
+
+## Drop-in тестовый хелпер
+
+Если не хочешь церемонии `beforeEach`/`afterEach` в каждом файле:
+
+```ts title="src/test-utils/scheduler.ts"
+import { createFakeScheduler, type FakeScheduler } from '@triggery/testing';
+import { afterEach, beforeEach } from 'vitest';
+
+let fs: FakeScheduler;
+export const getScheduler = (): FakeScheduler => fs;
+
+beforeEach(() => { fs = createFakeScheduler(); fs.install(); });
+afterEach (() => { fs.uninstall(); });
+```
+
+Импортируй `getScheduler`, где нужно `advance` или проверка `pending`. Каждый тест получает свежий инстанс, каждый тест убирает за собой.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Debouncing &amp; throttling"
+    description="Продакшен-семантика actions.debounce / throttle / defer, которую ты здесь тестируешь."
+    href="/ru/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Модульные тесты"
+    description="createTestRuntime, mockCondition, mockAction — настройка, на которой строятся эти тесты планировщика."
+    href="/ru/guide/testing/unit-testing/"
+  />
+  <LinkCard
+    title="Интеграционные тесты"
+    description="Когда тестового планировщика мало — подключение реальных деревьев React / Solid / Vue."
+    href="/ru/guide/testing/integration-testing/"
+  />
+  <LinkCard
+    title="@triggery/testing"
+    description="API-справочник createTestRuntime, createFakeScheduler и хелперов-подмен."
+    href="/ru/packages/testing/"
+  />
+</CardGrid>

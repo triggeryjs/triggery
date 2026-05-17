@@ -1,0 +1,100 @@
+---
+title: "@triggery/dom"
+description: "DOM adapters for Triggery — pipe addEventListener, ResizeObserver and IntersectionObserver into triggers."
+sidebar:
+  order: 14
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+DOM bridges for Triggery — pipe `addEventListener`, `ResizeObserver`, and `IntersectionObserver` callbacks into trigger events. All three hooks attach in `useEffect` (commit phase, StrictMode-safe) and detach on unmount.
+
+[![npm](https://img.shields.io/npm/v/@triggery/dom?style=flat-square)](https://www.npmjs.com/package/@triggery/dom)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/dom?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/dom)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/dom" />
+
+Peer deps: `react >= 18.0.0`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `useDomEvent(trigger, eventName, target, domEventName, options?)` | Forward a DOM event from an element, window/document, or React ref. |
+| `useResizeObserver(trigger, eventName, ref, options?)` | Forward `ResizeObserver` entries from an element ref. |
+| `useIntersectionObserver(trigger, eventName, ref, options?)` | Forward `IntersectionObserver` entries from an element ref. |
+
+`target` may be an `EventTarget` (e.g. `window`), a React ref, or `null` / `undefined` (no-op until you provide one).
+
+## Quick example
+
+```tsx
+import { useRef } from 'react';
+import {
+  useDomEvent,
+  useResizeObserver,
+  useIntersectionObserver,
+} from '@triggery/dom';
+
+function Input() {
+  const ref = useRef<HTMLInputElement>(null);
+  useDomEvent(chatTrigger, 'submit', ref, 'keydown', {
+    mapPayload: (e) => ({ key: (e as KeyboardEvent).key }),
+    listenerOptions: { passive: true },
+  });
+  return <input ref={ref} />;
+}
+
+function GlobalEscapeWatcher() {
+  useDomEvent(uiTrigger, 'escape', window, 'keydown', {
+    mapPayload: (e) => (e as KeyboardEvent).key,
+  });
+  return null;
+}
+
+function Panel() {
+  const ref = useRef<HTMLDivElement>(null);
+  useResizeObserver(layoutTrigger, 'panel-resized', ref, {
+    mapPayload: (e) => ({
+      width:  e.contentRect.width,
+      height: e.contentRect.height,
+    }),
+  });
+  return <div ref={ref}>...</div>;
+}
+
+function VirtualRow() {
+  const ref = useRef<HTMLLIElement>(null);
+  useIntersectionObserver(virtualTrigger, 'row-visible', ref, {
+    rootMargin: '200px',
+    mapPayload: (e) => ({ visible: e.isIntersecting, ratio: e.intersectionRatio }),
+  });
+  return <li ref={ref}>...</li>;
+}
+```
+
+## How it works
+
+Listener identity is stable across renders unless `mapPayload` / `listenerOptions` / `target` actually change, so React doesn't tear down on every render. The trigger's event payload type defines what `mapPayload` should produce. If `mapPayload` is omitted, the raw DOM event or observer entry is forwarded unchanged.
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Exposes Trigger<S>." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="These are React hooks." href="/packages/react/" />
+  <LinkCard title="@triggery/socket" description="Alternative event source: socket.io and native WebSocket." href="/packages/socket/" />
+  <LinkCard title="@triggery/query" description="Pair DOM events with TanStack Query cache reads." href="/packages/query/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/dom)
+- [npm](https://www.npmjs.com/package/@triggery/dom)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/dom/CHANGELOG.md)

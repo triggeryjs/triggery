@@ -95,6 +95,10 @@ Caps the per-trigger port count to keep scenarios spec-like.
 
 Once a file has `threshold` or more port calls, suggests switching from `useEvent(trigger, 'new-message')` to the named hook `useNewMessageEvent` (available via `trigger.namedHooks()`).
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/eslint-plugin/](https://triggeryjs.github.io/packages/eslint-plugin/).
+
 ## Related packages
 
 - [`@triggery/codemod`](https://www.npmjs.com/package/@triggery/codemod) — Codemods that introduce trigger files this plugin then checks.

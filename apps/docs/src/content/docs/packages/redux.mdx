@@ -1,0 +1,94 @@
+---
+title: "@triggery/redux"
+description: "Redux adapter for Triggery — read store state from a trigger condition without subscribing the component to re-renders."
+sidebar:
+  order: 8
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Read a [Redux](https://redux.js.org) store from a Triggery condition without subscribing the component to re-renders. Works with vanilla Redux and `@reduxjs/toolkit` — the hook only calls `store.getState()` at fire time.
+
+[![npm](https://img.shields.io/npm/v/@triggery/redux?style=flat-square)](https://www.npmjs.com/package/@triggery/redux)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/redux?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/redux)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/redux redux" />
+
+Peer deps: `react >= 18.0.0`, `redux ^4 || ^5`. `@reduxjs/toolkit` re-exports the same `Store` shape and works out of the box.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `useReduxCondition(trigger, name, store, selector)` | Register a Redux-backed condition. The component is **not** subscribed to the store. |
+
+## Quick example
+
+```tsx
+import { configureStore } from '@reduxjs/toolkit';
+import { createTrigger } from '@triggery/core';
+import { useReduxCondition } from '@triggery/redux';
+import { rootReducer } from './rootReducer';
+
+const store = configureStore({ reducer: rootReducer });
+
+type State = ReturnType<typeof store.getState>;
+type Settings = State['settings'];
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({ body: event.payload.text });
+  },
+});
+
+function SettingsBridge() {
+  useReduxCondition(messageTrigger, 'settings', store, (s) => s.settings);
+  return null;
+}
+```
+
+## How it works
+
+Triggery is pull-only: the selector runs **only** when a trigger fires, not on every dispatch. The hook does **not** subscribe the component to the store — dispatches never re-render the bridge component. If a separate component needs the same slice in its JSX, use `useSelector` from `react-redux` alongside.
+
+## API
+
+```ts
+useReduxCondition<T, S, K>(
+  trigger: Trigger<S>,
+  name: K,
+  store: { getState(): T },
+  selector: (state: T) => ConditionMap<S>[K],
+): void
+```
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Exposes Trigger<S>." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="useReduxCondition is a React hook." href="/packages/react/" />
+  <LinkCard title="@triggery/zustand" description="Alternative adapter for Zustand stores." href="/packages/zustand/" />
+  <LinkCard title="@triggery/jotai" description="Alternative adapter for Jotai atoms." href="/packages/jotai/" />
+  <LinkCard title="@triggery/codemod" description="migrate-from-listener-middleware moves RTK effects into triggers." href="/packages/codemod/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/redux)
+- [npm](https://www.npmjs.com/package/@triggery/redux)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/redux/CHANGELOG.md)

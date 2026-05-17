@@ -1,0 +1,306 @@
+---
+title: "Инспектор"
+description: "Кольцевой буфер запусков, useInspect / useInspectHistory, дебаг-панели и автоотключение инспектора в продакшене."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Каждый рантайм ведёт короткий структурированный лог того, что только что произошло — что сработало, что было пропущено, что бросило исключение. Этот лог и есть **инспектор**. На нём построены `useInspect`, `useInspectHistory`, `<InspectorView>`, мост Redux DevTools, мост BroadcastChannel и инструмент replay. Эта страница покрывает содержимое снимка, два React-хука, кольцевой буфер и то, как не тащить инспектор в продакшен-бандл.
+
+## Что внутри снимка
+
+Каждый запуск триггера производит один `TriggerInspectSnapshot`. Форма стабильна и дружелюбна к JSON — снимок можно безопасно отправлять через мост `postMessage` или сохранять на диск:
+
+```ts
+type TriggerInspectSnapshot = {
+  readonly triggerId: string;
+  readonly runId: string;
+  readonly eventName: string;
+  readonly status: 'fired' | 'skipped' | 'errored' | 'aborted';
+  readonly reason?: string;                   // e.g. 'missing-required: settings'
+  readonly durationMs: number;
+  readonly executedActions: readonly string[]; // action names called by the handler
+  readonly snapshotKeys: readonly string[];   // condition names visible at fire-time
+};
+```
+
+Четыре статуса взаимно исключающие:
+
+| Статус     | Когда рантайм записывает |
+|------------|------|
+| `fired`    | Обработчик отработал до конца (sync) или его промис зарезолвился (async). |
+| `skipped`  | `required`-условие не зарегистрировано, триггер выключен или middleware отменил срабатывание. `reason` уточняет, что именно. |
+| `errored`  | Обработчик или одно из его действий бросило исключение. |
+| `aborted`  | При `take-latest` более новый запуск вытеснил этот. |
+
+`durationMs` — это wall-time от момента, когда диспатч выбрал триггер, до возврата обработчика. `executedActions` перечисляет имена действий, которые реально были вызваны, — удобно для проверки в тестах, что debounce действительно подавил второй вызов.
+
+## Кольцевой буфер
+
+В каждом рантайме снимки попадают в **кольцевой буфер** фиксированного размера (по умолчанию 50). Когда буфер заполняется, самая старая запись перезаписывается. Структура данных не требует аллокаций на горячем пути: записи — O(1), а массив newest-first буфер материализует только когда кто-то вызывает `getInspectorBuffer()`.
+
+Размер настраивается при создании рантайма:
+
+```ts title="src/main.tsx"
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  inspectorBufferSize: 200, // default: 50
+});
+```
+
+Больший буфер не стоит ничего на срабатывание и пару KB памяти суммарно — увеличь его, если расследуешь флейк-сценарий и нужно больше истории.
+
+<Aside type="tip">
+Буфер общий для всех триггеров в рантайме, не пер-триггерный. Если у тебя 30 триггеров и буфер размером 50, болтливый триггер может вытеснить тихих. Возьми буфер побольше или фильтруй по `triggerId` в своей панели.
+</Aside>
+
+## `useInspect(trigger)` — последний запуск одного триггера
+
+`useInspect` возвращает самый свежий снимок одного триггера или `undefined`, если он ещё не запускался.
+
+```tsx title="src/dev/MessageTriggerStatus.tsx"
+import { useInspect } from '@triggery/react';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function MessageTriggerStatus() {
+  const last = useInspect(messageTrigger);
+  if (!last) return <p>no runs yet</p>;
+  return (
+    <p>
+      {last.eventName} — {last.status} in {last.durationMs.toFixed(1)} ms
+    </p>
+  );
+}
+```
+
+Хук не подписывается. Он читает `trigger.inspect()` на каждом рендере — этого достаточно для панели, перерисовывающейся по действиям пользователя, но мало для live-таила. Для обновлений по факту срабатываний используй `useInspectHistory`.
+
+## `useInspectHistory(limit)` — live-таил недавних запусков
+
+`useInspectHistory` подписывается на инспектор рантайма и возвращает последние `limit` снимков, newest-first. Компонент перерисовывается каждый раз, когда записан новый запуск.
+
+```tsx title="src/dev/RecentRuns.tsx"
+import { useInspectHistory } from '@triggery/react';
+
+export function RecentRuns() {
+  const history = useInspectHistory(50);
+  return (
+    <table>
+      <thead>
+        <tr><th>trigger</th><th>event</th><th>status</th><th>ms</th></tr>
+      </thead>
+      <tbody>
+        {history.map((s) => (
+          <tr key={s.runId} data-status={s.status}>
+            <td>{s.triggerId}</td>
+            <td>{s.eventName}</td>
+            <td>{s.status}{s.reason ? ` (${s.reason})` : ''}</td>
+            <td>{s.durationMs.toFixed(1)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+```
+
+Хук дешёвый — подписка это членство в одном `Set`; единственная React-работа происходит на реальном срабатывании. Аргумент `limit` обрезает видимый срез; сам буфер помнит до `inspectorBufferSize` записей.
+
+<Aside type="tip">
+Биндинги Solid и Vue экспонируют те же два хука: `useInspect` и `useInspectHistory`. Реализация разная (Solid использует сигнал, Vue — `ref`), но форма вызова и типы идентичны.
+</Aside>
+
+## Сборка дебаг-панели
+
+Три паттерна, по нарастанию вовлечённости.
+
+### Однострочный drop-in: `<InspectorView>`
+
+`@triggery/devtools-panel` поставляется с готовой стилизованной панелью, работающей из коробки. Размести её под провайдером рантайма в dev — и получишь рабочий инспектор:
+
+```tsx title="src/App.tsx"
+import { InspectorView } from '@triggery/devtools-panel';
+
+export function App() {
+  return (
+    <>
+      <YourRealApp />
+      {import.meta.env.DEV && <InspectorView limit={50} />}
+    </>
+  );
+}
+```
+
+Это inline-стили, без CSS-импортов, без внешних зависимостей кроме `@triggery/react`. Полезно для быстрого подключи-и-забудь.
+
+### Кастомная панель с фильтрами
+
+Когда хочется полноценного product-style devtool — поиск, фильтры по статусам, drill-down по триггерам — собирай его на `useInspectHistory` и куске локального состояния:
+
+```tsx title="src/dev/DebugPanel.tsx"
+import { useInspectHistory } from '@triggery/react';
+import { useMemo, useState } from 'react';
+
+type StatusFilter = 'all' | 'fired' | 'skipped' | 'errored' | 'aborted';
+
+export function DebugPanel() {
+  const all = useInspectHistory(200);
+  const [status, setStatus] = useState<StatusFilter>('all');
+  const [search, setSearch] = useState('');
+
+  const visible = useMemo(
+    () =>
+      all.filter(
+        (s) =>
+          (status === 'all' || s.status === status) &&
+          (!search ||
+            s.triggerId.includes(search) ||
+            s.eventName.includes(search)),
+      ),
+    [all, status, search],
+  );
+
+  return (
+    <aside className="debug-panel">
+      <header>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="filter…" />
+        <select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
+          <option value="all">all</option>
+          <option value="fired">fired</option>
+          <option value="skipped">skipped</option>
+          <option value="errored">errored</option>
+          <option value="aborted">aborted</option>
+        </select>
+        <span>{visible.length} / {all.length}</span>
+      </header>
+      <ul>
+        {visible.map((s) => (
+          <li key={s.runId} data-status={s.status}>
+            <strong>{s.triggerId}</strong> · {s.eventName} · {s.durationMs.toFixed(1)} ms
+            {s.reason && <em> — {s.reason}</em>}
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+```
+
+Этого хватает на 90% задач отладки триггеров. Оставшиеся 10% — сравнить два запуска, переиграть последовательность — для этого есть standalone replay-инструмент.
+
+### Replay и time-travel — `@triggery/devtools-replay`
+
+<Aside type="caution" title="Запланировано на V2">
+Standalone replay-UI (запись сессии, прокрутка вперёд и назад, повторное срабатывание любого запуска с отредактированным payload) живёт в `@triggery/devtools-replay` и поставляется с V2. В V1 снимки только для чтения — историю можно читать, но пока нельзя скормить её обратно в рантайм. Форма данных по проводу уже стабильна, так что сегодняшние записи будут проигрываться против V2-рантаймов без переинструментирования.
+</Aside>
+
+## Продакшен: инспектор автоотключается
+
+По умолчанию инспектор **включён в dev и выключен в prod**. Проверка смотрит на `process.env.NODE_ENV` (его Vite, Webpack, Rollup, esbuild и Next подменяют на этапе сборки). В production-сборке рантайм подменяет реальный инспектор на no-op:
+
+- `record()` — no-op — никаких аллокаций, никаких записей в `Map`, никакого fan-out по слушателям.
+- `subscribe()` возвращает токен, обратный вызов которого никогда не выполняется.
+- `getInspectorBuffer()` возвращает замороженный общий пустой массив.
+- `useInspect(trigger)` возвращает `undefined`.
+- `useInspectHistory()` возвращает пустой массив на каждом рендере.
+
+Горячий путь экономит ~30–40% пропускной способности на тривиальном диспатче. Рантайм отдаёт булеан для тулинга, которому нужно знать:
+
+```ts
+runtime.inspectorEnabled; // true в dev, false в prod (с дефолтами)
+```
+
+### Выборочное включение в продакшене
+
+Иногда инспектор нужен в проде — скрытый support-сценарий, флаг `?debug=1` для бета-когорты, breadcrumb для Sentry. Передай `inspector: true` в `createRuntime`:
+
+```ts title="src/main.tsx"
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  inspector: true, // always on, regardless of NODE_ENV
+});
+```
+
+Или передай объект, чтобы переопределить пер-окружение, — удобно, когда хочется, чтобы одна ветвь A/B-теста писала:
+
+```ts
+const runtime = createRuntime({
+  inspector: {
+    dev: true,  // unchanged from the auto default
+    prod: location.search.includes('debug=1'),
+  },
+});
+```
+
+Возможные значения:
+
+| Значение | Поведение |
+|-------|-----------|
+| `undefined` (по умолчанию) | DEV on, PROD off — автоматически. |
+| `true` | Всегда on. |
+| `false` | Всегда off. |
+| `{ dev?: boolean; prod?: boolean }` | Переопределение пер-окружение. Незаданные поля откатываются к авто-дефолту. |
+
+Когда инспектор off, подписанные на него devtools (`@triggery/devtools-redux`, `@triggery/devtools-bridge`, `useInspectHistory`) выдают однократный DEV-warning, чтобы не пришлось гадать, почему панель пуста.
+
+## Кастомные буферы через `createInspector`
+
+Дефолтный кольцевой буфер — это то, что нужно в 99% случаев. Для специализированного тулинга — мультирантаймового агрегатора, кастомного формата replay, рекордера сессий — можешь собрать свой и подключить его через middleware. Публичный фабричный API повторяет внутренний API рантайма:
+
+```ts
+import type { InspectorImpl, TriggerInspectSnapshot } from '@triggery/core';
+
+function createSentryBreadcrumbInspector(): InspectorImpl {
+  return {
+    record(snapshot) {
+      Sentry.addBreadcrumb({
+        category: 'triggery',
+        type: snapshot.status === 'errored' ? 'error' : 'info',
+        message: `${snapshot.triggerId} ${snapshot.eventName}`,
+        data: snapshot,
+      });
+    },
+    getBuffer() { return []; },
+    getLastForTrigger() { return undefined; },
+    subscribe() { return () => {}; },
+    clear() {},
+  };
+}
+```
+
+Подключи через middleware, чьи `onActionEnd` / `onSkip` / `onError` вызывают твой кастомный `record`. Встроенный инспектор остаётся активным для `useInspectHistory`; твой добавляет ещё один побочный канал. См. страницу [Middleware](/ru/guide/advanced/middleware/) — там полный жизненный цикл.
+
+## Хорошо сочетается с
+
+- **`@triggery/devtools-panel`** — `<InspectorView>`, `<TriggerSnapshotView>` для drop-in UI.
+- **`@triggery/devtools-redux`** — отображает запуски Triggery в Redux DevTools (они выглядят как диспатченные actions).
+- **`@triggery/devtools-bridge`** — postMessage-мост в отдельное окно; полезно для отладки SSR и iframe.
+
+Все три подписываются на один и тот же инспектор. Подключай сколько хочешь — буфер делает fan-out каждому слушателю.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Middleware"
+    description="Подключайся к onFire / onSkip / onActionEnd / onError — событиям, которые слушает сам инспектор."
+    href="/ru/guide/advanced/middleware/"
+  />
+  <LinkCard
+    title="Автообнаружение"
+    description="Используй @triggery/vite, чтобы каждый *.trigger.ts регистрировался сам — история инспектора переживает HMR."
+    href="/ru/guide/advanced/auto-discovery/"
+  />
+  <LinkCard
+    title="@triggery/devtools-panel"
+    description="Готовые стилизованные компоненты InspectorView / TriggerSnapshotView."
+    href="/ru/packages/devtools-panel/"
+  />
+  <LinkCard
+    title="Каскады"
+    description="parentRunId, parentTriggerId — как инспектор позволяет идти по цепочке событий."
+    href="/ru/guide/architecture/cascade/"
+  />
+</CardGrid>

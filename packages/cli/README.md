@@ -48,6 +48,10 @@ const nodes = buildTriggerGraph({ cwd: process.cwd() });
 console.log(renderGraph(nodes, 'md'));
 ```
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/cli/](https://triggeryjs.github.io/packages/cli/).
+
 ## Related packages
 
 - [`@triggery/eslint-plugin`](https://www.npmjs.com/package/@triggery/eslint-plugin) — Lint rules invoked by `triggery lint`.

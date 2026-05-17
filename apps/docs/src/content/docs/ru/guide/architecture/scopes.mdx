@@ -1,0 +1,293 @@
+---
+title: "Области видимости"
+description: "Запускай ту же триггер-логику в нескольких изолированных панелях, чтобы условия и действия не топтали друг друга."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Скоуп — это строка-id, которую ты пришпиливаешь к части дерева компонентов. Внутри этого поддерева условия и действия регистрируются в приватный бакет. Триггер, объявленный с тем же `scope`, видит только этот бакет — он не видит регистраций, сделанных где-то ещё, и другие триггеры не видят регистраций внутри.
+
+Вот и всё. Скоупы — самый маленький инструмент, который Triggery даёт для "мне нужно два экземпляра одного сценария без взаимного топтания".
+
+## Когда тянешься к скоупу
+
+Классический кейс: ты рендеришь ту же фичу **N раз** параллельно, и у каждого экземпляра — своё состояние. Три чат-панели в productivity-приложении. Пять воркспейс-табов в дизайнер-туле. Два модальных стека один над другим. С одним рантаймом и без скоупа каждое условие, зарегистрированное чат-панелью, видно каждому chat-notification-триггеру — включая экземпляр триггера, обрабатывающий сообщения другой панели. Ты в итоге запускаешь не тот тост на не той вкладке.
+
+```tsx title="Неправильная форма — один скоуп, четыре панели, все условия коллидят"
+<App>
+  <ChatPanel channelId="general" />     {/* регистрирует useCondition('activeChannelId', …) */}
+  <ChatPanel channelId="random" />      {/* то же условие, last-mount-wins, только одно выживет */}
+  <ChatPanel channelId="hiring" />
+  <NotificationLayer />                 {/* видит одно из трёх, не понять какое */}
+</App>
+```
+
+```tsx title="Правильная форма — один скоуп на панель, без кросс-опыления"
+<App>
+  <TriggerScope id="panel:general">
+    <ChatPanel channelId="general" />
+  </TriggerScope>
+  <TriggerScope id="panel:random">
+    <ChatPanel channelId="random" />
+  </TriggerScope>
+  <TriggerScope id="panel:hiring">
+    <ChatPanel channelId="hiring" />
+  </TriggerScope>
+</App>
+```
+
+Каждый `<ChatPanel>` регистрирует свои условия в своём скоупе, а триггер уведомлений внутри той же панели видит только её представление мира.
+
+## Две половины контракта
+
+Скоуп работает, только когда **обе стороны** opt-in:
+
+1. Триггер объявляет `scope: <id>` в конфиге `createTrigger`.
+2. Компоненты, монтирующие условия, действия и (опционально) продьюсер события, живут под `<TriggerScope id={<id>}>`.
+
+```ts title="src/triggers/panel-notification.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const panelNotificationTrigger = createTrigger<{
+  events:     { 'panel:new-message': { author: string; text: string; channelId: string } };
+  conditions: { activeChannelId: string | null; settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'panel-notification',
+  scope: 'chat-panel',                  // ← половина один: объяви скоуп
+  events: ['panel:new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (!check.is('settings', s => s.notifications)) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+```tsx title="src/features/ChatPanel.tsx"
+import { useAction, useCondition, useEvent, TriggerScope } from '@triggery/react';
+import { panelNotificationTrigger } from '../triggers/panel-notification.trigger';
+
+function ChatPanelInner({ channelId }: { channelId: string }) {
+  useCondition(panelNotificationTrigger, 'activeChannelId', () => channelId, [channelId]);
+  useCondition(panelNotificationTrigger, 'settings', () => ({ notifications: true }), []);
+
+  useAction(panelNotificationTrigger, 'showToast', payload =>
+    toast.success(`[${channelId}] ${payload.title}`, { description: payload.body }),
+  );
+
+  const fire = useEvent(panelNotificationTrigger, 'panel:new-message');
+  return <button onClick={() => fire({ author: 'a', text: 'hi', channelId: 'other' })}>poke</button>;
+}
+
+// ← половина два: оберни места использования в id скоупа, совпадающее с `scope` триггера.
+export function ChatPanel({ id, channelId }: { id: string; channelId: string }) {
+  return (
+    <TriggerScope id="chat-panel">
+      <ChatPanelInner channelId={channelId} />
+    </TriggerScope>
+  );
+}
+```
+
+<Aside type="tip">
+Id скоупа — свободная строка, но конвенция сэкономит споры позже: называй по **группе триггеров**, а не по экземпляру фичи (`chat-panel`, а не `chat-panel-general`). Id скоупа парится с полем `scope` триггера; *инстанс*-идентичность — это любые данные, которые ты кладёшь в условия внутри.
+</Aside>
+
+## Правила видимости
+
+Матчинг строгий, специально.
+
+| `scope` триггера | Скоуп регистрации | Видно? |
+|---|---|---|
+| `'chat'` | `'chat'` | да |
+| `'chat'` | `'panel:general'` | нет |
+| `'chat'` | глобально (без обёртки `<TriggerScope>`) | нет |
+| (без `scope`) | `'chat'` | нет |
+| (без `scope`) | глобально (без обёртки `<TriggerScope>`) | да |
+
+Триггер без `scope` — это **глобальный** триггер. Глобальные триггеры видят только глобальные регистрации. Скоупированные триггеры видят только регистрации с совпадающим скоупом. Никакого неявного fall-through из скоупа в глобал, никакого неявного broadcast из глобала в скоупы — обе половины явно opt-in.
+
+В DEV scope-мисматчи репортятся одноразовым варном на регистрацию, чтобы проблема проводки не падала молча:
+
+```text
+[triggery] registerCondition: scope mismatch — trigger "panel-notification" has scope "chat-panel"
+but the registration came from scope "(global)". The registration is ignored.
+```
+
+Если ты это видишь — одна из двух половин пропала. Самый частый вариант — "я добавил `scope:` в триггер, но забыл обернуть место использования", или наоборот.
+
+## Стэкинг и вложенность
+
+`<TriggerScope>` можно вкладывать. **Внутренний** скоуп побеждает — композиции нет. С точки зрения реестра в точке, где запускается `useCondition` / `useAction`, активен только один id скоупа.
+
+```tsx
+<TriggerScope id="outer">
+  <TriggerScope id="inner">
+    {/* useCondition здесь регистрирует в скоупе "inner" — "outer" невидим */}
+  </TriggerScope>
+</TriggerScope>
+```
+
+Это намеренно. Композиция ("регистрация в `inner` видна и триггеру, скоупированному в `outer`") пробовалась на этапе дизайна и быстро перестала быть полезной — в момент, когда два родительских скоупа активны одновременно, тебе нужно правило приоритета, а наименее удивляющее правило было *не делать этого*. Триггеры и скоупы — 1:1 строки.
+
+Если по-настоящему нужны пересекающиеся скоупы — дай каждому триггеру свой. Два триггера могут делить реализацию обработчика:
+
+```ts title="Один обработчик, два скоупа"
+import { createTrigger } from '@triggery/core';
+
+function makeNotificationTrigger(scope: 'chat' | 'doc-comments') {
+  return createTrigger<Schema>({
+    id: `notification-${scope}`,
+    scope,
+    events: ['new-item'],
+    required: ['settings'],
+    handler: notificationHandler,            // общий
+  });
+}
+
+export const chatNotification         = makeNotificationTrigger('chat');
+export const commentsNotification     = makeNotificationTrigger('doc-comments');
+```
+
+`max-handler-size` и остальное из ESLint-плагина по-прежнему применяется к общему обработчику — они видят тело функции, а не место вызова.
+
+## Disposal
+
+Когда `<TriggerScope>` размонтируется, каждый `useCondition` / `useAction` внутри тоже размонтируется — стандартный путь React effect cleanup. Регистрации удаляются из стеков рантайма. Если триггер бежал с in-flight async-обработчиком, **abort signal не флипается** только анмаунтом скоупа — только supersession в `take-latest` или `runtime.dispose()`. Defensive-обработчики проверяют `signal.aborted` после каждого `await` и выходят рано. См. [Concurrency](/ru/guide/async/concurrency/) для полного разбора.
+
+```tsx title="Скоуп, который приходит и уходит"
+function PanelHost({ open, id, channelId }: { open: boolean; id: string; channelId: string }) {
+  if (!open) return null;
+  return <ChatPanel id={id} channelId={channelId} />;     // оборачивает внутренности в <TriggerScope>
+}
+
+// закрытие панели размонтирует <TriggerScope>, что размонтирует каждый useCondition/useAction внутри.
+// Сам триггер остаётся в рантайме — пустеет только его бакет регистраций для этого скоупа.
+// Новая панель может смонтироваться и снова заполнить бакет.
+```
+
+Сам объект триггера не скоупируется в `<TriggerScope>`. Триггеры живут на время жизни рантайма (или до `trigger.dispose()`). С анмаунтом скоупа уходит бакет условий и действий, привязанных к этому id скоупа.
+
+## Скоупы vs. несколько рантаймов
+
+`<TriggerRuntimeProvider>` — это более тяжёлый брат `<TriggerScope>`. Оба создают изоляцию; они живут на разных слоях.
+
+| Concern | `<TriggerScope>` | Отдельный `createRuntime()` |
+|---|---|---|
+| Реестр триггеров | общий (одна карта на рантайм) | отдельные карты |
+| Кольцевой буфер инспектора | общий | отдельный, конфигурируемый per-runtime |
+| Стек middleware | общий (один на рантайм) | независимые стеки |
+| `maxCascadeDepth`, планировщик | общий | per-runtime override |
+| Стоимость проводки | один prop на место использования | один провайдер, одна корневая проводка |
+| Use case | параллельные экземпляры фичи, панели, табы | тесты, мультитенант, sandbox'ы микрофронтендов |
+
+Правило большого пальца: тянись к скоупу, когда **сценарии** хотят быть сиблингами. Тянись к рантайму, когда **правила движка** хотят быть сиблингами (другой middleware, другая ёмкость инспектора, другая глубина каскадов, другой дефолтный schedule).
+
+Тест обычно хочет свежий рантайм — см. [Модульные тесты](/ru/guide/testing/unit-testing/) — потому что хочет, чтобы буфер инспектора стартовал пустым, и стек middleware был собственным для теста.
+
+## Разбор примера: уведомления в мульти-панельном приложении
+
+Ниже — полная проводка для сценария чат-панелей из начала страницы. У каждой панели свой id скоупа, у каждой — свой активный канал, и три панели никогда не видят событий друг друга.
+
+```ts title="src/triggers/panel-notification.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { notifications: boolean; sound: boolean };
+type Message  = { author: string; text: string; channelId: string };
+
+export const panelNotificationTrigger = createTrigger<{
+  events:     { 'panel:new-message': Message };
+  conditions: { activeChannelId: string | null; settings: Settings };
+  actions:    { showToast: { title: string; body: string }; playSound: 'beep' };
+}>({
+  id: 'panel-notification',
+  scope: 'chat-panel',
+  events: ['panel:new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+    if (check.is('settings', s => s.sound)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+  },
+});
+```
+
+```tsx title="src/features/chat/ChatPanel.tsx"
+import { TriggerScope, useAction, useCondition, useEvent } from '@triggery/react';
+import { toast } from 'sonner';
+import { panelNotificationTrigger } from '../../triggers/panel-notification.trigger';
+
+function ChatPanelInner({ channelId, settings }: { channelId: string; settings: Settings }) {
+  useCondition(panelNotificationTrigger, 'activeChannelId', () => channelId, [channelId]);
+  useCondition(panelNotificationTrigger, 'settings', () => settings, [settings]);
+
+  useAction(panelNotificationTrigger, 'showToast', payload =>
+    toast.success(payload.title, { description: payload.body }),
+  );
+  useAction(panelNotificationTrigger, 'playSound', () => {
+    new Audio('/beep.mp3').play().catch(() => {});
+  });
+
+  const fire = useEvent(panelNotificationTrigger, 'panel:new-message');
+  // …подписываемся на сокет панели и зовём `fire(...)` на входящие сообщения.
+  return null;
+}
+
+export function ChatPanel(props: { id: string; channelId: string; settings: Settings }) {
+  return (
+    <TriggerScope id="chat-panel">
+      <ChatPanelInner channelId={props.channelId} settings={props.settings} />
+    </TriggerScope>
+  );
+}
+```
+
+```tsx title="src/App.tsx"
+<TriggerRuntimeProvider runtime={runtime}>
+  <ChatPanel id="general" channelId="general" settings={settingsGeneral} />
+  <ChatPanel id="random"  channelId="random"  settings={settingsRandom} />
+  <ChatPanel id="hiring"  channelId="hiring"  settings={settingsHiring} />
+</TriggerRuntimeProvider>
+```
+
+Три панели, три скоупа — каждый скоуп со своим бакетом условий/действий. Каждый экземпляр `<ChatPanel>` получает свои тосты; смена активного канала в одной панели не глушит уведомления в других.
+
+Если в следующем квартале продуктовая команда захочет четвёртую панель с **отдельным middleware и инспектором** (скажем, тщательно трассируемую "support agent" панель, где хочется логать каждый вызов), повысь эту панель до собственного `createRuntime()` — три других сохранят свои скоупы.
+
+## Ограничения и подводные камни
+
+- **Один id скоупа за раз на поддерево.** Вложенные скоупы заменяют, мерджа нет.
+- **Кросс-скоупные вызовы — top-level.** Скоупированный триггер, зовущий `runtime.fire('x')`, не пробрасывает скоуп через новое событие — каскад-ребёнок матчится по *своему* полю `scope` рантаймом. Если хочешь, чтобы один скоуп говорил с другим — поле `scope` принимающего триггера определяет видимость.
+- **DEV-варн — per-`(label, triggerId, scope, name)`** — после того как ты его увидел для одной коллизии, та же проводка не будет спамить консоль на re-render'ах.
+- **SSR**: id скоупов — стабильные строки, дрейфа гидрации нет. См. [Server-side rendering](/ru/guide/ssr/server-side-rendering/), если скоупы выводятся из request data.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Владение"
+    description="Когда два провайдера регистрируют то же условие или действие — что происходит, почему, и как тестировать."
+    href="/ru/guide/architecture/ownership/"
+  />
+  <LinkCard
+    title="Борьба со спагетти"
+    description="Лакмус-тесты, когда триггер отрабатывает свой вес, и когда разбить жирный."
+    href="/ru/guide/architecture/anti-spaghetti/"
+  />
+  <LinkCard
+    title="Каскады"
+    description="Когда действие одного триггера запускает ещё одно событие — лимиты глубины и детект циклов."
+    href="/ru/guide/architecture/cascade/"
+  />
+  <LinkCard
+    title="Рантайм"
+    description="createRuntime, провайдеры, несколько рантаймов для тестов и микрофронтендов."
+    href="/ru/guide/essentials/runtime/"
+  />
+</CardGrid>

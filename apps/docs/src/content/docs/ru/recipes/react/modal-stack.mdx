@@ -1,0 +1,248 @@
+---
+title: "Стек модалок"
+description: "Открывай, закрывай и каскадируй модалки между несвязанными фичами через события — без общего modal-контекста, без проброса пропсов, без войны z-index'ов."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+В любом нетривиальном приложении со временем заводится модалочный хаос: «Подтвердить удаление» открывает «Разрешить конфликт» открывает «Войти повторно» — всё из разных фич, и ни одна не хочет знать про остальные. Triggery превращает это в одну строчку на фичу: запускай `modal:open`, запускай `modal:close`, слушай, если интересно. Отдельные стеки на маршрут — через `<TriggerScope>`.
+
+<StackBlitzButton path="examples/vite-react-modal-stack" label="Открыть в StackBlitz" />
+
+## Сценарий
+
+1. **Любая фича может запросить модалку**, запуская `modal:open` с payload'ом.
+2. **Один modal-хост рендерит стек** — верхушка стека сверху по z-index.
+3. **Закрытие одной модалки может открыть другую** (каскад): например, «Удалить аккаунт» закрывает себя и открывает «Точно-точно?».
+4. **У маршрутов есть свои стеки** через `<TriggerScope id="dialog/account">` — переключение экранов не оставляет висеть модалку из другой фичи.
+
+## Структура файлов
+
+<FileTree>
+- src/
+  - triggers/
+    - **modal.trigger.ts** мутации стека
+  - features/
+    - modal/
+      - ModalHost.tsx реактор: рендерит стек
+      - DeleteAccountModal.tsx продьюсер каскада
+      - ConfirmModal.tsx общий UI для confirm
+    - account/
+      - AccountSettings.tsx продьюсер: открывает первую модалку
+  - stores/
+    - modal-stack.ts простой стор
+</FileTree>
+
+## 1. Триггер
+
+```ts title="src/triggers/modal.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type ModalDescriptor =
+  | { kind: 'confirm';        id: string; title: string; body: string; okEvent: string }
+  | { kind: 'delete-account'; id: string }
+  | { kind: 'reauth';         id: string; reason: string };
+
+export const modalTrigger = createTrigger<{
+  events: {
+    'modal:open':       ModalDescriptor;
+    'modal:close':      string;       // id of the modal to close
+    'modal:close-all':  void;
+  };
+  actions: {
+    push:    ModalDescriptor;
+    remove:  string;
+    clear:   void;
+  };
+}>({
+  id: 'modal-stack',
+  events: ['modal:open', 'modal:close', 'modal:close-all'],
+  handler({ event, actions }) {
+    if (event.name === 'modal:open')      actions.push?.(event.payload);
+    else if (event.name === 'modal:close') actions.remove?.(event.payload);
+    else                                   actions.clear?.();
+  },
+});
+```
+
+Это весь координационный слой для сколь угодно сложной модалочной системы. Любая фича в приложении общается со стеком через эти три события.
+
+## 2. Стор и хост
+
+Крошечный стор хранит упорядоченный стек. Хост рендерит верхушку (или все элементы, если хочешь оверлеи).
+
+```ts title="src/stores/modal-stack.ts"
+import { create } from 'zustand';
+import type { ModalDescriptor } from '../triggers/modal.trigger';
+
+type State = {
+  stack: readonly ModalDescriptor[];
+  push:   (descriptor: ModalDescriptor) => void;
+  remove: (id: string) => void;
+  clear:  () => void;
+};
+
+export const useModalStack = create<State>(set => ({
+  stack: [],
+  push:   d  => set(s => ({ stack: [...s.stack, d] })),
+  remove: id => set(s => ({ stack: s.stack.filter(m => m.id !== id) })),
+  clear:  () => set({ stack: [] }),
+}));
+```
+
+```tsx title="src/features/modal/ModalHost.tsx"
+import { useAction } from '@triggery/react';
+import { modalTrigger } from '../../triggers/modal.trigger';
+import { useModalStack } from '../../stores/modal-stack';
+import { ConfirmModal } from './ConfirmModal';
+import { DeleteAccountModal } from './DeleteAccountModal';
+import { ReauthModal } from './ReauthModal';
+
+export function ModalHost() {
+  const stack = useModalStack(s => s.stack);
+  const push  = useModalStack(s => s.push);
+  const remove = useModalStack(s => s.remove);
+  const clear  = useModalStack(s => s.clear);
+
+  useAction(modalTrigger, 'push',   push);
+  useAction(modalTrigger, 'remove', remove);
+  useAction(modalTrigger, 'clear',  clear);
+
+  return (
+    <>
+      {stack.map((m, i) => {
+        const onTop = i === stack.length - 1;
+        switch (m.kind) {
+          case 'confirm':         return <ConfirmModal        key={m.id} {...m} active={onTop} />;
+          case 'delete-account':  return <DeleteAccountModal  key={m.id} {...m} active={onTop} />;
+          case 'reauth':          return <ReauthModal         key={m.id} {...m} active={onTop} />;
+        }
+      })}
+    </>
+  );
+}
+```
+
+Хост — *единственный* компонент, который импортирует `useModalStack`. Все фичи общаются со стеком через события.
+
+## 3. Продьюсеры
+
+Любой компонент может запросить модалку. Никто из них не знает о хосте, сторе или стеке.
+
+```tsx title="src/features/account/AccountSettings.tsx"
+import { useEvent } from '@triggery/react';
+import { modalTrigger } from '../../triggers/modal.trigger';
+
+export function AccountSettings() {
+  const open = useEvent(modalTrigger, 'modal:open');
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        open({ kind: 'delete-account', id: 'delete-account-1' })
+      }
+    >
+      Delete account…
+    </button>
+  );
+}
+```
+
+## 4. Каскадирующие модалки
+
+Когда «Удалить аккаунт» подтверждено, модалка должна закрыть себя и открыть модалку повторного входа. Первая модалка запускает *два* события; триггер маппит каждое в нужную мутацию стека.
+
+```tsx title="src/features/modal/DeleteAccountModal.tsx"
+import { useEvent } from '@triggery/react';
+import { modalTrigger } from '../../triggers/modal.trigger';
+
+export function DeleteAccountModal({ id, active }: { id: string; active: boolean }) {
+  const open  = useEvent(modalTrigger, 'modal:open');
+  const close = useEvent(modalTrigger, 'modal:close');
+
+  return (
+    <dialog open={active}>
+      <h2>Delete account</h2>
+      <p>This cannot be undone. We'll ask you to re-enter your password to be sure.</p>
+      <menu>
+        <button type="button" onClick={() => close(id)}>Cancel</button>
+        <button
+          type="button"
+          onClick={() => {
+            close(id);
+            open({
+              kind: 'reauth',
+              id: 'reauth-1',
+              reason: 'Confirm your password to delete the account.',
+            });
+          }}
+        >
+          Continue
+        </button>
+      </menu>
+    </dialog>
+  );
+}
+```
+
+Каскад — это два вызова `fire`. Триггер прогоняется один раз на событие, стор обновляется дважды, хост перерендеривается с новой верхушкой. Никаких цепочек `onConfirm={...}` через пропсы.
+
+<Aside type="tip">
+Каскады ограничены — рантайм по умолчанию ставит глубину каскада не больше трёх (настраивается через `createRuntime({ maxCascadeDepth })`). Если случайно сделаешь модалку, которая переоткрывает сама себя, в dev-режиме получишь предупреждение вместо переполнения стека.
+</Aside>
+
+## 5. Отдельные стеки на маршрут через `<TriggerScope>`
+
+Если нескольким маршрутам нужен *свой* стек модалок — например «у настроек свои диалоги, у дашборда свои, при смене маршрута диалоги предыдущего экрана должны исчезнуть» — объяви триггер со `scope` и оберни каждый маршрут в `<TriggerScope>` с соответствующим id.
+
+```ts title="src/triggers/modal.trigger.ts (вариант со скоупом)"
+export const modalTrigger = createTrigger<{ /* …та же схема… */ }>({
+  id: 'modal-stack',
+  scope: 'dialog',           // 1. declare the trigger as scoped
+  events: ['modal:open', 'modal:close', 'modal:close-all'],
+  handler({ event, actions }) { /* …same body… */ },
+});
+```
+
+```tsx title="src/App.tsx"
+import { TriggerScope } from '@triggery/react';
+import { ModalHost } from './features/modal/ModalHost';
+import { AccountSettings } from './features/account/AccountSettings';
+import { Dashboard } from './features/dashboard/Dashboard';
+
+export function App({ route }: { route: 'account' | 'dashboard' }) {
+  return (
+    <TriggerScope id="dialog">
+      {/* Both routes share the same scope id, but only ONE is rendered at a time —
+          unmounting the route's TriggerScope subtree also unregisters its modal host,
+          which atomically drops the stack. */}
+      {route === 'account'   && <AccountSettings />}
+      {route === 'dashboard' && <Dashboard />}
+      <ModalHost />
+    </TriggerScope>
+  );
+}
+```
+
+Для *параллельных* стеков по маршрутам (например, модалки внутри многопанельного layout) задай каждой панели уникальный scope id (`dialog/account`, `dialog/dashboard`) и сделай отдельный триггер на каждый скоуп — регистрации и триггеры видят только свой бакет.
+
+## Что это даёт
+
+| | Раньше (prop drilling или модальный контекст) | С Triggery |
+|---|---|---|
+| **Добавить новый вид модалки** | Обновить контекст-провайдер, всех потребителей и все рендереры | Один `case` в `switch` хоста |
+| **Открыть модалку из глубоко вложенного компонента** | Пробрасывать open-обработчик или хватать глобальный сеттер | `useEvent(modalTrigger, 'modal:open')` |
+| **Каскад «confirm → reauth»** | Самописная разводка коллбэков, ref на менеджер | Два вызова `fire` |
+| **Изоляция по маршрутам** | Ручная хореография unmount'ов | Поддерево `<TriggerScope>` |
+| **Тесты на правила стека** | Рендерить React, гонять дерево | Чистый unit-тест на триггер |
+
+## Варианты и см. также
+
+<CardGrid>
+  <LinkCard title="Скоупы" href="/ru/guide/architecture/scopes/" description="Как TriggerScope разбивает один рантайм на части." />
+  <LinkCard title="Каскад" href="/ru/guide/architecture/cascade/" description="Как ограничиваются цепочки action → fireEvent → action." />
+</CardGrid>

@@ -1,0 +1,175 @@
+/* Triggery brand layer — sits on top of starlight-theme-nova and overrides
+ * just the colour scale, accent and a few typographic touches. The palette
+ * is taken from the logo:
+ *
+ *   #e6dffa  light lavender    — light surfaces, hover halo
+ *   #b294c4  muted purple      — secondary text on dark, dim accents
+ *   #af37c5  magenta-purple    — PRIMARY accent (CTA, links, focus ring)
+ *   #35aae7  electric cyan     — SECONDARY accent (code highlights, badges)
+ *   #3645b8  royal blue        — info/note tone
+ *   #450452  deep purple       — emphasised text on light
+ *   #261b6f  midnight purple   — dark surface raised
+ *   #120d45  deep navy-purple  — dark surface base
+ *   #042c52  deep navy         — dark surface tint
+ *   #06051e  near-black indigo — deepest background
+ */
+
+/* ─── Light theme (default Starlight light) ─────────────────────────────── */
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e6dffa; /* light lavender background tint */
+  --sl-color-accent: #af37c5; /* primary CTA, links */
+  --sl-color-accent-high: #450452; /* hovered link / emphasised */
+
+  --sl-color-white: #06051e;
+  --sl-color-gray-1: #120d45;
+  --sl-color-gray-2: #261b6f;
+  --sl-color-gray-3: #3645b8;
+  --sl-color-gray-4: #b294c4;
+  --sl-color-gray-5: #d6cae8;
+  --sl-color-gray-6: #ede4f7;
+  --sl-color-gray-7: #f7f1fc;
+  --sl-color-black: #ffffff; /* yes, Starlight inverts this token */
+
+  --sl-color-bg: #ffffff;
+  --sl-color-bg-nav: #f7f1fc;
+  --sl-color-bg-sidebar: #f9f3fd;
+  --sl-color-bg-inline-code: #ede4f7;
+  --sl-color-bg-accent: #e6dffa;
+  --sl-color-text: #06051e;
+  --sl-color-text-accent: #450452;
+}
+
+/* ─── Dark theme (default) ──────────────────────────────────────────────── */
+
+:root,
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #261b6f; /* dim accent fill */
+  --sl-color-accent: #af37c5; /* primary CTA, links */
+  --sl-color-accent-high: #e6dffa; /* hover / focus highlight */
+
+  --sl-color-white: #f4eefb;
+  --sl-color-gray-1: #e6dffa;
+  --sl-color-gray-2: #b294c4;
+  --sl-color-gray-3: #8c7aa8;
+  --sl-color-gray-4: #5b4d8e;
+  --sl-color-gray-5: #261b6f;
+  --sl-color-gray-6: #1a124f;
+  --sl-color-gray-7: #110a3a;
+  --sl-color-black: #06051e;
+
+  --sl-color-bg: #06051e;
+  --sl-color-bg-nav: #0a0828;
+  --sl-color-bg-sidebar: #08062a;
+  --sl-color-bg-inline-code: #120d45;
+  --sl-color-bg-accent: #1f1656;
+  --sl-color-text: #f4eefb;
+  --sl-color-text-accent: #e6dffa;
+}
+
+/* ─── Typography polish ─────────────────────────────────────────────────── */
+
+.hero h1,
+[data-page-frame] h1 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #af37c5 0%, #35aae7 60%, #3645b8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Inline `code` — Triggery accent, gentle border so it doesn't get lost. */
+:not(pre) > code {
+  background: color-mix(in srgb, var(--sl-color-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sl-color-accent) 30%, transparent);
+  padding: 0.05em 0.4em;
+  border-radius: 0.3em;
+  font-size: 0.92em;
+}
+
+/* Tighten table line-height — API tables get dense. */
+table {
+  line-height: 1.45;
+}
+
+/* Hide stale "made with starlight" footer — we want our own footer copy. */
+footer[data-has-sidebar] .sl-flex {
+  display: none;
+}
+
+/* Splash hero CTA strip — buttons live in the MDX body (instead of the
+ * frontmatter `actions:` field, which doesn't respect Astro's `base`). */
+.hero-cta {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 1.25rem 0 2rem;
+}
+
+/* Code block frame — pull Triggery cyan as the language tab tint. */
+.expressive-code .frame {
+  --ec-frm-edTabBarBg: color-mix(in srgb, #35aae7 8%, var(--sl-color-bg-nav));
+  --ec-frm-edActTabIndBtmCol: #35aae7;
+}
+
+/* Aside (admonition) tints — closer to brand than Starlight defaults. */
+:root[data-theme="dark"] .starlight-aside--tip {
+  --sl-color-asides-text-accent: #35aae7;
+  --sl-color-asides-border: #35aae7;
+}
+:root[data-theme="dark"] .starlight-aside--note {
+  --sl-color-asides-text-accent: #3645b8;
+  --sl-color-asides-border: #3645b8;
+}
+:root[data-theme="dark"] .starlight-aside--caution {
+  --sl-color-asides-text-accent: #af37c5;
+  --sl-color-asides-border: #af37c5;
+}
+:root[data-theme="dark"] .starlight-aside--danger {
+  --sl-color-asides-text-accent: #ff5577;
+  --sl-color-asides-border: #ff5577;
+}
+
+/* Selection — brand magenta tint. */
+::selection {
+  background: color-mix(in srgb, #af37c5 35%, transparent);
+  color: inherit;
+}
+
+/* Nova wraps every Shiki `<pre>` in `.nova-code-container` — both elements
+ * carry their own 1px border + border-radius (8px / 6px), so light borders
+ * land at offset corners and look like a double frame. Drop the inner one. */
+.nova-code-container > pre.astro-code,
+.nova-code-container pre.astro-code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Starlight/MDX renders every `<img>` as block-level for baseline hygiene.
+ * That stacks shields.io / bundlephobia / Codspeed badges onto separate lines.
+ * Force the small badge images back inline so a paragraph of badges renders
+ * as a single row. */
+.sl-markdown-content p img[src*="img.shields.io"],
+.sl-markdown-content p img[src*="bundlephobia.com"],
+.sl-markdown-content p img[src*="bundlejs.com"],
+.sl-markdown-content p img[src*="codspeed.io"],
+.sl-markdown-content p img[src*="codecov.io"],
+.sl-markdown-content p img[src*="badge.svg"] {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 0;
+}
+.sl-markdown-content p a:has(> img[src*="shields.io"]),
+.sl-markdown-content p a:has(> img[src*="bundlephobia"]),
+.sl-markdown-content p a:has(> img[src*="codspeed"]),
+.sl-markdown-content p a:has(> img[src*="codecov"]) {
+  display: inline-block;
+  margin-right: 0.25rem;
+}
+
+div.hero {
+  padding-block: 20px;
+}

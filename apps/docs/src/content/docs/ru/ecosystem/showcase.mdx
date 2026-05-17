@@ -1,0 +1,20 @@
+---
+title: "Витрина"
+description: "Проекты, отгружающие Triggery в продакшен. Добавь свой через PR."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery всё ещё pre-1.0, и публичная витрина пока пуста. Если ты отгрузил что-то с Triggery — пет-проект, фича внутри большого приложения, демо — будем рады показать это здесь.
+
+<Aside type="tip" title="Отправить свой проект">
+Открой PR через [`showcase-template.md`](https://github.com/triggeryjs/triggery/tree/main/.github/ISSUE_TEMPLATE) — название, однострочное описание, ссылка, опционально скриншот. Принимаем всё, что использует Triggery не тривиально (что-то посерьёзнее примера со счётчиком).
+</Aside>
+
+<CardGrid>
+  <LinkCard title="Отправить свой проект" description="Открой PR с названием, описанием и ссылкой." href="https://github.com/triggeryjs/triggery/issues/new?template=showcase.yml" />
+  <LinkCard title="Awesome Triggery" description="Статьи, доклады и туториалы." href="/ru/ecosystem/awesome/" />
+  <LinkCard title="Интеграции" description="Vite, ESLint, codemod, CLI, devtools." href="/ru/ecosystem/integrations/" />
+</CardGrid>

@@ -1,0 +1,148 @@
+---
+title: "flushMicrotasks"
+description: "Слить ожидающие микротаски, чтобы async-обработчики отработали до следующего assert'а."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Метод на [`TestRuntime`](/ru/api/testing/create-test-runtime/). Дважды `await`-ит, чтобы слить очередь микротасков — сначала ту, что ты ожидаешь, потом любые follow-up микротаски, заведённые уже отработавшими обработчиками.
+
+Используй после `rt.fire(...)`, когда `schedule` триггера — `'microtask'` (по умолчанию) и тесту нужно, чтобы обработчик завершился до следующего assert'а. `fireSync` этого **не** требует — он гоняет обработчики в стеке вызывающего.
+
+## Импорт
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+const rt = createTestRuntime();
+await rt.flushMicrotasks();
+```
+
+## Сигнатура
+
+```ts
+flushMicrotasks(): Promise<void>;
+```
+
+## Параметры
+
+Нет.
+
+## Возвращает
+
+`Promise<void>`, резолвящийся после двух тиков микротасков.
+
+## Примеры
+
+### Async-fire, потом assert
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('completes a microtask-scheduled handler', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { tick: void };
+    actions: { log: void };
+  }>(
+    { id: 'demo', events: ['tick'], handler({ actions }) { actions.log?.(); } },
+    rt,
+  );
+
+  const log = vi.fn();
+  rt.mockAction(t, 'log', log);
+
+  rt.fire('tick');
+  expect(log).not.toHaveBeenCalled(); // handler not run yet
+
+  await rt.flushMicrotasks();
+  expect(log).toHaveBeenCalledOnce();
+});
+```
+
+### Цепочка async-обработчика
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('awaits an async action chain', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { fetch: string };
+    actions: { setData: { value: string } };
+  }>(
+    {
+      id: 'demo',
+      events: ['fetch'],
+      async handler({ event, actions }) {
+        const value = await Promise.resolve(`got-${event.payload}`);
+        actions.setData?.({ value });
+      },
+    },
+    rt,
+  );
+
+  const setData = vi.fn();
+  rt.mockAction(t, 'setData', setData);
+
+  rt.fire('fetch', 'x');
+  await rt.flushMicrotasks();
+  expect(setData).toHaveBeenCalledWith({ value: 'got-x' });
+});
+```
+
+### Несколько fires, один flush
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('drains all queued runs together', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { tick: number };
+    actions: { log: number };
+  }>(
+    { id: 'demo', events: ['tick'], handler({ event, actions }) { actions.log?.(event.payload); } },
+    rt,
+  );
+
+  const log = vi.fn();
+  rt.mockAction(t, 'log', log);
+
+  rt.fire('tick', 1);
+  rt.fire('tick', 2);
+  rt.fire('tick', 3);
+
+  await rt.flushMicrotasks();
+  expect(log).toHaveBeenCalledTimes(3);
+});
+```
+
+## Замечания
+
+<Aside type="tip" title="fireSync это пропускает">
+Если твой триггер использует `schedule: 'sync'` — или тест использует `rt.fireSync(...)` — обработчик гоняется в стеке вызывающего, и flush не нужен. Тянись за `flushMicrotasks`, только когда диспатч идёт через микротаски (по умолчанию).
+</Aside>
+
+<Aside type="caution" title="Длинным async-цепочкам нужны таймеры">
+`flushMicrotasks` сливает только микротаски, не `setTimeout`. Если твой обработчик использует `actions.debounce(ms)` или любую таймерную обёртку действия, парься с [`createFakeScheduler`](/ru/api/testing/fake-scheduler/) и вызывай `advance(ms)`, чтобы крутить виртуальные часы.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTestRuntime" description="Рантайм, экспонирующий этот метод." href="/ru/api/testing/create-test-runtime/" />
+  <LinkCard title="createFakeScheduler" description="Виртуальные часы для таймерных обработчиков." href="/ru/api/testing/fake-scheduler/" />
+  <LinkCard title="createScheduler" description="Микротасковый планировщик, который сливается." href="/ru/api/core/create-scheduler/" />
+  <LinkCard title="Руководство по тестированию" description="Паттерны async-тестов." href="/ru/guide/testing/unit-testing/" />
+</CardGrid>

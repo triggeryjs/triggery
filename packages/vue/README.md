@@ -117,6 +117,10 @@ Register an action handler.
 
 All composables auto-clean via `onScopeDispose` — they work both inside component `setup()` and inside detached `effectScope()`s.
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/vue/](https://triggeryjs.github.io/packages/vue/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — the runtime this binding wraps.

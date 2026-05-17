@@ -1,0 +1,66 @@
+---
+title: Counter
+description: "The simplest possible Triggery recipe — one event, one action, one component each."
+sidebar:
+  order: 1
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+The "hello world" of Triggery. Two buttons fire an `increment`/`decrement` event; a counter component reacts via `useAction` and re-renders itself. Nothing more.
+
+<StackBlitzButton path="examples/vite-react-counter" label="Open in StackBlitz" />
+
+## The trigger
+
+```ts title="src/triggers/counter.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const counterTrigger = createTrigger<{
+  events:  { increment: void; decrement: void };
+  actions: { adjust: number };
+}>({
+  id: 'counter',
+  events: ['increment', 'decrement'],
+  handler({ event, actions }) {
+    actions.adjust?.(event.name === 'increment' ? 1 : -1);
+  },
+});
+```
+
+## The components
+
+```tsx title="src/Counter.tsx"
+import { useAction, useEvent } from '@triggery/react';
+import { useState } from 'react';
+import { counterTrigger } from './triggers/counter.trigger';
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+
+  const inc = useEvent(counterTrigger, 'increment');
+  const dec = useEvent(counterTrigger, 'decrement');
+
+  useAction(counterTrigger, 'adjust', delta => setCount(c => c + delta));
+
+  return (
+    <div>
+      <button onClick={() => dec()}>−</button>
+      <output>{count}</output>
+      <button onClick={() => inc()}>+</button>
+    </div>
+  );
+}
+```
+
+That's the whole thing. The producer and reactor happen to live in the same component, but they could be split — the wiring stays the same. See [Notification pipeline](/recipes/react/notification-pipeline/) for a scenario where they really must split.
+
+## Related
+
+<CardGrid>
+  <LinkCard title="Notification pipeline" description="The same shape, but with three reactors in three components." href="/recipes/react/notification-pipeline/" />
+  <LinkCard title="Same recipe — Solid" href="/recipes/solid/counter/" description="With Solid's createSignal." />
+  <LinkCard title="Same recipe — Vue" href="/recipes/vue/counter/" description="Composition API version." />
+  <LinkCard title="Anatomy of a trigger" href="/guide/essentials/trigger-anatomy/" description="The createTrigger config in full." />
+</CardGrid>

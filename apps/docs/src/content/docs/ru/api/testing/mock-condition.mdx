@@ -1,0 +1,162 @@
+---
+title: "mockCondition"
+description: "Подменить условие триггера в тестовом рантайме. Принимает значение или геттер."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Метод [`TestRuntime`](/ru/api/testing/create-test-runtime/), возвращаемого `createTestRuntime`. Регистрирует условие для триггера, принимая либо статическое значение, либо геттер без аргументов.
+
+`mockCondition` — тестовый аналог [`useCondition`](/ru/api/react/use-condition/): тот же механизм регистрации, без React.
+
+## Импорт
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+const rt = createTestRuntime();
+rt.mockCondition(/* ... */);
+```
+
+## Сигнатура
+
+```ts
+mockCondition<S extends TriggerSchema, K extends ConditionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  valueOrGetter: ConditionMap<S>[K] | (() => ConditionMap<S>[K]),
+): RegistrationToken;
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `trigger` | `Trigger<S>` | Триггер, чьё условие подменяешь. |
+| `name` | `K extends ConditionKey<S>` | Условие, объявленное в схеме триггера. |
+| `valueOrGetter` | `T \| (() => T)` | Либо статическое значение (захваченное замыканием), либо геттер без аргументов. |
+
+## Возвращает
+
+`RegistrationToken` со `{ unregister(): void }`. Вызови `unregister()`, чтобы сбросить подмена — полезно для смены условий по ходу теста.
+
+## Примеры
+
+### Статическое значение
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { ping: void };
+  conditions: { user: { id: string } | null };
+}>(
+  {
+    id: 'demo',
+    events: ['ping'],
+    handler() {},
+  },
+  rt,
+);
+
+rt.mockCondition(t, 'user', { id: 'u-1' });
+```
+
+### Динамический геттер (читать свежий стейт на каждом fire)
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { tick: void };
+  conditions: { counter: number };
+}>(
+  {
+    id: 'demo',
+    events: ['tick'],
+    handler() {},
+  },
+  rt,
+);
+
+let counter = 0;
+rt.mockCondition(t, 'counter', () => counter);
+
+rt.fireSync('tick'); // handler sees counter=0
+counter = 5;
+rt.fireSync('tick'); // handler sees counter=5
+```
+
+### Подмена по ходу теста
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { ping: void };
+  conditions: { flag: boolean };
+}>(
+  { id: 'demo', events: ['ping'], handler() {} },
+  rt,
+);
+
+const off = rt.mockCondition(t, 'flag', true);
+rt.fireSync('ping'); // handler sees flag=true
+
+off.unregister();
+rt.mockCondition(t, 'flag', false);
+rt.fireSync('ping'); // handler sees flag=false
+```
+
+### Условие с функциональным типом требует явный геттер
+
+Когда значение условия — это функция без аргументов, эвристика может ошибочно принять её за геттер. Передавай явный геттер:
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+type Callback = () => void;
+
+const t = createTrigger<{
+  events: { ping: void };
+  conditions: { onTick: Callback };
+}>(
+  { id: 'demo', events: ['ping'], handler() {} },
+  rt,
+);
+
+const cb: Callback = () => console.log('tick');
+// Wrap in a getter so the runtime stores `cb`, not the result of calling cb.
+rt.mockCondition(t, 'onTick', () => cb);
+```
+
+## Замечания
+
+<Aside type="caution" title="Побеждает последний подмена">
+Два вызова `mockCondition` для одной пары `(trigger, name)` следуют правилу last-mount-wins рантайма. Последняя регистрация — та, которую видит обработчик; снятие регистрации с верхнего восстанавливает предыдущий. В DEV выдаётся warn-once, когда так происходит непреднамеренно.
+</Aside>
+
+<Aside type="tip">
+Для подмен, которым нужно бросать исключения или утверждать счётчики вызовов, держи `vi.fn()` в скоупе и оборачивай его геттером: `rt.mockCondition(t, 'fn', () => vi.fn(...))`.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTestRuntime" description="Рантайм, который предоставляет этот метод." href="/ru/api/testing/create-test-runtime/" />
+  <LinkCard title="mockAction" description="Подменить действие — вторая половина тестовой обвязки." href="/ru/api/testing/mock-action/" />
+  <LinkCard title="useCondition" description="Рантайм-аналог в React." href="/ru/api/react/use-condition/" />
+  <LinkCard title="Руководство по тестированию" description="Trigger-first паттерны тестов." href="/ru/guide/testing/unit-testing/" />
+</CardGrid>

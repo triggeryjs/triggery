@@ -1,0 +1,198 @@
+---
+title: "Middleware"
+description: "Форма middleware из семи хуков — наблюдай и короти диспатч."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Подключаемый наблюдатель, прицепленный к каждому триггеру в рантайме. Семь хуков срабатывают в предсказуемых точках вокруг диспатча — три из них (`onFire`, `onSkip`, `onError`) часто складываются в полный аудит-трейл; остальные (`onBeforeMatch`, `onActionStart`, `onActionEnd`, `onCascade`) — для трассировки, метрик и devtools.
+
+Все хуки необязательные. Исключение, выброшенное в хуке, ловится и логируется рантаймом, но не прерывает запуск — middleware не должен быть load-bearing.
+
+## Импорт
+
+```ts
+import type { Middleware } from '@triggery/core';
+```
+
+## Определение
+
+```ts
+type Middleware = {
+  readonly name: string;
+
+  onFire?(ctx: FireContext): void | { cancel: true; reason: string };
+  onBeforeMatch?(ctx: MatchContext): void;
+  onSkip?(ctx: SkipContext): void;
+  onActionStart?(ctx: ActionContext): void;
+  onActionEnd?(ctx: ActionContext & { durationMs: number; result?: unknown }): void;
+  onError?(ctx: ActionContext & { error: unknown }): void;
+  onCascade?(ctx: CascadeContext): void;
+};
+```
+
+## Хуки
+
+### `name` — string
+
+Стабильный id middleware. Обязателен. Полезен в сообщениях об ошибках и в панелях devtools.
+
+### `onFire(ctx) -> void | { cancel: true; reason: string }`
+
+Вызывается один раз на каждый `fire(eventName, payload)` верхнего уровня (или каскадный) перед тем, как сматчится любой триггер. Возврат `{ cancel: true, reason }` прерывает весь диспатч — триггеры не запускаются, и запись в стиле `'overflow'` не пишется. Это единственный хук с коротким замыканием.
+
+| Поле `FireContext` | Описание |
+|---|---|
+| `eventName` | Диспатчируемое событие. |
+| `payload` | Полезная нагрузка, непрозрачная для middleware. |
+| `cascadeDepth` | 0 для срабатываний верхнего уровня; `n` внутри каскада. |
+| `parentRunId?` | Установлен, если fire происходит внутри работающего обработчика. |
+| `parentTriggerId?` | То же — id upstream-триггера. |
+| `parentContext?` | Непрозрачная ссылка-связный список для детекта циклов. |
+
+### `onBeforeMatch(ctx) -> void`
+
+Вызывается на каждую пару `(event, trigger)` сразу после того, как диспатч достал триггер из индекса событий — до любой concurrency-gate или проверки `required`. Чисто наблюдательный; полезен для «какие триггеры были рассмотрены для этого события» без инструментирования `onSkip` и `onActionStart` по отдельности.
+
+### `onSkip(ctx) -> void`
+
+Вызывается, когда триггер сматчился, но был пропущен. `reason` — один из `'disabled'`, `'required-missing'`, `'concurrency-take-first'`, `'aborted'`, `'cycle'`, `'overflow'` и т. д. Используй для отслеживания «почему мой триггер не запустился».
+
+### `onActionStart(ctx) -> void`
+
+Вызывается прямо перед тем, как обработчик вызовет действие. `actionName` и `payload` — аргументы. Используй для трассировки по действиям.
+
+### `onActionEnd(ctx & { durationMs; result? }) -> void`
+
+Вызывается, когда действие вернёт значение (или его промис разрешится). `durationMs` — wall-clock-время от `onActionStart` до `onActionEnd`. Рантайм замеряет это только когда есть хотя бы один слушатель — без миддлвэров с таймингом затрат нет.
+
+### `onError(ctx & { error }) -> void`
+
+Вызывается, когда действие выбрасывает исключение или его промис реджектится. Паря с `onActionStart`, обрамляет полную попытку. Ошибки также записываются в снепшот инспектора со `status: 'errored'`.
+
+### `onCascade(ctx) -> void`
+
+Вызывается, когда каскадное событие подавлено — `kind: 'overflow'` (`cascadeDepth` превысил `maxCascadeDepth`) или `kind: 'cycle'` (триггер появляется в своей же цепочке предков).
+
+## Примеры
+
+### Трассировка каждого fire
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const tracing: Middleware = {
+  name: 'tracing',
+  onFire({ eventName, cascadeDepth }) {
+    console.log(`[fire] ${eventName}${cascadeDepth ? ` (cascade ${cascadeDepth})` : ''}`);
+  },
+  onActionEnd({ triggerId, actionName, durationMs }) {
+    console.log(`  ${triggerId}.${actionName} ${durationMs.toFixed(2)}ms`);
+  },
+};
+
+const runtime = createRuntime({ middleware: [tracing] });
+```
+
+### Аудит ошибок в бэкенд
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const audit: Middleware = {
+  name: 'audit',
+  onError({ triggerId, actionName, error }) {
+    void fetch('/api/log', {
+      method: 'POST',
+      body: JSON.stringify({
+        triggerId,
+        actionName,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
+    });
+  },
+};
+
+const runtime = createRuntime({ middleware: [audit] });
+```
+
+### Вето через возврат из `onFire`
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const featureFlag: Middleware = {
+  name: 'feature-flag',
+  onFire({ eventName }) {
+    if (eventName === 'beta:experiment' && globalThis.localStorage?.getItem('beta') !== 'on') {
+      return { cancel: true, reason: 'beta-disabled' };
+    }
+  },
+};
+
+const runtime = createRuntime({ middleware: [featureFlag] });
+```
+
+### Учёт причин пропуска
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const skipCounter = new Map<string, number>();
+
+const counter: Middleware = {
+  name: 'skip-counter',
+  onSkip({ triggerId, reason }) {
+    const key = `${triggerId}:${reason}`;
+    skipCounter.set(key, (skipCounter.get(key) ?? 0) + 1);
+  },
+};
+
+const runtime = createRuntime({ middleware: [counter] });
+```
+
+### Детект циклов
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const guard: Middleware = {
+  name: 'cycle-guard',
+  onCascade({ kind, parentTriggerId, newEventName }) {
+    if (kind === 'cycle') {
+      console.warn(`Cycle: ${parentTriggerId} → ${newEventName} would loop back`);
+    }
+  },
+};
+
+const runtime = createRuntime({ middleware: [guard] });
+```
+
+## Замечания
+
+<Aside type="tip">
+Middleware выполняются в порядке массива. `onActionEnd` тоже идёт в порядке регистрации, хотя концептуально срабатывает «после» действия — обхода в обратном порядке нет. Раскладывай middleware осознанно, когда один наблюдает поведение другого.
+</Aside>
+
+<Aside type="caution">
+Хуки должны быть дешёвыми. Горячий путь полностью пропускает middleware, когда `middleware.length === 0`; как только добавил хотя бы один — каждый хук выполняется на каждом fire. Избегай тяжёлой работы — выноси в воркер или очередь, если нужно сделать что-то дорогое.
+</Aside>
+
+<Aside type="caution" title="Ошибки в middleware проглатываются">
+Исключение из хука ловится и логируется через `console.error`, но не прерывает диспатч. Middleware по дизайну наблюдательный — если хук зависит от состояния рантайма, считай сам хук best-effort.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="RuntimeOptions" description="Как прицепить middleware." href="/ru/api/core/types/runtime-options/" />
+  <LinkCard title="createRuntime" description="Конструктор, принимающий middleware." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="createInspector" description="Инспектор — вторая поверхность наблюдения." href="/ru/api/core/create-inspector/" />
+  <LinkCard title="Руководство по middleware" description="Паттерны: трассировка, отчёты об ошибках, feature flags." href="/ru/guide/advanced/middleware/" />
+</CardGrid>

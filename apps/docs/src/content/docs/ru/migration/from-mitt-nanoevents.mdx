@@ -1,0 +1,142 @@
+---
+title: "От mitt / nanoevents"
+description: "Перевод подписок generic event-bus в Triggery — попутно добавляя типы, скоупы и rate limiting."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`mitt` и `nanoevents` — это крохотные нетипизированные (или слабо типизированные) event emitters. Они плохо масштабируются с момента, когда у одного и того же события появляется больше одного обработчика, или когда обработчикам нужно читать состояние, или когда нужен debounce. Triggery — это то, что ты бы построил, если бы отнёсся к этим проблемам серьёзно.
+
+## Соответствие ментальных моделей
+
+| mitt / nanoevents | Triggery |
+|---|---|
+| `emitter.on('foo', fn)` | `useAction(trigger, 'foo', fn)` (или `useEvent` на стороне эмиттера) |
+| `emitter.emit('foo', payload)` | `fireFoo(payload)` из `useEvent(trigger, 'foo')` |
+| `emitter.off('foo', fn)` | Автоматически — cleanup при размонтировании компонента |
+| Нетипизированный payload | `Schema['events']['foo']`, проверяется во время компиляции |
+| Несколько обработчиков на событие | Несколько реакторов, регистрирующих одно действие; или несколько триггеров, слушающих одно событие |
+| Ручной debounce/throttle вокруг `emit` | `actions.debounce(ms).foo?.(p)` |
+| Один глобальный emitter | Скоупится через `<TriggerScope id="…">` для multi-tenant деревьев |
+
+## Паттерн 1 — базовая типизированная шина
+
+```ts title="Before — mitt"
+import mitt from 'mitt';
+type Events = { 'cart:added': { sku: string }; 'cart:removed': string };
+export const bus = mitt<Events>();
+```
+
+```ts title="Before — usage"
+bus.on('cart:added', e => analytics.track('add', e.sku));
+bus.on('cart:added', e => sidebar.flash(e.sku));
+// somewhere else:
+bus.emit('cart:added', { sku: 'A1' });
+```
+
+```ts title="After"
+export const cartTrigger = createTrigger<{
+  events:  { 'cart:added': { sku: string }; 'cart:removed': string };
+  actions: { trackAddition: { sku: string }; flashSidebar: { sku: string } };
+}>({
+  id: 'cart-added',
+  events: ['cart:added'],
+  required: [],
+  handler({ event, actions }) {
+    actions.trackAddition?.({ sku: event.payload.sku });
+    actions.flashSidebar?.({ sku: event.payload.sku });
+  },
+});
+```
+
+```tsx title="Reactors (in their own features)"
+// analytics:
+useAction(cartTrigger, 'trackAddition', ({ sku }) => analytics.track('add', sku));
+// sidebar:
+useAction(cartTrigger, 'flashSidebar', ({ sku }) => sidebar.flash(sku));
+// producer:
+const fireAdded = useEvent(cartTrigger, 'cart:added');
+fireAdded({ sku: 'A1' });
+```
+
+Файл триггера перечисляет *весь* fan-out в одном месте — не надо охотиться за `bus.on('cart:added'` по кодовой базе.
+
+## Паттерн 2 — fan-out с условной маршрутизацией
+
+```ts title="Before"
+bus.on('cart:added', e => {
+  if (user.role === 'guest') guestAnalytics.track(e.sku);
+  else                       userAnalytics.track(user.id, e.sku);
+});
+```
+
+```ts title="After"
+createTrigger<{
+  events:     { 'cart:added': { sku: string } };
+  conditions: { user: { id: string; role: 'guest' | 'user' } };
+  actions:    { trackGuest: string; trackUser: { userId: string; sku: string } };
+}>({
+  id: 'cart-analytics',
+  events: ['cart:added'],
+  required: ['user'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.user) return;
+    if (conditions.user.role === 'guest') {
+      actions.trackGuest?.(event.payload.sku);
+    } else {
+      actions.trackUser?.({ userId: conditions.user.id, sku: event.payload.sku });
+    }
+  },
+});
+```
+
+Личность пользователя один раз регистрируется как условие фичей, владеющей авторизацией; триггер корзины читает её лениво.
+
+## Паттерн 3 — debounce вокруг emit
+
+```ts title="Before"
+const debouncedFlush = throttle(() => bus.emit('cart:flush'), 300);
+input.addEventListener('input', debouncedFlush);
+```
+
+```ts title="After"
+// trigger:
+createTrigger<{ events: { 'cart:flush': void }; actions: { saveCart: void } }>({
+  id: 'cart-flush',
+  events: ['cart:flush'],
+  required: [],
+  handler({ actions }) {
+    actions.debounce(300).saveCart?.();
+  },
+});
+
+// producer (no manual throttle):
+const fireFlush = useEvent(cartTrigger, 'cart:flush');
+input.addEventListener('input', () => fireFlush());
+```
+
+Таймером владеет рантайм. Тесты могут гонять время детерминированно через [`fakeScheduler`](/ru/guide/testing/fake-scheduler/).
+
+## Паттерн 4 — скоупинг шины на тенанта
+
+У mitt нет понятия скоупа — для multi-tenant или micro-frontend установок обычно создают по одной шине на тенанта и пропихивают её через context. Triggery решает это через `<TriggerScope id="…">`:
+
+```tsx
+<TriggerScope id="tenant-a">
+  <CartFeature />     {/* useCondition/useAction registrations live in this scope */}
+</TriggerScope>
+<TriggerScope id="tenant-b">
+  <CartFeature />     {/* parallel, isolated */}
+</TriggerScope>
+```
+
+Объявление триггера добавляет `scope: 'tenant-a'` (или `'tenant-b'`), и рантайм держит реестры раздельными. См. [Скоупы](/ru/guide/architecture/scopes/).
+
+<CardGrid>
+  <LinkCard title="События" description="Записи типизированной шины событий." href="/ru/guide/essentials/events/" />
+  <LinkCard title="Скоупы" description="Изоляция per-tenant / per-feature." href="/ru/guide/architecture/scopes/" />
+  <LinkCard title="Debouncing & throttling" description="Таймеры, принадлежащие рантайму." href="/ru/guide/async/debouncing-throttling/" />
+  <LinkCard title="Сравнения" description="vs XState, Saga, RxJS и другие." href="/ru/migration/comparison/" />
+</CardGrid>

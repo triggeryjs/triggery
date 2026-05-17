@@ -1,0 +1,153 @@
+---
+title: createRuntime
+description: "Create an isolated trigger runtime. Most apps need one; tests, micro-frontends and multi-tenant apps benefit from more."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+`createRuntime` returns an isolated `Runtime` — the container that holds triggers, conditions and actions for a tree of components. Most apps create one runtime in `main.tsx` and pass it down via `<TriggerRuntimeProvider>`. Skip the call entirely and Triggery uses a lazily created default runtime via [`getDefaultRuntime`](/api/core/get-default-runtime/).
+
+## Import
+
+```ts
+import { createRuntime } from '@triggery/core';
+```
+
+## Signature
+
+```ts
+function createRuntime(options?: RuntimeOptions): Runtime;
+```
+
+## Options
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `inspector` | `boolean \| { dev?: boolean; prod?: boolean }` | DEV `true`, PROD `false` | Enable / disable the per-run inspector. |
+| `inspectorBufferSize` | `number` | `50` | Inspector ring-buffer size. Ignored when the inspector is disabled. |
+| `middleware` | `readonly Middleware[]` | `[]` | Middleware chain. |
+| `maxCascadeDepth` | `number` | `3` | Maximum cascade depth — `action → fireEvent → …`. Runs above this are skipped with `'overflow'`. |
+
+See [`RuntimeOptions`](/api/core/types/runtime-options/) for the full shape.
+
+## Returns
+
+A [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts#L-Runtime) object. The methods most apps touch:
+
+| Method | Description |
+|---|---|
+| `runtime.fire(event, payload)` | Dispatch an event through the scheduler. Returns void. |
+| `runtime.fireSync(event, payload)` | Dispatch synchronously (bypass scheduler). For tests and bench. |
+| `runtime.subscribe(listener)` | Listen for every recorded run. Returns a `RegistrationToken`. |
+| `runtime.getInspectorBuffer()` | Most-recent N inspector snapshots. |
+| `runtime.getTrigger(id)` | Look up a registered trigger. |
+| `runtime.graph()` | JSON-friendly snapshot of the registry — used by `triggery graph` CLI. |
+| `runtime.dispose()` | Abort all in-flight runs and drop all registrations. |
+
+`register*` methods (`registerTrigger`, `registerCondition`, `registerAction`) are also part of the surface, but bindings handle them for you.
+
+## Examples
+
+### Default — one runtime at the root
+
+```tsx
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import type { ComponentType } from 'react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+
+const runtime = createRuntime();
+
+declare const App: ComponentType;
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+### Isolated runtime per test
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+import { afterEach, beforeEach } from 'vitest';
+
+let runtime = createRuntime();
+
+beforeEach(() => {
+  runtime = createRuntime({ inspectorBufferSize: 100 });
+});
+afterEach(() => {
+  runtime.dispose();
+});
+```
+
+### Tight cascade limit
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  maxCascadeDepth: 1,   // refuse any indirect chain — action→event→trigger is enough
+});
+```
+
+### With middleware
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const logger: Middleware = {
+  name: 'logger',
+  onActionEnd({ triggerId, actionName, durationMs }) {
+    console.log(`[${triggerId}] ${actionName} ${durationMs.toFixed(2)}ms`);
+  },
+};
+
+const runtime = createRuntime({ middleware: [logger] });
+```
+
+### Inspector explicitly disabled
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({ inspector: false });
+```
+
+Or per-environment:
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  inspector: { dev: true, prod: false },
+});
+```
+
+## Notes
+
+<Aside type="tip">
+The default runtime singleton is fine for most apps. Create extra runtimes only when you need actual isolation — e.g. parallel tests, micro-frontends, or distinct tenants in a single tab.
+</Aside>
+
+<Aside type="caution">
+A runtime is **not** SSR-safe to fire events from on the server. `fire` is a no-op in SSR — bindings detect the environment and skip registrations. Server-side dispatch is the job of `@triggery/server` (V2).
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="getDefaultRuntime" description="Access (and lazily create) the global singleton." href="/api/core/get-default-runtime/" />
+  <LinkCard title="setDefaultRuntime" description="Replace the singleton — useful in tests." href="/api/core/set-default-runtime/" />
+  <LinkCard title="Runtime type" description="Full method surface." href="https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts#L-Runtime" />
+  <LinkCard title="Runtime guide" description="Narrative walkthrough of scopes, isolation, lifecycle." href="/guide/essentials/runtime/" />
+</CardGrid>

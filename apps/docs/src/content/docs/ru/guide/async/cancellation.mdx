@@ -1,0 +1,348 @@
+---
+title: Отмена
+description: "Откуда берётся abort signal, как чистить ресурсы и как связать свой AbortController к сигналу триггера."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Каждый async-обработчик получает `AbortSignal` как `ctx.signal`. Эта страница покрывает, откуда берётся сигнал, идиоматичные паттерны очистки и историю интеропа для кода, которому нужен собственный `AbortController`.
+
+Если ты ещё не читал [Асинхронные обработчики](/ru/guide/async/async-handlers/) и [Стратегии параллелизма](/ru/guide/async/concurrency/) — начни оттуда, там покрыты основы `signal.throwIfAborted()` и поведение abort на каждой стратегии.
+
+## Три источника abort'а
+
+Triggery флипает `signal.aborted` в `true` по одной из трёх причин. У каждой — стабильная строка в `signal.reason`, которую можно так же прочитать из инспектора.
+
+| Источник | Когда происходит | `signal.reason` |
+|---|---|---|
+| `take-latest` supersedes | Более новое событие для того же триггера происходит, пока прогон ещё в полёте, **и** триггер использует `concurrency: 'take-latest'`. | `'superseded-by-latest'` |
+| Рантайм / скоуп диспознут | Вызван `runtime.dispose()`, родительский `<TriggerScope>` размонтируется или триггер удалён через `trigger.dispose()`. | `'disposed'` |
+| HMR-релоад | Vite / webpack HMR заменил модуль, который определил триггер. Старый экземпляр диспозится перед бутом нового. | `'hmr'` |
+
+Это полный список. Источника "пользователь нажал cancel" нет — если нужна user-driven отмена, выстави её вызовом follow-up события с `take-latest` или подключи собственный `AbortController` (см. [Интероп](#abortcontroller-интероп)).
+
+## Инспектор записывает причину
+
+Каждый abort попадает в кольцевой буфер инспектора со `status: 'aborted'` и строкой reason. Буфер включён в DEV по умолчанию; можно включить в PROD через `createRuntime({ inspector: true })`.
+
+```ts
+import { getDefaultRuntime } from '@triggery/core';
+
+const recent = getDefaultRuntime().getInspectorBuffer();
+const aborts = recent.filter((s) => s.status === 'aborted');
+for (const s of aborts) {
+  console.log(s.triggerId, s.runId, s.reason);
+  // search-query  run_3   superseded-by-latest
+  // search-query  run_4   disposed
+}
+```
+
+В React `useInspectHistory(trigger)` из `@triggery/react` даёт живой список. DevTools-мост (`@triggery/devtools-bridge`) сериализует те же снепшоты через `postMessage` в Redux DevTools-совместимое расширение.
+
+## Ручная работа с signal в долгих операциях
+
+Для всего, что занимает больше одного I/O-вызова — чанкованные загрузки, paginated API, чтения файлов, round-trip'ы воркеров — проверяй `signal` на каждой границе. Рантайм не может прервать твой код между await'ами; это всё ещё на тебе.
+
+```ts title="paginated fetch с явными проверками"
+async handler({ event, conditions, signal, actions }) {
+  if (!conditions.apiBase) return;
+  let cursor: string | null = null;
+  const all: Item[] = [];
+
+  do {
+    const url = `${conditions.apiBase}/items?cursor=${cursor ?? ''}`;
+    const page = await fetch(url, { signal }).then((r) => r.json() as Promise<Page>);
+    signal.throwIfAborted();
+    all.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+
+  actions.setItems?.(all);
+}
+```
+
+```ts title="чанкованный reader с отменой потока"
+async handler({ event, signal, actions }) {
+  const res = await fetch(event.payload.url, { signal });
+  if (!res.body) throw new Error('no body');
+  const reader = res.body.getReader();
+
+  try {
+    let received = 0;
+    while (true) {
+      signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      actions.throttle(100).reportProgress?.({ received });
+    }
+    actions.reportDone?.({ bytes: received });
+  } finally {
+    reader.releaseLock();
+  }
+}
+```
+
+Два паттерна, на которые стоит обратить внимание:
+
+- Reader использует `try { … } finally { reader.releaseLock(); }`. `finally` отработает независимо от того, как закончится цикл — чисто, throw'ом (включая `AbortError` из `throwIfAborted`) или прерыванием внешним abort'ом. Очистка ресурсов живёт в `finally`, а не в `signal.addEventListener('abort')`, потому что последний не сработает, если abort случился до прикрепления листенера.
+- `actions.throttle(100).reportProgress?.(...)` делает per-chunk вызовы действий дешёвыми. Throttled-таймер отменяется вместе с триггером, если рантайм диспозится.
+
+## Паттерн `signal.addEventListener('abort', cleanup)`
+
+Когда ты владеешь ресурсом, который **не** AbortSignal-aware (клиент базы, открытый WebSocket, `setInterval`), прикрепи one-shot abort-листенер:
+
+```ts
+async handler({ event, signal, actions }) {
+  const ws = new WebSocket(event.payload.streamUrl);
+
+  // Снести сокет, если что-то abort'ит прогон.
+  const onAbort = () => ws.close(1000, 'trigger aborted');
+  signal.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('message', (e) => {
+        actions.appendChunk?.({ chunk: e.data });
+      });
+      ws.addEventListener('close', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('ws error')));
+    });
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+    if (ws.readyState !== WebSocket.CLOSED) ws.close(1000, 'handler done');
+  }
+}
+```
+
+Три вещи на заметить:
+
+1. `{ once: true }` обязателен — без него ты течёшь листенером на каждый нормально завершившийся прогон.
+2. Парный `removeEventListener` запускается в `finally`, покрывая и happy path, и abort.
+3. Очистка *идемпотентна*: дважды вызвать `ws.close()` — безвредно. Cleanup-обратные вызовы всегда должны быть идемпотентными, потому что рантайм может вызвать abort, твой `finally` может запуститься, и любой явный ретрай в catch-пути тоже — всё это может произойти.
+
+<Aside type="tip">
+Предпочитай `AbortSignal`-aware API, когда они есть. `fetch`, `ReadableStream`, `setTimeout`, `EventTarget.addEventListener`, `lock`, IndexedDB-транзакции, обёрнутые в [`idb`](https://github.com/jakearchibald/idb), — все принимают signal. Код, использующий нативную поддержку signal, не течёт, не нуждается в `removeEventListener` и читается лучше.
+</Aside>
+
+## Чек-лист очистки ресурсов
+
+Используй этот список при ревью async-обработчика, владеющего ресурсами:
+
+- [ ] Каждый `fetch(...)` получает `{ signal }`.
+- [ ] Каждый `setTimeout / setInterval` либо принимает signal (`AbortSignal.timeout`), либо чистится в `finally`.
+- [ ] Каждый `addEventListener` либо передаёт `{ signal }`, либо парный `removeEventListener` в `finally`.
+- [ ] Каждый reader / writer (`ReadableStream`, file handle, DB-транзакция) закрывается / освобождается в `finally`.
+- [ ] Каждый `EventSource`, `WebSocket`, `BroadcastChannel`, созданный в обработчике, закрывается.
+- [ ] Ты не сохраняешь ссылку на `signal` прогона или его abort-листенеры снаружи замыкания обработчика.
+
+Если всё из списка соблюдено, единственный способ потечь — написать `fetch(url)` без `{ signal }`. ESLint-правило `fetch-signal` из `@triggery/eslint-plugin` флагает ровно этот случай.
+
+## AbortController интероп
+
+Можешь захотеть связать свой `AbortController` к `ctx.signal` — обычно по одной из трёх причин:
+
+- Per-request **таймаут** поверх жизни триггера.
+- **User-driven cancel** кнопка.
+- **Fan-out**, где ты стартуешь несколько параллельных запросов и хочешь, чтобы один из них можно было отменять независимо.
+
+Стандартный браузерный API для "abort, если abort'ится любой из сигналов" — [`AbortSignal.any`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/any_static).
+
+```ts title="signal триггера + per-request таймаут"
+async handler({ event, signal, actions }) {
+  const composite = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
+  const res = await fetch(event.payload.url, { signal: composite });
+  signal.throwIfAborted();          // различает superseded vs timeout
+  actions.show?.(await res.json());
+}
+```
+
+Если триггер superseded → `signal.aborted` true, `throwIfAborted` кидает, прогон классифицируется как `'aborted'`. Если таймаут сработал первым → `signal.aborted` false, `fetch` реджектится `AbortError` от таймаута, catch-путь может бранчить по `composite.reason`, если ты его сохранил.
+
+```ts title="signal триггера + user-driven cancel"
+async handler({ event, conditions, signal, actions }) {
+  if (!conditions.userCancel) return;
+  const userSignal = conditions.userCancel.signal;
+  const composite = AbortSignal.any([signal, userSignal]);
+
+  try {
+    const res = await fetch(event.payload.url, { signal: composite });
+    signal.throwIfAborted();
+    actions.show?.(await res.json());
+  } catch (err) {
+    if (signal.aborted) throw err;                // superseded — пусть рантайм классифицирует
+    if (userSignal.aborted) {                     // пользователь нажал cancel — твой сценарий
+      actions.showCancelled?.({ url: event.payload.url });
+      return;
+    }
+    throw err;                                    // не связано — отдать как 'errored'
+  }
+}
+```
+
+Здесь `conditions.userCancel` — обёртка `{ signal: AbortSignal }`, выставленная твоим компонентом cancel-кнопки как условие. Сигнал триггера и сигнал пользователя мерджатся для вызова `fetch`, а catch-путь разруливает.
+
+```ts title="fan-out с per-request контроллерами"
+async handler({ event, signal, actions }) {
+  const ctrls = event.payload.urls.map(() => {
+    const ac = new AbortController();
+    signal.addEventListener('abort', () => ac.abort(signal.reason), { once: true });
+    return ac;
+  });
+
+  const responses = await Promise.allSettled(
+    event.payload.urls.map((u, i) => fetch(u, { signal: ctrls[i]!.signal })),
+  );
+  signal.throwIfAborted();
+  actions.showAll?.({ responses });
+}
+```
+
+У каждого запроса свой контроллер; сигнал триггера пробрасывается во все через один abort-листенер. Можно позвать `ctrls[2].abort()` посреди обработчика, чтобы отменить только один запрос, не задевая остаток прогона.
+
+## Распространённая ловушка: race conditions в записях после abort'а
+
+Рантайм abort'ит *функцию обработчика*. Он **не** откатывает работу, которую обработчик уже задиспатчил. Что попало в твой стор до точки abort'а — там и осталось.
+
+```ts
+async handler({ event, conditions, signal, actions }) {
+  const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+  signal.throwIfAborted();
+  actions.setData?.(data);          // ← уже в сторе
+  signal.throwIfAborted();          // ← если кинет здесь, setData уже отработал
+  actions.markReady?.();             // ← никогда не достигнуто
+}
+```
+
+Если прогон supersede'ится между `setData` и `markReady`, UI показывает данные, но флаг "ready" всё ещё false. Два частых фикса:
+
+- **Помечай записи run id** (`meta.runId`). Реакторы выкидывают записи, чей run id не совпадает с последним для этого триггера.
+- **Собирай локально, диспатчи в конце.** Платишь latency, получаешь атомарные переходы:
+
+  ```ts
+  async handler({ event, signal, actions }) {
+    const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+    signal.throwIfAborted();
+    // Только после последнего await — оба действия либо сработают, либо ни одно.
+    actions.setData?.(data);
+    actions.markReady?.();
+  }
+  ```
+
+"Правильного" ответа нет — трейдофф: инкрементальный UX vs атомарная семантика. Неправильно — оставлять разрыв без внимания.
+
+## Распространённая ловушка: пропущенный `throwIfAborted`
+
+```ts
+// ✗ Молча — обработчик доходит до конца, диспатчит устаревшие данные.
+async handler({ event, signal, actions }) {
+  const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+  actions.show?.(data);
+}
+```
+
+Что происходит под `take-latest`:
+
+- Прогон A стартует `fetch`. Прогон B происходит, abort'ит `signal` A, стартует свой fetch.
+- `fetch` A реджектится `AbortError`. **Но твой обработчик этого не видит** — `.then(r => r.json())` на ветке resolved.
+- Стоп — `fetch` реджектится, значит цепочка реджектится. Да. Значит обработчик реджектится с `AbortError`, рантайм видит, что `signal.aborted` true, классифицирует как `'aborted'`. Чище, чем кажется.
+
+А вот реально сломанный вариант:
+
+```ts
+// ✗ Ловит AbortError, глотает, продолжает с устаревшими данными.
+async handler({ event, signal, actions }) {
+  try {
+    const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+    actions.show?.(data);
+  } catch {
+    actions.show?.({ items: [] });        // ← запустится и после реального abort'а
+  }
+}
+```
+
+Catch-all глотает `AbortError` от abort'а, и теперь `actions.show?.({ items: [] })` затирает то, что записал *более новый* прогон. Всегда проверяй `signal.aborted` в catch-блоках:
+
+```ts
+try { /* … */ }
+catch (err) {
+  if (signal.aborted) throw err;        // пусть рантайм увидит как 'aborted'
+  actions.show?.({ items: [] });
+}
+```
+
+## Распространённая ловушка: проглоченный `AbortError` портит статус прогона
+
+`AbortError` — это настоящий `Error` (технически — `DOMException` с `name === 'AbortError'`). Если ты залогаешь его как обычный failure, твой error-репортёр решит, что прогон упал — хотя он чисто завершился.
+
+```ts
+// ✗ Sentry будет трекать каждый supersede как ошибку.
+async handler({ event, signal, actions }) {
+  try {
+    /* … */
+  } catch (err) {
+    console.error('search failed', err);
+    Sentry.captureException(err);
+    actions.showError?.({ message: 'Search failed' });
+  }
+}
+```
+
+```ts
+// ✓ Различай.
+async handler({ event, signal, actions }) {
+  try {
+    /* … */
+  } catch (err) {
+    if (signal.aborted) throw err;                // не путь ошибки
+    Sentry.captureException(err);
+    actions.showError?.({ message: 'Search failed' });
+  }
+}
+```
+
+Та же логика применима везде, где есть `try/catch`: aborts re-throw'аются, реальные ошибки обрабатываются.
+
+## Распространённая ловушка: закешировал signal для будущего прогона
+
+`ctx.signal` принадлежит **этому прогону** и инвалидируется, когда прогон заканчивается. Сохранять его в module-scope переменной, замыкании, переживающем обработчик, или возвращаемом промисе — даёт неверное поведение и может течь.
+
+```ts
+// ✗ Закешированный signal — неопределённое поведение.
+let lastSignal: AbortSignal | undefined;
+
+async handler({ signal, event, actions }) {
+  lastSignal = signal;             // ← так не делай
+  /* … */
+}
+
+// где-то ещё — этот signal может быть уже abort'нут или принадлежать другому прогону.
+if (lastSignal?.aborted) { /* … */ }
+```
+
+Если нужна кросс-прогонная отмена, выстави cancel-механизм *условием* (внешний `AbortController`, сигнал которого ты читаешь через `useCondition`) и мерджи его с per-run сигналом через `AbortSignal.any` внутри обработчика. Не пытайся протащить `ctx.signal` наружу его прогона.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Асинхронные обработчики"
+    description="Идиомы async/await, прокидка signal, поток ошибок и связь между возвратом обработчика и жизненным циклом прогона."
+    href="/ru/guide/async/async-handlers/"
+  />
+  <LinkCard
+    title="Стратегии параллелизма"
+    description="Как каждая стратегия взаимодействует с abort — когда take-latest abort'ит, когда queue ждёт, когда exhaust пропускает."
+    href="/ru/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Debounce и throttle"
+    description="Таймеры в прокси-цепочках — отменяются тем же dispose-циклом, что и signal."
+    href="/ru/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Инспектор"
+    description="Читай abort'нутые прогоны и их reason-строки из кольцевого буфера рантайма или React useInspectHistory."
+    href="/ru/guide/advanced/inspector/"
+  />
+</CardGrid>

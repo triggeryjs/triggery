@@ -1,0 +1,94 @@
+---
+title: "getDefaultRuntime"
+description: "Access the lazily created global runtime singleton. Used by bindings when no provider is present."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Returns the global default `Runtime`, creating it lazily on first call. This is the runtime every binding falls back to when no `<TriggerRuntimeProvider>` is in scope. Most apps never call it directly — it's an implementation detail of the hooks.
+
+The function is idempotent. The first call constructs a runtime with default options; every subsequent call returns the same instance until [`setDefaultRuntime`](/api/core/set-default-runtime/) replaces it.
+
+## Import
+
+```ts
+import { getDefaultRuntime } from '@triggery/core';
+```
+
+## Signature
+
+```ts
+function getDefaultRuntime(): Runtime;
+```
+
+## Parameters
+
+None.
+
+## Returns
+
+The single shared [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) instance. Subsequent calls return the same reference (`===`).
+
+## Examples
+
+### Fire an event from outside React
+
+```ts twoslash
+import { createTrigger, getDefaultRuntime } from '@triggery/core';
+
+createTrigger<{ events: { ping: number } }>({
+  id: 'demo:ping',
+  events: ['ping'],
+  handler({ event }) {
+    console.log('ping', event.payload);
+  },
+});
+
+// In a WebSocket adapter, a service worker, or any non-React layer.
+getDefaultRuntime().fire('ping', 42);
+```
+
+### Inspect the registry from devtools glue
+
+```ts twoslash
+import { getDefaultRuntime } from '@triggery/core';
+
+export function dumpGraph() {
+  const runtime = getDefaultRuntime();
+  return runtime.graph();
+}
+```
+
+### Lazy construction proof
+
+```ts twoslash
+import { getDefaultRuntime } from '@triggery/core';
+
+const a = getDefaultRuntime();
+const b = getDefaultRuntime();
+console.log(a === b); // true — same instance
+```
+
+## Notes
+
+<Aside type="tip">
+Bindings (`useEvent`, `useCondition`, `useAction`) call this internally whenever no `<TriggerRuntimeProvider>` is in the tree. If your tests need isolation, pair [`createRuntime`](/api/core/create-runtime/) with [`setDefaultRuntime`](/api/core/set-default-runtime/) or wrap the tree in a provider.
+</Aside>
+
+<Aside type="caution">
+On the server (SSR) the default runtime is created on demand, but `fire` is a no-op and registrations are skipped — there is no event loop to dispatch into. The first browser-side call constructs the real instance.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="setDefaultRuntime" description="Replace the singleton — useful in tests." href="/api/core/set-default-runtime/" />
+  <LinkCard title="createRuntime" description="Create an isolated runtime." href="/api/core/create-runtime/" />
+  <LinkCard title="Runtime type" description="Full method surface." href="https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts" />
+  <LinkCard title="TriggerRuntimeProvider" description="Inject a runtime through context." href="/api/react/trigger-runtime-provider/" />
+</CardGrid>

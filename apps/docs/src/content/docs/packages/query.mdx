@@ -1,0 +1,101 @@
+---
+title: "@triggery/query"
+description: "TanStack Query adapter for Triggery — read cached query data from a trigger condition."
+sidebar:
+  order: 13
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Read cached [TanStack Query](https://tanstack.com/query) data from a Triggery condition. Pull-only: `queryClient.getQueryData(key)` runs only when a trigger fires, the host component is never subscribed to cache updates.
+
+[![npm](https://img.shields.io/npm/v/@triggery/query?style=flat-square)](https://www.npmjs.com/package/@triggery/query)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/query?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/query)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/query @tanstack/query-core" />
+
+Peer deps: `react >= 18.0.0`, `@tanstack/query-core ^5`. `@tanstack/react-query` re-exports `query-core` and works out of the box.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `useQueryCondition(trigger, name, queryClient, queryKey, selector?)` | Register a condition backed by a cached TanStack Query entry. |
+
+## Quick example
+
+```tsx
+import { QueryClient } from '@tanstack/query-core';
+import { createTrigger } from '@triggery/core';
+import { useQueryCondition } from '@triggery/query';
+
+type User = { id: string; name: string };
+
+const queryClient = new QueryClient();
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string; from: string } };
+  conditions: { user: User };
+  actions: { showToast: { body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user'],
+  handler({ event, conditions, actions }) {
+    if (event.payload.from === conditions.user.id) return; // don't toast own messages
+    actions.showToast?.({ body: event.payload.text });
+  },
+});
+
+function CurrentUserBridge() {
+  useQueryCondition(messageTrigger, 'user', queryClient, ['user', 'current']);
+  return null;
+}
+```
+
+With a projection selector:
+
+```ts
+useQueryCondition(messageTrigger, 'user', queryClient, ['profile'], (p) => p?.user);
+```
+
+## How it works
+
+Pull-only: `queryClient.getQueryData(key)` runs **only** when a trigger fires, not on every cache update. The host component is never subscribed to the query — use `useQuery` / `useQueryClient` alongside in components that render the data.
+
+When the cache entry is missing, the condition value is `undefined`, which fails a `required` gate cleanly and skips the handler instead of throwing.
+
+## API
+
+```ts
+useQueryCondition<T, S, K>(
+  trigger: Trigger<S>,
+  name: K,
+  queryClient: { getQueryData<T>(key: readonly unknown[]): T | undefined },
+  queryKey: readonly unknown[],
+  selector?: (data: T | undefined) => ConditionMap<S>[K] | undefined,
+): void
+```
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Exposes Trigger<S>." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="useQueryCondition is a React hook." href="/packages/react/" />
+  <LinkCard title="@triggery/zustand" description="Adapter for non-server client state." href="/packages/zustand/" />
+  <LinkCard title="@triggery/redux" description="Adapter for Redux state." href="/packages/redux/" />
+  <LinkCard title="@triggery/socket" description="Pair query cache reads with socket-driven invalidations." href="/packages/socket/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/query)
+- [npm](https://www.npmjs.com/package/@triggery/query)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/query/CHANGELOG.md)

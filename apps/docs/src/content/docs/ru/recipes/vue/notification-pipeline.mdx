@@ -1,0 +1,166 @@
+---
+title: Пайплайн уведомлений
+description: "Тост + звук + бейдж в трёх независимых Vue 3 компонентах. Тот же триггер, что и в React-рецепте."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Это Vue-версия флагманского сценария Triggery. Сначала прочитай [рецепт на React](/ru/recipes/react/notification-pipeline/) — **файл триггера идентичен**, и проза там разбирает сценарий. Ниже — код компонентов специфично под Vue.
+
+<StackBlitzButton path="examples/vite-vue-notifications" label="Открыть в StackBlitz" />
+
+## Триггер (идентичный)
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
+type Message  = { id: string; author: string; authorId: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null; currentUserId: string };
+  actions:    {
+    showToast:      { title: string; body: string };
+    playSound:      'beep' | 'mention';
+    incrementBadge: string;
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    const msg = event.payload;
+    if (msg.channelId === conditions.activeChannelId) return;
+    if (msg.authorId === conditions.currentUserId) return;
+    actions.incrementBadge?.(msg.channelId);
+    if (check.is('settings', s => s.notifications))    actions.showToast?.({ title: msg.author, body: msg.text });
+    if (check.is('settings', s => s.sound && !s.dnd))  actions.debounce(800).playSound?.('beep');
+  },
+});
+```
+
+## Провайдеры (Vue refs)
+
+```vue title="src/features/settings/SettingsPanel.vue"
+<script setup lang="ts">
+import { useCondition } from '@triggery/vue';
+import { ref } from 'vue';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+const settings = ref({ sound: true, notifications: true, dnd: false });
+useCondition(messageTrigger, 'settings', () => settings.value);
+</script>
+
+<template>
+  <fieldset>
+    <legend>Notifications</legend>
+    <label>
+      <input type="checkbox" v-model="settings.notifications" />
+      Show toasts
+    </label>
+    <label>
+      <input type="checkbox" v-model="settings.sound" />
+      Play sound
+    </label>
+    <label>
+      <input type="checkbox" v-model="settings.dnd" />
+      Do Not Disturb
+    </label>
+  </fieldset>
+</template>
+```
+
+```vue title="src/features/session/SessionProvider.vue"
+<script setup lang="ts">
+import { useCondition } from '@triggery/vue';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+const props = defineProps<{ userId: string }>();
+useCondition(messageTrigger, 'currentUserId', () => props.userId);
+</script>
+
+<template>
+  <slot />
+</template>
+```
+
+```vue title="src/features/chat/Chat.vue"
+<script setup lang="ts">
+import { useEvent, useCondition } from '@triggery/vue';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+const props = defineProps<{ channelId: string | null }>();
+useCondition(messageTrigger, 'activeChannelId', () => props.channelId);
+
+const fireMessage = useEvent(messageTrigger, 'new-message');
+
+function simulate() {
+  fireMessage({
+    id:        crypto.randomUUID(),
+    author:    'Alice',
+    authorId:  'u-alice',
+    text:      'hi',
+    channelId: 'c-lunch',
+  });
+}
+</script>
+
+<template>
+  <button @click="simulate()">simulate inbound</button>
+</template>
+```
+
+## Реактор
+
+```vue title="src/features/notifications/NotificationLayer.vue"
+<script setup lang="ts">
+import { useAction } from '@triggery/vue';
+import { useBadgeStore } from '../../stores/badge';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+const badge = useBadgeStore();
+
+let audio: HTMLAudioElement | null = null;
+
+useAction(messageTrigger, 'showToast', ({ title, body }) => {
+  console.log('toast', title, body);
+});
+useAction(messageTrigger, 'playSound', () => {
+  audio ??= new Audio('/beep.mp3');
+  audio.play().catch(() => {});
+});
+useAction(messageTrigger, 'incrementBadge', channelId => {
+  badge.increment(channelId);
+});
+</script>
+
+<template>
+  <span hidden />
+</template>
+```
+
+## Подключаем приложение
+
+```ts title="src/main.ts"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimePlugin } from '@triggery/vue';
+import { createApp } from 'vue';
+import App from './App.vue';
+
+const runtime = createRuntime();
+
+createApp(App).use(TriggerRuntimePlugin, { runtime }).mount('#root');
+```
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="Версия для React (каноническая)" href="/ru/recipes/react/notification-pipeline/" description="Полный нарратив + сравнение с useEffect." />
+  <LinkCard title="Версия для Solid" href="/ru/recipes/solid/notification-pipeline/" description="C createSignal." />
+  <LinkCard title="Vue-счётчик" href="/ru/recipes/vue/counter/" description="Уменьшенный hello-world рецепт." />
+  <LinkCard title="Пакет @triggery/vue" href="/ru/packages/vue/" description="Справочник по хукам." />
+</CardGrid>

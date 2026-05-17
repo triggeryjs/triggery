@@ -1,0 +1,103 @@
+---
+title: "@triggery/core"
+description: "The framework-agnostic orchestration runtime. Zero runtime dependencies."
+sidebar:
+  order: 1
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+The runtime that powers every Triggery binding. Framework-agnostic, zero runtime dependencies, runs anywhere JavaScript runs (browser, Node, Workers, React Native, edge).
+
+[![npm](https://img.shields.io/npm/v/@triggery/core?style=flat-square)](https://www.npmjs.com/package/@triggery/core)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/core?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/core)
+
+## Install
+
+<PackageManagers pkg="@triggery/core" />
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| [`createTrigger`](/api/core/create-trigger/) | Declare a scenario (events, conditions, required, handler). |
+| [`createRuntime`](/api/core/create-runtime/) | Instantiate an isolated runtime. |
+| [`getDefaultRuntime`](/api/core/get-default-runtime/) / [`setDefaultRuntime`](/api/core/set-default-runtime/) | Global singleton helpers. |
+| [`createCheck`](/api/core/create-check/) | Build the `check.is/all/any` helpers for the handler context. |
+| [`createInspector`](/api/core/create-inspector/) | Custom ring-buffer inspector. |
+| [`createScheduler`](/api/core/create-scheduler/) | Build a custom scheduler. |
+| All public [types](/api/core/types/trigger-schema/) | TriggerSchema, TriggerCtx, Middleware, ConcurrencyStrategy, … |
+
+## Quick example
+
+```ts
+import { createRuntime, createTrigger } from '@triggery/core';
+
+const runtime = createRuntime();
+
+const trigger = createTrigger<{
+  events:  { tick: number };
+  actions: { log: number };
+}>(
+  {
+    id: 'demo:tick',
+    events: ['tick'],
+    handler: ({ event, actions }) => actions.log?.(event.payload),
+  },
+  runtime,
+);
+
+runtime.registerAction('demo:tick', 'log', n => console.log('tick', n));
+runtime.fireSync('tick', 42);   // → "tick 42"
+```
+
+That's the runtime in isolation. In a real app you'd skip the manual `registerAction` — bindings do that through `useAction`.
+
+## Why "framework-agnostic"?
+
+The runtime is a plain JavaScript object with a `Map`-based registry. It does not import React. It does not import a virtual DOM. It can run:
+
+- In a web worker or service worker.
+- In a Node.js process — CLI, server, edge function.
+- In React Native (no DOM adapter needed for the runtime).
+- In a vanilla HTML page with no bundler.
+
+The same `createTrigger({ … })` declaration runs unchanged in all of the above. Bindings (~50 lines each) wire `useEvent` / `useCondition` / `useAction` to the host framework's lifecycle.
+
+## Features
+
+- **Indexed dispatch** — `Map<eventKey, Trigger[]>`, no full-table scans.
+- **`required`-gate** — handler skipped (with inspector entry) until all required conditions are registered.
+- **Concurrency strategies** for async handlers: `take-latest` (default), `take-every`, `take-first`, `queue`, `exhaust`, `sync`.
+- **Action chains**: `actions.debounce(ms).foo(p)`, `actions.throttle`, `actions.defer`, `actions.queue`.
+- **Cascade safety** — depth limit + cycle detection on `action → fireEvent` chains.
+- **Middleware** — `onFire`, `onBeforeMatch`, `onSkip`, `onActionStart`, `onActionEnd`, `onError`, `onCascade`.
+- **Inspector ring buffer** — built-in, auto-disables in PROD by default.
+- **Last-mount-wins ownership** with DEV warn-once.
+- **Pure ESM**, side-effect-free, tree-shakable.
+
+## Bundle size
+
+About **5 KB gzipped** for the core runtime alone. The bindings add **about 1 KB each** on top.
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/react" description="React 18+ bindings." href="/packages/react/" />
+  <LinkCard title="@triggery/solid" description="SolidJS bindings." href="/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Vue 3 Composition API bindings." href="/packages/vue/" />
+  <LinkCard title="@triggery/testing" description="Test runtime + fakeScheduler." href="/packages/testing/" />
+  <LinkCard title="@triggery/vite" description="Auto-discovery via virtual:triggery-registry." href="/packages/vite/" />
+  <LinkCard title="@triggery/eslint-plugin" description="8 lint rules: no-event-cascade, hook-rules, …" href="/packages/eslint-plugin/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/core)
+- [npm](https://www.npmjs.com/package/@triggery/core)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/core/CHANGELOG.md)

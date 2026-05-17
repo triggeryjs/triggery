@@ -1,0 +1,300 @@
+---
+title: Getting started
+description: "Install Triggery, write your first trigger, fire your first event — in under five minutes."
+---
+
+import { Aside, TabItem, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+In five minutes you'll have a single file that declares a scenario ("when a new message arrives and the user has notifications on — show a toast"), and three small components that plug into it. None of the components know about each other.
+
+<StackBlitzButton path="examples/vite-react-counter" label="Skip ahead — open the counter example in StackBlitz" />
+
+## Prerequisites
+
+- **Node 20+** for the development tooling.
+- A React 18+/19, Solid 1.8+, or Vue 3.4+ project. (If you don't have one yet, run `pnpm dlx @triggery/cli create my-app` to scaffold a minimal Vite project — see [`@triggery/cli`](/packages/cli/).)
+- TypeScript is recommended but not required. Examples on this site assume TS.
+
+## 1. Install
+
+You need two packages: `@triggery/core` (the runtime) and one binding for your framework.
+
+<FrameworkTabs>
+  <TabItem label="React">
+    <PackageManagers pkg="@triggery/core @triggery/react" />
+    Peer deps: `react >= 18.0.0`, `react-dom >= 18.0.0`.
+  </TabItem>
+  <TabItem label="Solid">
+    <PackageManagers pkg="@triggery/core @triggery/solid" />
+    Peer dep: `solid-js >= 1.8.0`.
+  </TabItem>
+  <TabItem label="Vue">
+    <PackageManagers pkg="@triggery/core @triggery/vue" />
+    Peer dep: `vue >= 3.4.0`.
+  </TabItem>
+</FrameworkTabs>
+
+<Aside type="tip">
+Both packages are ESM-only. If you're on a tool that doesn't speak ESM yet (Jest classic config, some older bundlers), switch to Vitest or use `--experimental-vm-modules`.
+</Aside>
+
+## 2. Wrap your app with a runtime provider
+
+The runtime is what holds the registry of triggers, conditions and actions. Most apps create one runtime at the root.
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/main.tsx"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimeProvider } from '@triggery/react';
+    import { StrictMode } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { App } from './App';
+
+    const runtime = createRuntime();
+
+    createRoot(document.getElementById('root')!).render(
+      <StrictMode>
+        <TriggerRuntimeProvider runtime={runtime}>
+          <App />
+        </TriggerRuntimeProvider>
+      </StrictMode>,
+    );
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/index.tsx"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimeProvider } from '@triggery/solid';
+    import { render } from 'solid-js/web';
+    import { App } from './App';
+
+    const runtime = createRuntime();
+
+    render(
+      () => (
+        <TriggerRuntimeProvider runtime={runtime}>
+          <App />
+        </TriggerRuntimeProvider>
+      ),
+      document.getElementById('root')!,
+    );
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```ts title="src/main.ts"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimePlugin } from '@triggery/vue';
+    import { createApp } from 'vue';
+    import App from './App.vue';
+
+    const runtime = createRuntime();
+
+    createApp(App).use(TriggerRuntimePlugin, { runtime }).mount('#root');
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+You can omit the provider altogether — in that case Triggery uses a lazily created default runtime. The provider exists so testing, micro-frontends and multi-tenant setups can isolate runtimes.
+
+## 3. Write your first trigger
+
+Triggery's house style is one trigger per file, suffixed `.trigger.ts`. The file reads top-to-bottom as a specification.
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+type Message  = { author: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions:    { showToast: { title: string; body: string }; playSound: 'beep' };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    // Skip if the user is already looking at this conversation.
+    if (conditions.activeChannelId === event.payload.channelId) return;
+
+    // Skip if notifications are off — `check.is` narrows the value.
+    if (!check.is('settings', s => s.notifications)) return;
+
+    // Debounce sound so a burst of messages plays one beep.
+    actions.debounce(800).playSound?.('beep');
+    actions.showToast?.({
+      title: event.payload.author,
+      body: event.payload.text,
+    });
+  },
+});
+```
+
+The single inline-generic captures the whole port surface — three maps for events, conditions and actions. The handler `ctx` is now strongly typed: try to fire a wrong event name or pass the wrong action payload and TypeScript stops you.
+
+## 4. Wire components
+
+Triggery splits "who does what" into three component roles:
+
+- **Producer** — fires an event with `useEvent`.
+- **Provider** — exposes a snapshot through `useCondition` so handlers can read it lazily.
+- **Reactor** — registers an action with `useAction`.
+
+A real chat app puts each of these in its own component, in whichever feature folder it naturally belongs.
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/features/SettingsPanel.tsx (provider)"
+    import { useCondition } from '@triggery/react';
+    import { useState } from 'react';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function SettingsPanel() {
+      const [settings, setSettings] = useState({ sound: true, notifications: true });
+      useCondition(messageTrigger, 'settings', () => settings, [settings]);
+      // …UI for editing settings
+    }
+    ```
+
+    ```tsx title="src/features/Chat.tsx (producer + provider for activeChannelId)"
+    import { useEvent, useCondition } from '@triggery/react';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function Chat({ channelId }: { channelId: string }) {
+      const fireMessage = useEvent(messageTrigger, 'new-message');
+      useCondition(messageTrigger, 'activeChannelId', () => channelId, [channelId]);
+
+      return (
+        <button type="button" onClick={() => fireMessage({ author: 'Alice', text: 'hi', channelId: 'b' })}>
+          send a fake message
+        </button>
+      );
+    }
+    ```
+
+    ```tsx title="src/features/NotificationLayer.tsx (reactor)"
+    import { useAction } from '@triggery/react';
+    import { toast } from 'sonner';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function NotificationLayer() {
+      useAction(messageTrigger, 'showToast', payload => {
+        toast.success(payload.title, { description: payload.body });
+      });
+      useAction(messageTrigger, 'playSound', () => {
+        new Audio('/beep.mp3').play().catch(() => {});
+      });
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/features/SettingsPanel.tsx (provider)"
+    import { useCondition } from '@triggery/solid';
+    import { createSignal } from 'solid-js';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function SettingsPanel() {
+      const [settings] = createSignal({ sound: true, notifications: true });
+      useCondition(messageTrigger, 'settings', settings);
+    }
+    ```
+
+    ```tsx title="src/features/Chat.tsx (producer + provider)"
+    import { useEvent, useCondition } from '@triggery/solid';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function Chat(props: { channelId: string }) {
+      const fireMessage = useEvent(messageTrigger, 'new-message');
+      useCondition(messageTrigger, 'activeChannelId', () => props.channelId);
+      return <button onClick={() => fireMessage({ author: 'Alice', text: 'hi', channelId: 'b' })}>send</button>;
+    }
+    ```
+
+    ```tsx title="src/features/NotificationLayer.tsx (reactor)"
+    import { useAction } from '@triggery/solid';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function NotificationLayer() {
+      useAction(messageTrigger, 'showToast', payload => console.log('toast', payload));
+      useAction(messageTrigger, 'playSound', () => console.log('beep'));
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```vue title="src/features/SettingsPanel.vue (provider)"
+    <script setup lang="ts">
+    import { useCondition } from '@triggery/vue';
+    import { ref } from 'vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    const settings = ref({ sound: true, notifications: true });
+    useCondition(messageTrigger, 'settings', () => settings.value);
+    </script>
+    ```
+
+    ```vue title="src/features/Chat.vue (producer + provider)"
+    <script setup lang="ts">
+    import { useEvent, useCondition } from '@triggery/vue';
+    import { defineProps } from 'vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    const props = defineProps<{ channelId: string }>();
+    const fireMessage = useEvent(messageTrigger, 'new-message');
+    useCondition(messageTrigger, 'activeChannelId', () => props.channelId);
+    </script>
+
+    <template>
+      <button @click="fireMessage({ author: 'Alice', text: 'hi', channelId: 'b' })">send</button>
+    </template>
+    ```
+
+    ```vue title="src/features/NotificationLayer.vue (reactor)"
+    <script setup lang="ts">
+    import { useAction } from '@triggery/vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    useAction(messageTrigger, 'showToast', payload => console.log('toast', payload));
+    useAction(messageTrigger, 'playSound', () => console.log('beep'));
+    </script>
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+Mount the three components anywhere in the tree under your provider — they discover each other through the trigger, not through React/Solid/Vue context.
+
+## 5. Verify
+
+Click "send a fake message" in the `Chat` component. The notification layer logs (or pops a toast). Toggle `settings.notifications` off and it falls silent. That's it — the whole scenario is one file, and every component is free to grow in isolation.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Why Triggery"
+    description="Read this if you want the underlying reason this pattern exists — and the problems it doesn't try to solve."
+    href="/guide/why-triggery/"
+  />
+  <LinkCard
+    title="Trigger anatomy"
+    description="Every field of createTrigger config explained, with what each one buys you."
+    href="/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Notification pipeline recipe"
+    description="The full version of this example, with sound debouncing, badge counters and DND mode."
+    href="/recipes/react/notification-pipeline/"
+  />
+  <LinkCard
+    title="Testing"
+    description="See how to test a trigger without ever rendering React."
+    href="/guide/testing/unit-testing/"
+  />
+</CardGrid>

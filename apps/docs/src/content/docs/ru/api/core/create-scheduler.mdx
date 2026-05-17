@@ -1,0 +1,123 @@
+---
+title: "createScheduler"
+description: "Создаёт планировщик диспатча. Доступен для кастомной композиции рантайма и тестов."
+sidebar:
+  order: 7
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Создаёт планировщик диспатча, которым рантайм пользуется внутри. Две встроенные стратегии — `'microtask'` и `'sync'` — закрывают почти любые реальные потребности; `createScheduler` доступен для кастомной композиции рантайма, низкоуровневых тестов и бенчмарков.
+
+Microtask-планировщик батчит поставленные в очередь задачи и осушает их в `queueMicrotask`. Sync-планировщик запускает задачи немедленно, в стеке вызывающей стороны.
+
+## Импорт
+
+```ts
+import { createScheduler } from '@triggery/core';
+```
+
+## Сигнатура
+
+```ts
+function createScheduler(strategy: SchedulerStrategy): SchedulerImpl;
+
+type SchedulerStrategy = 'sync' | 'microtask';
+
+type SchedulerImpl = {
+  enqueue(task: () => void): void;
+  flush(): void;
+};
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `strategy` | `'sync' \| 'microtask'` | Политика диспатча. |
+
+## Возвращает
+
+`SchedulerImpl`:
+
+| Метод | Описание |
+|---|---|
+| `enqueue(task)` | Поставить thunk в очередь. Microtask: батчит до следующего осушения микротасок. Sync: запускает немедленно. |
+| `flush()` | Осушить отложенные задачи прямо сейчас. Для тестов и `fireSync`. Sync-планировщик очередь не держит, поэтому его `flush` — no-op. |
+
+## Примеры
+
+### Microtask-батчинг
+
+```ts twoslash
+import { createScheduler } from '@triggery/core';
+
+const sched = createScheduler('microtask');
+const log: number[] = [];
+
+sched.enqueue(() => log.push(1));
+sched.enqueue(() => log.push(2));
+sched.enqueue(() => log.push(3));
+
+// At this synchronous point, nothing has run yet.
+console.log('queued', log); // []
+
+await Promise.resolve(); // drain microtasks
+console.log('drained', log); // [1, 2, 3]
+```
+
+### Синхронный диспатч
+
+```ts twoslash
+import { createScheduler } from '@triggery/core';
+
+const sched = createScheduler('sync');
+const log: number[] = [];
+
+sched.enqueue(() => log.push(1));
+sched.enqueue(() => log.push(2));
+
+// Already executed inline.
+console.log(log); // [1, 2]
+```
+
+### Изоляция ошибок в microtask-режиме
+
+```ts twoslash
+import { createScheduler } from '@triggery/core';
+
+const sched = createScheduler('microtask');
+
+sched.enqueue(() => {
+  throw new Error('oops');
+});
+sched.enqueue(() => {
+  console.log('still runs');
+});
+
+await Promise.resolve();
+// Output: "[triggery] scheduler task failed: Error: oops"
+// Output: "still runs"
+```
+
+## Замечания
+
+<Aside type="tip">
+Рантайм выбирает планировщик per-trigger из поля `schedule: 'microtask' | 'sync'` в `createTrigger`. Звать `createScheduler` напрямую почти никогда не нужно — поставь триггеру `schedule: 'sync'`, если хочешь, чтобы он диспатчился в стеке вызывающей стороны.
+</Aside>
+
+<Aside type="caution">
+Ошибки из микротасок отлавливаются и логируются через `console.error`, но не пробрасываются дальше. Это защищает очередь: одна сломанная задача не валит всё, что стоит за ней. Падения per-run всплывают в инспекторе со статусом `'errored'` — используй инспектор, а не журнал ошибок планировщика, как источник истины.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createRuntime" description="Рантайм автоматически выбирает планировщик per-trigger." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="createFakeScheduler" description="Планировщик с виртуальным временем для тестов." href="/ru/api/testing/fake-scheduler/" />
+  <LinkCard title="Руководство по планированию" description="Microtask vs sync — когда что выбирать." href="/ru/guide/essentials/events/" />
+  <LinkCard title="Стратегии конкурентности" description="Как асинхронные обработчики переплетаются по каждой стратегии." href="/ru/guide/async/concurrency/" />
+</CardGrid>

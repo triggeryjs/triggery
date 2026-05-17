@@ -1,0 +1,101 @@
+---
+title: "@triggery/jotai"
+description: "Адаптер Jotai для Triggery — читай значение атома из условия триггера без подписки хост-компонента."
+sidebar:
+  order: 9
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Читай атом [Jotai](https://jotai.org) из условия Triggery. Pull-only: `store.get(atom)` вызывается только при срабатывании триггера, хост-компонент никогда не подписывается на обновления атома.
+
+[![npm](https://img.shields.io/npm/v/@triggery/jotai?style=flat-square)](https://www.npmjs.com/package/@triggery/jotai)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/jotai?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/jotai)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/jotai jotai" />
+
+Peer-зависимости: `react >= 18.0.0`, `jotai ^2`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `useJotaiCondition(trigger, name, store, atom, selector?)` | Регистрирует условие на основе атома. Поддерживает опциональный селектор-проекцию. |
+
+## Быстрый пример
+
+```tsx
+import { atom, createStore } from 'jotai';
+import { createTrigger } from '@triggery/core';
+import { useJotaiCondition } from '@triggery/jotai';
+
+type Settings = { sound: boolean; notifications: boolean };
+
+const settingsAtom = atom<Settings>({ sound: true, notifications: true });
+const store = createStore();
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({ body: event.payload.text });
+  },
+});
+
+function SettingsBridge() {
+  useJotaiCondition(messageTrigger, 'settings', store, settingsAtom);
+  return null;
+}
+```
+
+С селектором-проекцией:
+
+```ts
+useJotaiCondition(messageTrigger, 'settings', store, profileAtom, (p) => p.settings);
+```
+
+## Как это работает
+
+Pull-only: `store.get(atom)` вызывается **только** при срабатывании триггера, а не на каждое обновление атома. Хост-компонент никогда не ререндерится из-за изменений атома — это работа `useAtomValue`, она остаётся в тех компонентах, которые рендерят значение.
+
+## API
+
+```ts
+useJotaiCondition<V, S, K>(
+  trigger: Trigger<S>,
+  name: K,
+  store: { get<V>(atom: Atom<V>): V },
+  atom: Atom<V>,
+  selector?: (value: V) => ConditionMap<S>[K],
+): void
+```
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Экспортирует Trigger<S>." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="useJotaiCondition — это React-хук." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/zustand" description="Альтернативный адаптер для Zustand-сторов." href="/ru/packages/zustand/" />
+  <LinkCard title="@triggery/redux" description="Альтернативный адаптер для Redux-сторов." href="/ru/packages/redux/" />
+  <LinkCard title="@triggery/reatom" description="Адаптер атомов Reatom — похожая pull-only модель." href="/ru/packages/reatom/" />
+  <LinkCard title="@triggery/signals" description="Адаптер для @preact/signals-core и alien-signals." href="/ru/packages/signals/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/jotai)
+- [npm](https://www.npmjs.com/package/@triggery/jotai)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/jotai/CHANGELOG.md)

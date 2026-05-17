@@ -1,0 +1,91 @@
+---
+title: "Написание тестов"
+description: "Vitest, happy-dom, fakeScheduler, контрактные тесты для адаптеров и snapshot инспектора."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery тестируется сверху донизу связкой **Vitest** + **happy-dom**. У ядра нет импортов React/Solid/Vue, и тесты ядра проходят без DOM; тесты биндингов подключают testing-library для соответствующего фреймворка. Эта страница покрывает конвенции, которым следует каждый тест в монорепо.
+
+## Где живут тесты
+
+| Слой | Папка | Помощники |
+|---|---|---|
+| `@triggery/core` | `packages/core/__tests__/` | Без DOM; используется голый рантайм. |
+| Биндинги фреймворков | `packages/{react,solid,vue}/__tests__/` | `@testing-library/react` / `@solidjs/testing-library` / `@vue/test-utils`. |
+| Адаптеры | `packages/{zustand,redux,jotai,…}/__tests__/` | Тесты формы под адаптер + контрактные тесты. |
+| Codemod | `packages/codemod/__tests__/` | Snapshot-фикстуры вход/выход `.ts`-файлов. |
+| Плагин для ESLint | `packages/eslint-plugin/__tests__/` | `RuleTester` из `@typescript-eslint/rule-tester`. |
+
+Каждый новый публичный API требует хотя бы одного теста, прогоняющего его end-to-end (событие → условие-гейт → действие).
+
+## Фейковый шедулер
+
+По умолчанию шедулер микротасковый. Тестам, которым нужен детерминированный тайминг, стоит использовать фейковый шедулер из `@triggery/testing`:
+
+```ts
+import { createTestRuntime, mockAction, mockCondition, fakeScheduler } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { messageTrigger } from './message.trigger';
+
+it('debounces sound across a burst of messages', async () => {
+  const { runtime, advance } = fakeScheduler();
+  const rt = createTestRuntime({ triggers: [messageTrigger], runtime });
+  const play = vi.fn();
+  mockCondition(rt, messageTrigger, 'settings', { sound: true, notifications: true, dnd: false });
+  mockCondition(rt, messageTrigger, 'currentUserId', 'u-bob');
+  mockCondition(rt, messageTrigger, 'activeChannelId', null);
+  mockAction(rt, messageTrigger, 'playSound', play);
+
+  rt.fire('new-message', { /* … */ });
+  rt.fire('new-message', { /* … */ });
+  rt.fire('new-message', { /* … */ });
+
+  await advance(800);
+  expect(play).toHaveBeenCalledTimes(1);   // debounced
+});
+```
+
+Помощник `advance(ms)` крутит фейковые часы без шатких `setTimeout`.
+
+## Контрактные тесты для адаптеров
+
+Каждый адаптер (`@triggery/zustand`, `@triggery/redux`, …) поставляется с общим **сьютом контрактных тестов**, проверяющим:
+
+- Адаптер не подписывает компонент-хост (нет перерендера при изменении стора).
+- Обновления нижележащего состояния видны следующему запуску обработчика.
+- Размонтирование хоста снимает регистрацию условия.
+- `selector` вызывается с правильным аргументом и только на чтение.
+
+Когда добавляешь новый адаптер, импортируй контрактные тесты из `@triggery/testing/contract` и подложи сетап под свой адаптер. На ревью PR проверят, что контрактный сьют подключён.
+
+## Snapshot-тесты для инспектора
+
+Кольцевой буфер инспектора тестируется отстрелом фиксированной последовательности событий и snapshot-сравнением записанных входов:
+
+```ts
+expect(rt.inspector.entries()).toMatchInlineSnapshot(`/* … */`);
+```
+
+Если изменение в рантайме меняет вывод инспектора, snapshot-тест падает первым. Запускай `pnpm test -u` только после того, как убедился, что новый вывод верный.
+
+## Покрытие
+
+- **`@triggery/core` ≥ 95% строк** — проверяется в CI.
+- Биндинги, адаптеры, codemod, плагин для ESLint — целься в ≥ 90% по строкам и веткам.
+- Тесты для `if`/`else` веток внутри обработчиков должны покрывать обе руки; непокрытые защитные ветки допустимы при пометке `/* c8 ignore next */`.
+
+## Что тестировать не надо
+
+- Не тестируй, что React вызовет `useEffect` после рендера. Это работа React, не твоя.
+- Не делай snapshot отрендеренного HTML для теста хука. Используй контракт хука (зарегистрировано условие? вызвано действие?) как цель ассерта.
+- Не тестируй поведение нижележащей библиотеки состояния (например, что обновления стора Zustand уведомляют подписчиков). Доверься контрактному тесту адаптера на границе.
+
+<CardGrid>
+  <LinkCard title="Руководство по тестам (для пользователей)" description="Пользовательская версия этих паттернов." href="/ru/guide/testing/unit-testing/" />
+  <LinkCard title="Фейковый шедулер" description="advance(ms), как время устроено в тестах." href="/ru/guide/testing/fake-scheduler/" />
+  <LinkCard title="Стандарты кода" description="TypeScript strict, без any, только ESM." href="/ru/contributing/coding-standards/" />
+  <LinkCard title="@triggery/testing" description="Публичный API для тестов." href="/ru/packages/testing/" />
+</CardGrid>

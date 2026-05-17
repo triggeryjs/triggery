@@ -1,0 +1,201 @@
+---
+title: "createFakeScheduler"
+description: "Планировщик с виртуальными часами. Подменяет setTimeout / clearTimeout, чтобы таймерные обработчики стали детерминированными."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Независящий от тест-раннера виртуальный clock. После `install()` `globalThis.setTimeout` и `clearTimeout` подменяются, так что ни один реальный таймер не выстреливает — вместо этого `advance(ms)` гоняет каждый обратный вызов, который становится готов в окне. Полезно для тестов цепочек `actions.debounce / throttle / defer` без флака `await new Promise(setTimeout, …)`.
+
+Зависимости от `vi.useFakeTimers()` Vitest'а нет — работает одинаково в чистом `node:test`, Jest и обычном Vitest.
+
+## Импорт
+
+```ts
+import { createFakeScheduler } from '@triggery/testing';
+```
+
+## Сигнатура
+
+```ts
+function createFakeScheduler(): FakeScheduler;
+
+interface FakeScheduler {
+  install(): void;
+  uninstall(): void;
+  now(): number;
+  advance(ms: number): Promise<void>;
+  flushAll(): Promise<void>;
+  pending(): number;
+}
+```
+
+## Методы
+
+| Метод | Описание |
+|---|---|
+| `install()` | Подменить `globalThis.setTimeout` / `clearTimeout` на фейковый контроллер. Идемпотентно. |
+| `uninstall()` | Восстановить оригиналы, очистить ожидающие таймеры, сбросить виртуальные часы в 0. Безопасно звать многократно. |
+| `now()` | Текущее значение виртуальных часов в мс с момента install. |
+| `advance(ms)` | Сдвинуть часы вперёд на `ms` и прогнать каждый таймер, ставший готовым в этом окне. После — сливает микротаски. |
+| `flushAll()` | Прогнать каждый ожидающий таймер независимо от запланированного времени. Полезно для "забить на часы, посмотреть, что в итоге произойдёт". |
+| `pending()` | Сколько таймеров ещё ожидает. |
+
+## Примеры
+
+### Debounce сливается после ожидания
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
+const ft = createFakeScheduler();
+
+beforeEach(() => ft.install());
+afterEach(() => ft.uninstall());
+
+it('debounces keystrokes', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { keystroke: string };
+    actions: { search: string };
+  }>(
+    {
+      id: 'demo',
+      events: ['keystroke'],
+      handler({ event, actions }) {
+        actions.debounce(300).search?.(event.payload);
+      },
+    },
+    rt,
+  );
+
+  const search = vi.fn();
+  rt.mockAction(t, 'search', search);
+
+  rt.fireSync('keystroke', 'a');
+  rt.fireSync('keystroke', 'ab');
+  rt.fireSync('keystroke', 'abc');
+
+  await ft.advance(299);
+  expect(search).not.toHaveBeenCalled();
+
+  await ft.advance(1);
+  expect(search).toHaveBeenCalledExactlyOnceWith('abc');
+});
+```
+
+### Окно throttle
+
+```ts twoslash
+import { createFakeScheduler } from '@triggery/testing';
+import { expect, it } from 'vitest';
+
+it('runs at most one timer per window', async () => {
+  const ft = createFakeScheduler();
+  ft.install();
+  try {
+    let calls = 0;
+    setTimeout(() => calls++, 100);
+    setTimeout(() => calls++, 200);
+    setTimeout(() => calls++, 300);
+
+    expect(ft.pending()).toBe(3);
+    await ft.advance(150);
+    expect(calls).toBe(1);
+
+    await ft.flushAll();
+    expect(calls).toBe(3);
+    expect(ft.pending()).toBe(0);
+  } finally {
+    ft.uninstall();
+  }
+});
+```
+
+### Defer
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('defers an action by a fixed delay', async () => {
+  const ft = createFakeScheduler();
+  ft.install();
+  try {
+    const rt = createTestRuntime();
+    const t = createTrigger<{
+      events: { ping: void };
+      actions: { log: void };
+    }>(
+      {
+        id: 'demo',
+        events: ['ping'],
+        handler({ actions }) {
+          actions.defer(500).log?.();
+        },
+      },
+      rt,
+    );
+
+    const log = vi.fn();
+    rt.mockAction(t, 'log', log);
+
+    rt.fireSync('ping');
+    await ft.advance(499);
+    expect(log).not.toHaveBeenCalled();
+    await ft.advance(1);
+    expect(log).toHaveBeenCalledOnce();
+  } finally {
+    ft.uninstall();
+  }
+});
+```
+
+### Опрос часов
+
+```ts twoslash
+import { createFakeScheduler } from '@triggery/testing';
+
+const ft = createFakeScheduler();
+ft.install();
+
+setTimeout(() => {}, 250);
+console.log(ft.now());      // 0
+console.log(ft.pending());  // 1
+await ft.advance(250);
+console.log(ft.now());      // 250
+console.log(ft.pending());  // 0
+
+ft.uninstall();
+```
+
+## Замечания
+
+<Aside type="tip" title="Всегда парь install / uninstall">
+Забытый `uninstall()` подтекает фейковые таймеры между тестами — последующие тесты, использующие настоящий `setTimeout`, будут блокироваться вечно (фейковый сам по себе не выстреливает). Используй `beforeEach`/`afterEach` или `try`/`finally`, чтобы пара была надёжной.
+</Aside>
+
+<Aside type="caution" title="Микротаски vs таймеры">
+`advance()` сливает ожидающие микротаски после прогона таймеров, но только те, что заведены в ходе advance. Для чисто микротасковых async-цепочек предпочитай [`flushMicrotasks`](/ru/api/testing/flush-microtasks/) — `createFakeScheduler` не перехватывает `queueMicrotask` или резолв промисов.
+</Aside>
+
+<Aside>
+Тестовый планировщик намеренно ограничен `setTimeout` и `clearTimeout`. `setInterval`, `setImmediate` и `process.nextTick` Node'а не виртуализуются — если твой обработчик использует одно из этого, подключай `vi.useFakeTimers()` вместо.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTestRuntime" description="Парься с тестовым рантаймом для тестов триггеров." href="/ru/api/testing/create-test-runtime/" />
+  <LinkCard title="flushMicrotasks" description="Слить микротаски (без перехвата таймеров)." href="/ru/api/testing/flush-microtasks/" />
+  <LinkCard title="createScheduler" description="Настоящий планировщик рантайма — то, что мы подменяем." href="/ru/api/core/create-scheduler/" />
+  <LinkCard title="Руководство по debounce и throttle" description="Когда использовать debounce / throttle / defer в обработчиках." href="/ru/guide/async/debouncing-throttling/" />
+</CardGrid>

@@ -1,0 +1,177 @@
+---
+title: "mockAction"
+description: "Stub a trigger action handler in a test runtime. Typically receives a vi.fn() / jest.fn()."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+A method on the [`TestRuntime`](/api/testing/create-test-runtime/) returned by `createTestRuntime`. Registers an action handler for a trigger. The test-time equivalent of [`useAction`](/api/react/use-action/) — same registration mechanism, no React.
+
+The handler is typically a `vi.fn()` or `jest.fn()` so you can assert call counts and arguments directly.
+
+## Import
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+const rt = createTestRuntime();
+rt.mockAction(/* ... */);
+```
+
+## Signature
+
+```ts
+mockAction<S extends TriggerSchema, K extends ActionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  handler: ActionFn<ActionMap<S>[K]>,
+): RegistrationToken;
+
+type ActionFn<P> = [P] extends [void] ? () => void : (payload: P) => void;
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `trigger` | `Trigger<S>` | The trigger whose action you're stubbing. |
+| `name` | `K extends ActionKey<S>` | An action declared in the trigger's schema. |
+| `handler` | `ActionFn<P>` | The mock implementation. Void-payload actions take `() => void`. |
+
+## Returns
+
+A `RegistrationToken` with `{ unregister(): void }`.
+
+## Examples
+
+### Assert call args
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('calls showToast with the right payload', () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events:  { 'new-message': { author: string; text: string } };
+    actions: { showToast: { title: string } };
+  }>(
+    {
+      id: 'demo',
+      events: ['new-message'],
+      handler({ event, actions }) {
+        actions.showToast?.({ title: event.payload.author });
+      },
+    },
+    rt,
+  );
+
+  const showToast = vi.fn();
+  rt.mockAction(t, 'showToast', showToast);
+
+  rt.fireSync('new-message', { author: 'Alice', text: 'hi' });
+  expect(showToast).toHaveBeenCalledExactlyOnceWith({ title: 'Alice' });
+});
+```
+
+### Void payload
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { vi } from 'vitest';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { close: void };
+  actions: { onClose: void };
+}>(
+  {
+    id: 'demo',
+    events: ['close'],
+    handler({ actions }) {
+      actions.onClose?.();
+    },
+  },
+  rt,
+);
+
+const onClose = vi.fn();
+rt.mockAction(t, 'onClose', onClose);
+rt.fireSync('close');
+```
+
+### Async handler
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { vi } from 'vitest';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { save: { id: string } };
+  actions: { persist: { id: string } };
+}>(
+  {
+    id: 'demo',
+    events: ['save'],
+    async handler({ event, actions }) {
+      await actions.persist?.(event.payload);
+    },
+  },
+  rt,
+);
+
+const persist = vi.fn(async (_payload: { id: string }) => {
+  await Promise.resolve();
+});
+rt.mockAction(t, 'persist', persist);
+```
+
+### Per-test cleanup with unregister
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { ping: void };
+  actions: { log: void };
+}>(
+  { id: 'demo', events: ['ping'], handler({ actions }) { actions.log?.(); } },
+  rt,
+);
+
+const first = rt.mockAction(t, 'log', () => console.log('first'));
+rt.fireSync('ping'); // "first"
+
+first.unregister();
+rt.mockAction(t, 'log', () => console.log('second'));
+rt.fireSync('ping'); // "second"
+```
+
+## Notes
+
+<Aside type="tip">
+Don't forget the `?.` when invoking actions inside the handler. Triggery treats every action as optional — the trigger's handler must guard against an unregistered action. Tests should mock every action the handler may call; missing mocks produce silent no-ops, which can hide real bugs.
+</Aside>
+
+<Aside type="caution">
+Throwing inside a mock surfaces in the runtime as `status: 'errored'` on the inspector snapshot, and propagates to middleware `onError`. The fire itself doesn't crash — wrap with `expect(...).rejects` only if your test wires the action through a `Promise` chain you control.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTestRuntime" description="The runtime that exposes this method." href="/api/testing/create-test-runtime/" />
+  <LinkCard title="mockCondition" description="Stub a condition — the other half of test wiring." href="/api/testing/mock-condition/" />
+  <LinkCard title="useAction" description="Runtime equivalent in React." href="/api/react/use-action/" />
+  <LinkCard title="Testing guide" description="Trigger-first test patterns." href="/guide/testing/unit-testing/" />
+</CardGrid>

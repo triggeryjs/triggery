@@ -1,0 +1,50 @@
+---
+title: Packages
+description: "All 21 packages published under the @triggery/* scope, grouped by tier."
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery ships as a monorepo. Each package is independently published, owns its own README, and is documented below.
+
+## Tier 1 — runtime
+
+The core, bindings and test runtime. Required for any project using Triggery.
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Framework-agnostic orchestration runtime." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="React 18+/19 bindings." href="/packages/react/" />
+  <LinkCard title="@triggery/solid" description="SolidJS bindings." href="/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Vue 3 bindings." href="/packages/vue/" />
+  <LinkCard title="@triggery/testing" description="Test runtime, fakeScheduler, mocks." href="/packages/testing/" />
+</CardGrid>
+
+## Tier 2 — adapters & integrations
+
+Optional adapters for popular state managers, event sources and build tools.
+
+<CardGrid>
+  <LinkCard title="@triggery/zustand" description="Zustand store → condition adapter." href="/packages/zustand/" />
+  <LinkCard title="@triggery/redux" description="Redux store → condition adapter." href="/packages/redux/" />
+  <LinkCard title="@triggery/jotai" description="Jotai atom → condition adapter." href="/packages/jotai/" />
+  <LinkCard title="@triggery/mobx" description="MobX observable → condition adapter." href="/packages/mobx/" />
+  <LinkCard title="@triggery/reatom" description="Reatom atom → condition adapter." href="/packages/reatom/" />
+  <LinkCard title="@triggery/signals" description="@preact/signals → condition adapter." href="/packages/signals/" />
+  <LinkCard title="@triggery/query" description="TanStack Query → condition adapter." href="/packages/query/" />
+  <LinkCard title="@triggery/dom" description="DOM/document/window events → triggers." href="/packages/dom/" />
+  <LinkCard title="@triggery/socket" description="socket.io / WebSocket events → triggers." href="/packages/socket/" />
+  <LinkCard title="@triggery/vite" description="Vite plugin: auto-discovery + HMR." href="/packages/vite/" />
+</CardGrid>
+
+## Tier 3 — DevTools & tooling
+
+DevTools, the ESLint plugin, codemods and the CLI.
+
+<CardGrid>
+  <LinkCard title="@triggery/devtools-redux" description="Bridge runtime events to Redux DevTools." href="/packages/devtools-redux/" />
+  <LinkCard title="@triggery/devtools-panel" description="In-app inspector React components." href="/packages/devtools-panel/" />
+  <LinkCard title="@triggery/devtools-bridge" description="Page-side bridge for external inspectors." href="/packages/devtools-bridge/" />
+  <LinkCard title="@triggery/eslint-plugin" description="8 lint rules + flat-config presets." href="/packages/eslint-plugin/" />
+  <LinkCard title="@triggery/codemod" description="ts-morph codemods for migrating to Triggery." href="/packages/codemod/" />
+  <LinkCard title="@triggery/cli" description="triggery create / scaffold / graph / lint." href="/packages/cli/" />
+</CardGrid>

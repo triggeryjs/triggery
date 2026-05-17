@@ -28,6 +28,18 @@ Triggery is pre-1.0. The API is unstable; minor versions may introduce breaking 
 
 ## Documentation
 
+The full documentation site is at <https://triggeryjs.github.io> — Astro Starlight, source under [`apps/docs/`](https://github.com/triggeryjs/triggery/tree/main/apps/docs).
+
+- [Docs homepage](https://triggeryjs.github.io/): landing, hero, feature grid, install commands.
+- [Guide](https://triggeryjs.github.io/guide/): Getting started, Why Triggery, Essentials, Async, Architecture, Advanced, TypeScript, Testing, SSR.
+- [Recipes](https://triggeryjs.github.io/recipes/): per-framework cookbooks for React (10), Solid and Vue (canonical mirrors), plus migration recipes.
+- [API reference](https://triggeryjs.github.io/api/): one page per public symbol across core / react / solid / vue / testing / vite / eslint-plugin / codemod / cli.
+- [Packages](https://triggeryjs.github.io/packages/): catalogue of all 21 `@triggery/*` packages by tier.
+- [Migration](https://triggeryjs.github.io/migration/): from useEffect / RTK listenerMiddleware / Redux Saga / redux-observable / mitt + comparisons vs XState / Effector / RxJS / MobX.
+- [Ecosystem](https://triggeryjs.github.io/ecosystem/) and [Contributing](https://triggeryjs.github.io/contributing/).
+
+Repo metadata (still on GitHub):
+
 - [README](https://github.com/triggeryjs/triggery/blob/main/README.md): pitch, install, the canonical scenario example, packages, performance.
 - [CONTRIBUTING](https://github.com/triggeryjs/triggery/blob/main/CONTRIBUTING.md): development setup, repo layout, workflow, coding standards, tests, benchmarks, changesets, commits, PRs, RFCs.
 - [ROADMAP](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md): phases to 1.0 and V2.

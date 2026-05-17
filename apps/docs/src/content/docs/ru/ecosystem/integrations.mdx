@@ -1,0 +1,55 @@
+---
+title: "Интеграции"
+description: "Сборщики, линтер, codemod-скрипты, CLI и devtools, которые подключаются к Triggery."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Адаптеры оборачивают внешнее состояние или события в примитивы Triggery; *интеграции* живут на стороне developer experience — они едут с твоим тулингом, а не с рантаймом.
+
+## Сборщики
+
+| Пакет | Что делает |
+|---|---|
+| [`@triggery/vite`](/ru/packages/vite/) ![npm](https://img.shields.io/npm/v/@triggery/vite?label=&style=flat-square) | Плагин для Vite: автоимпорт каждого файла `*.trigger.ts` через модуль `virtual:triggery-registry` и поддержка HMR при правке триггеров. Никаких ручных `import './triggers/foo.trigger'`. |
+
+Плагины автодискавери для Webpack и Rspack — в [роадмапе](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) на цикл 1.0.
+
+## Качество кода
+
+| Пакет | Что делает |
+|---|---|
+| [`@triggery/eslint-plugin`](/ru/packages/eslint-plugin/) ![npm](https://img.shields.io/npm/v/@triggery/eslint-plugin?label=&style=flat-square) | Плагин для ESLint 9 в flat-config. Восемь правил: `no-event-cascade`, `no-dynamic-id`, `hook-rules`, `exhaustive-conditions`, `exhaustive-required`, `max-handler-size`, `max-ports-per-trigger`, `prefer-named-hook`. Поставляются пресеты `recommended` и `strict`. |
+| [`@triggery/codemod`](/ru/packages/codemod/) ![npm](https://img.shields.io/npm/v/@triggery/codemod?label=&style=flat-square) | Codemod-скрипты на ts-morph. `extract-trigger` вытаскивает блок `useEffect` в файл `*.trigger.ts`; `migrate-from-listener-middleware` генерирует по одному триггеру на каждый вызов `startListening` в RTK. CLI и программное API. |
+
+## CLI и скаффолдинг
+
+| Пакет | Что делает |
+|---|---|
+| [`@triggery/cli`](/ru/packages/cli/) ![npm](https://img.shields.io/npm/v/@triggery/cli?label=&style=flat-square) | `triggery create` (создание проекта из шаблонов через giget), `triggery scaffold trigger` (новый файл `*.trigger.ts`), `triggery graph` (печать графа триггеров в JSON / DOT / Markdown), `triggery lint` (запуск ESLint с подмешанным `recommended`-пресетом). |
+
+## DevTools
+
+| Пакет | Что делает |
+|---|---|
+| [`@triggery/devtools-redux`](/ru/packages/devtools-redux/) ![npm](https://img.shields.io/npm/v/@triggery/devtools-redux?label=&style=flat-square) | Middleware, стримящий события рантайма в браузерное расширение Redux DevTools. Помечает actions как `triggery/<id>/fire` и т.п. Работает независимо от того, используешь ли ты Redux. |
+| [`@triggery/devtools-panel`](/ru/packages/devtools-panel/) ![npm](https://img.shields.io/npm/v/@triggery/devtools-panel?label=&style=flat-square) | Готовые React-компоненты для in-app инспекции — `<InspectorView>`, `<TriggerSnapshotView>`. Подключай их за feature-флагом в dev. |
+| [`@triggery/devtools-bridge`](/ru/packages/devtools-bridge/) ![npm](https://img.shields.io/npm/v/@triggery/devtools-bridge?label=&style=flat-square) | `installDevtoolsBridge(runtime)` — мост на стороне страницы, выставляющий рантайм для внешних инспекторов (расширение Chrome, отдельная панель). |
+| Расширение Chrome DevTools | Подгружается распакованным из [`extensions/chrome-devtools`](https://github.com/triggeryjs/triggery/tree/main/extensions/chrome-devtools). Живая панель инспектора поверх `devtools-bridge`. |
+
+## После 1.0
+
+- `@triggery/devtools-replay` — запись / повтор / time-travel.
+- `@triggery/otel` — по одному OpenTelemetry-спану на каждый запуск обработчика.
+- `@triggery/sentry` — адаптер для Sentry breadcrumbs.
+- `@triggery/broadcast` — синхронизация между вкладками через `BroadcastChannel`.
+- Расширение для VS Code — лензa «used by N triggers», навигация «Go to trigger».
+
+<CardGrid>
+  <LinkCard title="Адаптеры" description="Пакеты для менеджеров состояния и источников событий." href="/ru/ecosystem/adapters/" />
+  <LinkCard title="Роадмап" description="Что отгружено, что в планах." href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md" />
+  <LinkCard title="Руководство по CLI" description="triggery create / scaffold / graph / lint." href="/ru/packages/cli/" />
+  <LinkCard title="Руководство по кодмоду" description="extract-trigger и компания." href="/ru/packages/codemod/" />
+</CardGrid>

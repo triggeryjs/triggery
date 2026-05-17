@@ -1,0 +1,166 @@
+---
+title: Notification pipeline
+description: "Toast + sound + badge in three independent Solid components. Same trigger as the React recipe."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+This is the Solid version of the flagship Triggery scenario. Read the [React recipe](/recipes/react/notification-pipeline/) first — the **trigger file is identical**, and the prose there explains the scenario in detail. Below is the Solid-specific component code.
+
+<StackBlitzButton path="examples/vite-solid-notifications" label="Open in StackBlitz" />
+
+## The trigger (identical)
+
+Lives in `@triggery/core`; no framework dependency. Copy as-is from the React recipe.
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
+type Message  = { id: string; author: string; authorId: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null; currentUserId: string };
+  actions:    {
+    showToast:      { title: string; body: string };
+    playSound:      'beep' | 'mention';
+    incrementBadge: string;
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    const msg = event.payload;
+    if (msg.channelId === conditions.activeChannelId) return;
+    if (msg.authorId === conditions.currentUserId) return;
+
+    actions.incrementBadge?.(msg.channelId);
+    if (check.is('settings', s => s.notifications))    actions.showToast?.({ title: msg.author, body: msg.text });
+    if (check.is('settings', s => s.sound && !s.dnd))  actions.debounce(800).playSound?.('beep');
+  },
+});
+```
+
+## Providers (Solid signals)
+
+```tsx title="src/features/settings/SettingsPanel.tsx"
+import { useCondition } from '@triggery/solid';
+import { createSignal } from 'solid-js';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+export function SettingsPanel() {
+  const [settings, setSettings] = createSignal({ sound: true, notifications: true, dnd: false });
+  useCondition(messageTrigger, 'settings', settings);
+
+  return (
+    <fieldset>
+      <legend>Notifications</legend>
+      <label>
+        <input
+          type="checkbox"
+          checked={settings().notifications}
+          onChange={e => setSettings(s => ({ ...s, notifications: e.currentTarget.checked }))}
+        />
+        Show toasts
+      </label>
+    </fieldset>
+  );
+}
+```
+
+```tsx title="src/features/session/SessionProvider.tsx"
+import { useCondition } from '@triggery/solid';
+import type { ParentProps } from 'solid-js';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+export function SessionProvider(props: ParentProps<{ userId: string }>) {
+  useCondition(messageTrigger, 'currentUserId', () => props.userId);
+  return <>{props.children}</>;
+}
+```
+
+```tsx title="src/features/chat/Chat.tsx"
+import { useEvent, useCondition } from '@triggery/solid';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+export function Chat(props: { channelId: string | null }) {
+  useCondition(messageTrigger, 'activeChannelId', () => props.channelId);
+  const fireMessage = useEvent(messageTrigger, 'new-message');
+
+  return (
+    <button
+      onClick={() =>
+        fireMessage({
+          id:        crypto.randomUUID(),
+          author:    'Alice',
+          authorId:  'u-alice',
+          text:      'hi',
+          channelId: 'c-lunch',
+        })
+      }
+    >
+      simulate inbound
+    </button>
+  );
+}
+```
+
+## Reactor
+
+```tsx title="src/features/notifications/NotificationLayer.tsx"
+import { useAction } from '@triggery/solid';
+import { messageTrigger } from '../../triggers/message.trigger';
+import { useBadgeStore } from '../../stores/badge';
+
+export function NotificationLayer() {
+  let audio: HTMLAudioElement | undefined;
+  const increment = useBadgeStore(s => s.increment);
+
+  useAction(messageTrigger, 'showToast', ({ title, body }) => {
+    console.log('toast', title, body);
+  });
+  useAction(messageTrigger, 'playSound', () => {
+    audio ??= new Audio('/beep.mp3');
+    audio.play().catch(() => {});
+  });
+  useAction(messageTrigger, 'incrementBadge', channelId => increment(channelId));
+
+  return null;
+}
+```
+
+## Wire the app
+
+```tsx title="src/index.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/solid';
+import { render } from 'solid-js/web';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+render(
+  () => (
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  ),
+  document.getElementById('root')!,
+);
+```
+
+The whole rule is in `message.trigger.ts`. Switching from React to Solid changed only the hooks-as-side-effects glue.
+
+## Related
+
+<CardGrid>
+  <LinkCard title="React version (canonical)" href="/recipes/react/notification-pipeline/" description="The full narrative, including comparison to useEffect." />
+  <LinkCard title="Vue version" href="/recipes/vue/notification-pipeline/" description="Composition API equivalent." />
+  <LinkCard title="Solid counter" href="/recipes/solid/counter/" description="The smaller hello-world recipe." />
+  <LinkCard title="@triggery/solid package" href="/packages/solid/" description="Full hook reference." />
+</CardGrid>

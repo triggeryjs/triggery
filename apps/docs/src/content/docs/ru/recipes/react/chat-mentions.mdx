@@ -1,0 +1,335 @@
+---
+title: "Упоминания в чате → вебхук"
+description: "Когда пользователя @-упомянули, можно отправить исходящий вебхук и отреагировать на ответ — чистые вложенные асинхронные действия через один триггер."
+sidebar:
+  order: 8
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Частый продуктовый паттерн: когда пользователя @-упомянули в чате, можно опционально переслать упоминание в исходящую интеграцию (Slack, Discord, произвольный URL вебхука), затем отреагировать на результат ретрансляции — и дать пользователю повторить или выключить интеграцию без переписывания кода. Triggery аккуратно обрабатывает *цепочку* асинхронной работы: одно событие на входе, один триггер ведёт весь пайплайн, побочные эффекты остаются в компонентах, которым они принадлежат.
+
+<StackBlitzButton path="examples/vite-react-chat-mentions" label="Открыть в StackBlitz" />
+
+## Сценарий
+
+1. **Чат запускает `chat:mentioned`** с сообщением и текущим состоянием интеграции.
+2. **Если интеграция включена**, триггер вызывает action `postToWebhook` (асинхронный сетевой вызов).
+3. **Реактор вебхука** запускает событие-продолжение (`chat:webhook-response`) — успех или ошибка.
+4. **Второй триггер** обрабатывает ответ: успех → тост, ошибка → тост и предложение выключить интеграцию.
+
+## Структура файлов
+
+<FileTree>
+- src/
+  - triggers/
+    - **mention.trigger.ts** правило ретрансляции
+    - **webhook-response.trigger.ts** реакция на результат
+  - features/
+    - chat/
+      - ChatStream.tsx продьюсер (`chat:mentioned`)
+    - integration/
+      - IntegrationProvider.tsx провайдер (`integration`)
+      - WebhookReactor.tsx реактор (`postToWebhook` → fetch)
+    - notifications/
+      - MentionNotifier.tsx реактор (тосты успеха и ошибки)
+</FileTree>
+
+## 1. Триггер упоминания
+
+```ts title="src/triggers/mention.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type Integration = {
+  enabled:    boolean;
+  webhookUrl: string;
+  kind:       'slack' | 'discord' | 'custom';
+};
+
+type Mention = {
+  channelId:   string;
+  messageId:   string;
+  fromUserId:  string;
+  fromName:    string;
+  text:        string;
+};
+
+export const mentionTrigger = createTrigger<{
+  events: {
+    'chat:mentioned': Mention;
+  };
+  conditions: {
+    integration: Integration;
+  };
+  actions: {
+    showMentionToast: { from: string; text: string };
+    postToWebhook:    { url: string; kind: Integration['kind']; payload: Mention };
+  };
+}>({
+  id: 'chat-mention',
+  events: ['chat:mentioned'],
+  required: ['integration'],
+  handler({ event, conditions, actions, check }) {
+    const mention = event.payload;
+
+    // Always notify the user themselves — the integration is *extra*.
+    actions.showMentionToast?.({ from: mention.fromName, text: mention.text });
+
+    // Relay only if the integration is enabled.
+    if (check.is('integration', i => i.enabled && i.webhookUrl.length > 0)) {
+      const i = conditions.integration!;
+      actions.postToWebhook?.({
+        url:     i.webhookUrl,
+        kind:    i.kind,
+        payload: mention,
+      });
+    }
+  },
+});
+```
+
+## 2. Реактор вебхука (action делает async, запускает событие-продолжение)
+
+Реактор — место, где реально происходит сетевой вызов. Это async-функция — actions могут возвращать promise. Когда вызов завершается, реактор запускает `chat:webhook-response`, который подхватит второй триггер.
+
+```tsx title="src/features/integration/WebhookReactor.tsx"
+import { useAction, useEvent } from '@triggery/react';
+import { mentionTrigger } from '../../triggers/mention.trigger';
+import { webhookResponseTrigger } from '../../triggers/webhook-response.trigger';
+
+export function WebhookReactor() {
+  const fireResponse = useEvent(webhookResponseTrigger, 'chat:webhook-response');
+
+  useAction(mentionTrigger, 'postToWebhook', async ({ url, kind, payload }) => {
+    try {
+      const body = formatForKind(kind, payload);
+      const res  = await fetch(url, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      fireResponse({ ok: true,  url, kind });
+    } catch (err) {
+      fireResponse({ ok: false, url, kind, error: (err as Error).message });
+    }
+  });
+
+  return null;
+}
+
+function formatForKind(kind: 'slack' | 'discord' | 'custom', m: { fromName: string; text: string }) {
+  if (kind === 'slack')   return { text: `*${m.fromName}* mentioned you: ${m.text}` };
+  if (kind === 'discord') return { content: `**${m.fromName}** mentioned you: ${m.text}` };
+  return m; // raw payload for custom webhooks
+}
+```
+
+<Aside type="tip">
+Это канонический паттерн «action делает работу, потом запускает событие-продолжение». Рантайм автоматически переносит метаданные каскада (id родительского запуска, глубину) — devtools покажут цепочку, и сразу видно, какой ответ вебхука к какому упоминанию относится.
+</Aside>
+
+## 3. Триггер ответа
+
+```ts title="src/triggers/webhook-response.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const webhookResponseTrigger = createTrigger<{
+  events: {
+    'chat:webhook-response':
+      | { ok: true;  url: string; kind: 'slack' | 'discord' | 'custom' }
+      | { ok: false; url: string; kind: 'slack' | 'discord' | 'custom'; error: string };
+  };
+  actions: {
+    showRelaySuccessToast: { kind: 'slack' | 'discord' | 'custom' };
+    showRelayErrorToast:   { kind: 'slack' | 'discord' | 'custom'; error: string };
+  };
+}>({
+  id: 'chat-webhook-response',
+  events: ['chat:webhook-response'],
+  handler({ event, actions }) {
+    const r = event.payload;
+    if (r.ok) actions.showRelaySuccessToast?.({ kind: r.kind });
+    else      actions.showRelayErrorToast?.({ kind: r.kind, error: r.error });
+  },
+});
+```
+
+Два триггера специально остаются раздельными — правило упоминания про «надо ли пересылать?», правило ответа — про «что делать с результатом?». Каждое может развиваться независимо.
+
+## 4. Продьюсер и провайдеры
+
+```tsx title="src/features/chat/ChatStream.tsx"
+import { useEvent } from '@triggery/react';
+import { mentionTrigger } from '../../triggers/mention.trigger';
+
+export function ChatStream({
+  currentUserId,
+  messages,
+}: {
+  currentUserId: string;
+  messages: readonly { id: string; channelId: string; authorId: string; authorName: string; text: string; mentions: readonly string[] }[];
+}) {
+  const fireMentioned = useEvent(mentionTrigger, 'chat:mentioned');
+
+  // Fire on every newly visible mention. In a real app you'd wire this to your
+  // streaming-message subscription; for the recipe we'll show the button form.
+  return (
+    <ul>
+      {messages.map(m =>
+        m.mentions.includes(currentUserId) ? (
+          <li key={m.id}>
+            <strong>{m.authorName}</strong>: {m.text}
+            <button
+              type="button"
+              onClick={() =>
+                fireMentioned({
+                  channelId:  m.channelId,
+                  messageId:  m.id,
+                  fromUserId: m.authorId,
+                  fromName:   m.authorName,
+                  text:       m.text,
+                })
+              }
+            >
+              simulate mention arrival
+            </button>
+          </li>
+        ) : null,
+      )}
+    </ul>
+  );
+}
+```
+
+```tsx title="src/features/integration/IntegrationProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { mentionTrigger, type Integration } from '../../triggers/mention.trigger';
+
+export function IntegrationProvider({
+  integration,
+  children,
+}: {
+  integration: Integration;
+  children: React.ReactNode;
+}) {
+  useCondition(mentionTrigger, 'integration', () => integration, [integration]);
+  return <>{children}</>;
+}
+```
+
+## 5. Нотификатор
+
+```tsx title="src/features/notifications/MentionNotifier.tsx"
+import { useAction } from '@triggery/react';
+import { toast } from 'sonner';
+import { mentionTrigger } from '../../triggers/mention.trigger';
+import { webhookResponseTrigger } from '../../triggers/webhook-response.trigger';
+
+export function MentionNotifier() {
+  useAction(mentionTrigger, 'showMentionToast', ({ from, text }) => {
+    toast(`${from} mentioned you`, { description: text });
+  });
+
+  useAction(webhookResponseTrigger, 'showRelaySuccessToast', ({ kind }) => {
+    toast.success(`Relayed to ${kind}.`);
+  });
+
+  useAction(webhookResponseTrigger, 'showRelayErrorToast', ({ kind, error }) => {
+    toast.error(`Couldn't relay to ${kind}.`, { description: error });
+  });
+
+  return null;
+}
+```
+
+## 6. Собираем вместе
+
+```tsx title="src/App.tsx"
+import { useState } from 'react';
+import { ChatStream } from './features/chat/ChatStream';
+import { IntegrationProvider } from './features/integration/IntegrationProvider';
+import { MentionNotifier } from './features/notifications/MentionNotifier';
+import { WebhookReactor } from './features/integration/WebhookReactor';
+
+const sampleMessages = [
+  { id: 'm1', channelId: 'c1', authorId: 'u-alice', authorName: 'Alice',
+    text: 'hey @bob — can you take a look at the PR?', mentions: ['u-bob'] },
+];
+
+export function App() {
+  const [integration] = useState({
+    enabled: true,
+    webhookUrl: 'https://hooks.slack.com/services/T0/B0/X',
+    kind: 'slack' as const,
+  });
+
+  return (
+    <IntegrationProvider integration={integration}>
+      <ChatStream currentUserId="u-bob" messages={sampleMessages} />
+      <WebhookReactor />
+      <MentionNotifier />
+    </IntegrationProvider>
+  );
+}
+```
+
+## Тесты цепочки
+
+```ts title="src/triggers/mention.trigger.test.ts"
+import { createTestRuntime, mockAction, mockCondition } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { mentionTrigger } from './mention.trigger';
+
+describe('chat-mention', () => {
+  it('relays to the webhook when integration is enabled', async () => {
+    const rt = createTestRuntime({ triggers: [mentionTrigger] });
+    const postToWebhook = vi.fn();
+    mockCondition(rt, mentionTrigger, 'integration', {
+      enabled: true,
+      webhookUrl: 'https://example.com/hook',
+      kind: 'custom',
+    });
+    mockAction(rt, mentionTrigger, 'postToWebhook', postToWebhook);
+    mockAction(rt, mentionTrigger, 'showMentionToast', () => {});
+
+    await rt.fire('chat:mentioned', {
+      channelId: 'c1', messageId: 'm1', fromUserId: 'u-a',
+      fromName: 'Alice', text: 'hi',
+    });
+
+    expect(postToWebhook).toHaveBeenCalledWith({
+      url: 'https://example.com/hook',
+      kind: 'custom',
+      payload: expect.any(Object),
+    });
+  });
+
+  it('skips the webhook when integration is disabled', async () => {
+    const rt = createTestRuntime({ triggers: [mentionTrigger] });
+    const postToWebhook = vi.fn();
+    mockCondition(rt, mentionTrigger, 'integration', {
+      enabled: false, webhookUrl: '', kind: 'custom',
+    });
+    mockAction(rt, mentionTrigger, 'postToWebhook', postToWebhook);
+    mockAction(rt, mentionTrigger, 'showMentionToast', () => {});
+
+    await rt.fire('chat:mentioned', {
+      channelId: 'c1', messageId: 'm1', fromUserId: 'u-a',
+      fromName: 'Alice', text: 'hi',
+    });
+
+    expect(postToWebhook).not.toHaveBeenCalled();
+  });
+});
+```
+
+## Варианты и см. также
+
+<CardGrid>
+  <LinkCard title="Каскад" href="/ru/guide/architecture/cascade/" description="Как отслеживаются и ограничиваются цепочки action → fireEvent." />
+  <LinkCard title="useAction" href="/ru/api/react/use-action/" description="Справочник по хуку." />
+</CardGrid>

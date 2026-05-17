@@ -1,0 +1,175 @@
+---
+title: createTrigger
+description: "Define a typed trigger and register it in a runtime. The only constructor in the public API."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+The only constructor in Triggery. Returns a `Trigger<Schema>` registered in the given runtime (or the default runtime if omitted). Most apps create one trigger per scenario, one file per trigger.
+
+## Import
+
+```ts
+import { createTrigger } from '@triggery/core';
+```
+
+## Signature
+
+```ts
+function createTrigger<S extends TriggerSchema>(
+  config: CreateTriggerConfig<S>,
+  runtime?: Runtime,
+): Trigger<S>;
+```
+
+The generic `S` is the schema — three optional maps for events, conditions and actions. It is **never inferred** in normal use; always passed explicitly.
+
+## Schema
+
+```ts
+type TriggerSchema = {
+  events?:     Record<string, unknown>;  // payload type per event name
+  conditions?: Record<string, unknown>;  // value type per condition name
+  actions?:    Record<string, unknown>;  // payload type per action name
+};
+```
+
+For a void payload, use `void` (events) or `undefined` (actions). Names can be any valid string; convention is kebab-case verbs for events, camelCase for conditions and actions.
+
+## Config
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `id` | `string` (literal) | yes | — | Unique runtime registry key. Must be a string literal — see [`no-dynamic-id`](/api/eslint-plugin/recommended/). |
+| `events` | `readonly EventKey<S>[]` | yes | — | Event names from `S['events']` this trigger reacts to. |
+| `required` | `readonly ConditionKey<S>[]` | no | `[]` | Conditions that must be registered for the handler to run. |
+| `schedule` | `'microtask' \| 'sync'` | no | `'microtask'` | When to dispatch matching events. |
+| `concurrency` | [`ConcurrencyStrategy`](/api/core/types/runtime-options/) | no | `'take-latest'` | How async handler runs interact. |
+| `scope` | `string` | no | `''` | Restrict to a `<TriggerScope id="…">` subtree. |
+| `handler` | [`TriggerHandler<S>`](/api/core/types/trigger-ctx/) | yes | — | Function called when an event matches and `required` are satisfied. |
+
+## Returns
+
+A [`Trigger<S>`](/api/core/types/trigger-schema/) object — a stable identity you can pass to React/Solid/Vue hooks.
+
+| Method | Description |
+|---|---|
+| `trigger.id` | Same string you passed in. |
+| `trigger.enable()` | Re-enable a disabled trigger. |
+| `trigger.disable()` | Skip future events (records `'disabled'` in inspector). |
+| `trigger.isEnabled()` | Boolean. |
+| `trigger.inspect()` | Latest [`TriggerInspectSnapshot`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts#L-TriggerInspectSnapshot) or `undefined`. |
+| `trigger.dispose()` | Unregister from the runtime. Rare — use in tests. |
+| `trigger.namedHooks()` | Throws on `@triggery/core` directly — use [`createNamedHooks`](/api/react/create-named-hooks/) from a binding. |
+
+## Examples
+
+### Minimal trigger
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+const ping = createTrigger<{
+  events: { tick: number };
+}>({
+  id: 'demo:ping',
+  events: ['tick'],
+  handler({ event }) {
+    console.log('tick', event.payload);
+  },
+});
+```
+
+### Full schema with all three maps
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+type Message  = { author: string; text: string; channelId: string };
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions:    { showToast: { title: string; body: string }; playSound: 'beep' };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (!check.is('settings', s => s.notifications)) return;
+
+    actions.debounce(800).playSound?.('beep');
+    actions.showToast?.({
+      title: event.payload.author,
+      body:  event.payload.text,
+    });
+  },
+});
+```
+
+### Async handler with AbortSignal
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+const fetchTrigger = createTrigger<{
+  events:  { 'fetch-user': string };
+  actions: { setUser: { id: string; name: string } };
+}>({
+  id: 'fetch-user',
+  events: ['fetch-user'],
+  concurrency: 'take-latest',
+  async handler({ event, actions, signal }) {
+    const res = await fetch(`/api/users/${event.payload}`, { signal });
+    if (signal.aborted) return;
+    actions.setUser?.(await res.json());
+  },
+});
+```
+
+### Registered in a specific runtime
+
+```ts twoslash
+import { createRuntime, createTrigger } from '@triggery/core';
+
+const runtime = createRuntime({ inspector: { dev: true, prod: false } });
+
+const trigger = createTrigger<{ events: { hi: void } }>(
+  {
+    id: 'demo:hi',
+    events: ['hi'],
+    handler() {
+      console.log('hi');
+    },
+  },
+  runtime,
+);
+```
+
+## Notes
+
+<Aside type="caution" title="V1 type-narrowing limitation">
+In V1, `required` is enforced at runtime only. TypeScript does not narrow required conditions inside the handler — `conditions.user` stays `User | undefined`. Use either an early guard (`if (!conditions.user) return;`) or `check.is/all/any` which carry NonNullable narrowing.
+
+A builder API auto-narrowing required conditions is on the roadmap for V1.1.
+</Aside>
+
+<Aside type="tip">
+Triggers can be created at module top level. Bindings (`useEvent`, `useCondition`, `useAction`) discover them by stable identity — there is no string-name lookup at the hook level.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createRuntime" description="The container that holds triggers, conditions and actions." href="/api/core/create-runtime/" />
+  <LinkCard title="TriggerSchema" description="The generic type — events / conditions / actions maps." href="/api/core/types/trigger-schema/" />
+  <LinkCard title="TriggerHandler" description="The function type of the handler argument." href="/api/core/types/trigger-ctx/" />
+  <LinkCard title="Trigger anatomy guide" description="Field-by-field walkthrough, in narrative form." href="/guide/essentials/trigger-anatomy/" />
+</CardGrid>

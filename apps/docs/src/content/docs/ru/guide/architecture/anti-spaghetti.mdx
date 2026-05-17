@@ -1,0 +1,350 @@
+---
+title: "Борьба со спагетти"
+description: "Когда триггер — правильный инструмент, когда нет, и как держать файлы обработчиков читабельными как спецификации."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery хорош в оркестрации. Он *не* хорош в "любых побочных эффектах где попало". Тот же `createTrigger`, который чётко выражает **"новое сообщение + notifications включены + не активный канал ⇒ тост + бипл + бейдж"**, превращается в шум, когда ты используешь его для **"увеличить счётчик при клике на кнопку"**. Эта страница — про границу.
+
+## Лакмус-тест
+
+Прежде чем тянуться к `createTrigger`, задай три вопроса по порядку.
+
+1. Пересекает ли побочный эффект **границы фичей** — владеет ли входами или выходами чей-то ещё компонент?
+2. Имеет ли он форму сценария — узнает ли в нём не-инженер *одно правило* на продуктовом языке?
+3. Если бы ты писал это хуками, разъехалось бы это на **три или больше** `useEffect`'ов в **трёх или больше** компонентах?
+
+Если ответил *да* на все три — это триггер.
+Если ответил *нет* хоть на один — оставайся с `useState` + `useEffect` (или эквивалентом твоего стора). Сэкономишь время, реестр триггеров останется читаемым, а твои `*.trigger.ts` файлы будут читаться как спецификации, когда ты их откроешь.
+
+<Aside type="tip">
+Самое дешёвое правило большого пальца в code review: *может ли diff одного этого `.trigger.ts` файла объяснить изменение поведения, которое ты выкатил?* Если да — триггер отрабатывает свой вес. Если diff одной строкой, а реальное изменение в трёх компонентах — триггер был костюмом.
+</Aside>
+
+## Что значит "форма сценария"
+
+У сценария есть хотя бы по одной из этих форм:
+
+- **Несколько входов из несвязанных мест.** Settings живут в одной фиче, активный канал в другой, текущий пользователь в третьей. Правилу нужны все.
+- **Несколько выходов в несвязанных местах.** Тост в корне layout, бипл в аудио-системе, число в сайдбаре.
+- **Причина пропустить.** "Если пользователь уже смотрит на этот канал — нет". Сценарии собирают *причины*, не только *шаги*.
+
+Счётчик — ни одно из этого. Один вход (клик), один выход (счётчик), ноль условий пропуска. `useState` ровно правильного размера.
+
+## Триггер vs useEffect: разбор примера
+
+```tsx title="Внутри фичи: оставь useEffect"
+function Counter() {
+  const [n, setN] = useState(0);
+
+  // Один вход, один выход, в этом компоненте. Triggery бы только
+  // добавил церемонии — файл, id, запись в реестре, прыжок в рантайм.
+  useEffect(() => {
+    document.title = `${n} unread`;
+  }, [n]);
+
+  return <button type="button" onClick={() => setN(x => x + 1)}>+1</button>;
+}
+```
+
+```ts title="Кросс-фичный: триггер окупается"
+// src/triggers/notification.trigger.ts
+export const notificationTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null; currentUserId: string };
+  actions:    { showToast: ToastPayload; playSound: 'beep'; incrementBadge: string };
+}>({
+  id: 'notification-on-message',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (event.payload.authorId === conditions.currentUserId) return;
+
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+    if (check.is('settings', s => s.sound && !s.dnd)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+    actions.incrementBadge?.(event.payload.channelId);
+  },
+});
+```
+
+Первому нечего делать в виде триггера. Второму нечего делать в виде трёх `useEffect`'ов.
+
+## DEV warn-эвристики
+
+Дефолты Triggery предполагают, что сценарии остаются читабельными. Два ESLint-правила из [`@triggery/eslint-plugin`](/ru/packages/eslint-plugin/) ловят самые частые способы, которыми `*.trigger.ts` потихоньку превращается в скрипт.
+
+### `max-handler-size`
+
+```js title="eslint.config.js"
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  {
+    plugins: { '@triggery': triggery },
+    rules: {
+      // рекомендованный: warn на 50 top-level-выражениях
+      '@triggery/max-handler-size': ['warn', { max: 50 }],
+      // strict-preset идёт до 30
+    },
+  },
+];
+```
+
+Считает **top-level выражения** в теле обработчика (control-flow блоки — один выражение каждый). Если у тебя 50+ выражений, ты либо выражаешь два сценария в одном триггере, либо делаешь вычисления, которые принадлежат обычной функции — и её надо импортировать.
+
+### `max-ports-per-trigger`
+
+```js
+'@triggery/max-ports-per-trigger': ['warn', {
+  maxEvents: 8,
+  maxConditions: 8,
+  maxTotal: 12,
+}],
+```
+
+Ограничивает количество портов. Триггер, реагирующий на 12 разных событий — уже не сценарий, это event-брокер, и твоя команда начнёт побаиваться трогать файл. Разделяй.
+
+### `prefer-named-hook`
+
+```js
+'@triggery/prefer-named-hook': ['warn', { threshold: 4 }],
+```
+
+Когда файл делает четыре или больше port-вызовов, эргономика именованных хуков (`useNewMessageEvent` вместо `useEvent(trigger, 'new-message')`) начинает доминировать. Правило подталкивает к ним — см. [Именованные хуки](/ru/guide/advanced/named-hooks/) для механики.
+
+## Разделение жирного триггера
+
+Когда `max-handler-size` или `max-ports-per-trigger` начинают срабатывать, лечение редко "подними лимит". Это "тут два сценария, дай им два id".
+
+### Форма, которую надо разбить
+
+```ts title="До — один триггер, два сценария"
+export const messageTrigger = createTrigger<{
+  events: { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null; analyticsConsent: boolean };
+  actions: {
+    showToast:      ToastPayload;
+    playSound:      'beep';
+    incrementBadge: string;
+    trackImpression: AnalyticsEvent;
+    trackDelivery:   AnalyticsEvent;
+  };
+}>({
+  id: 'message-arrived',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    // ── Сценарий уведомления ────────────────────────────────────────
+    if (event.payload.channelId !== conditions.activeChannelId) {
+      if (check.is('settings', s => s.notifications)) {
+        actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+      }
+      if (check.is('settings', s => s.sound && !s.dnd)) {
+        actions.debounce(800).playSound?.('beep');
+      }
+      actions.incrementBadge?.(event.payload.channelId);
+    }
+    // ── Сценарий аналитики ──────────────────────────────────────────
+    if (check.is('analyticsConsent', granted => granted)) {
+      actions.trackDelivery?.({ name: 'message:delivered', channelId: event.payload.channelId });
+      if (event.payload.channelId !== conditions.activeChannelId) {
+        actions.trackImpression?.({ name: 'message:notified', channelId: event.payload.channelId });
+      }
+    }
+  },
+});
+```
+
+```ts title="После — два триггера, одно событие"
+// src/triggers/notification.trigger.ts
+export const notificationTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions:    { showToast: ToastPayload; playSound: 'beep'; incrementBadge: string };
+}>({
+  id: 'notification-on-message',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+    if (check.is('settings', s => s.sound && !s.dnd)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+    actions.incrementBadge?.(event.payload.channelId);
+  },
+});
+
+// src/triggers/message-analytics.trigger.ts
+export const messageAnalyticsTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { activeChannelId: string | null; analyticsConsent: boolean };
+  actions:    { trackImpression: AnalyticsEvent; trackDelivery: AnalyticsEvent };
+}>({
+  id: 'analytics-on-message',
+  events: ['new-message'],
+  required: ['analyticsConsent'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.analyticsConsent) return;
+    actions.trackDelivery?.({ name: 'message:delivered', channelId: event.payload.channelId });
+    if (event.payload.channelId !== conditions.activeChannelId) {
+      actions.trackImpression?.({ name: 'message:notified', channelId: event.payload.channelId });
+    }
+  },
+});
+```
+
+Оба триггера реагируют на то же событие. Ни один не знает о другом. Сценарий уведомления можно поставить на паузу feature-флагом, не трогая аналитику. Аналитику можно заменить целиком (Segment → PostHog), не перечитывая правило уведомления.
+
+<Aside type="tip" title="Codemod">
+Рецепт `extract-trigger` из `@triggery/codemod` берёт секцию обработчика, ограниченную блочным комментарием, и поднимает её в соседний `.trigger.ts` с правильным срезом схемы, правильным массивом `required` и правильными обновлениями на стороне компонентов. См. [Codemods](/ru/packages/codemod/) для вызова.
+</Aside>
+
+## Антипаттерны и правильный фикс
+
+### Антипаттерн: "триггер делает всё внутри одной фичи"
+
+```ts title="Симптом"
+// counter.trigger.ts
+export const counterTrigger = createTrigger<{
+  events:     { 'increment': void };
+  conditions: { count: number };
+  actions:    { setCount: number };
+}>({
+  id: 'counter',
+  events: ['increment'],
+  required: ['count'],
+  handler({ conditions, actions }) {
+    actions.setCount?.((conditions.count ?? 0) + 1);
+  },
+});
+```
+
+Это `useState`, надевший восемь украшений. Фича владеет своим входом и своим выходом; никому больше нет дела. Фикс:
+
+```tsx title="Фикс"
+function Counter() {
+  const [n, setN] = useState(0);
+  return <button onClick={() => setN(x => x + 1)}>+1 ({n})</button>;
+}
+```
+
+Триггеры — не состояние. Не заставляй их играть в состояние на фиче, где нет ко-актёров.
+
+### Антипаттерн: "три триггера запускают по порядку, чтобы сделать одно дело"
+
+```ts title="Симптом"
+// validate.trigger.ts        — запускает 'form:validated'
+// save.trigger.ts            — слушает 'form:validated', запускает 'form:saved'
+// toast.trigger.ts           — слушает 'form:saved', показывает тост
+```
+
+Ты написал пайплайн. Triggery может его пронести через каскады (см. [Каскад](/ru/guide/architecture/cascade/)), но трёхшаговая цепочка — это функция под прикрытием, и файловая когезия пропала. Фикс: консолидируй в один триггер и вызывай шаги инлайн.
+
+```ts title="Фикс"
+export const formSubmitTrigger = createTrigger<{
+  events:     { 'form:submit': FormPayload };
+  conditions: { user: User };
+  actions:    { showToast: ToastPayload; persist: FormPayload };
+}>({
+  id: 'form-submit',
+  events: ['form:submit'],
+  required: ['user'],
+  async handler({ event, conditions, actions, signal }) {
+    const errors = validate(event.payload);
+    if (errors.length > 0) {
+      actions.showToast?.({ title: 'Check the form', body: errors[0]! });
+      return;
+    }
+    actions.persist?.(event.payload);
+    actions.showToast?.({ title: 'Saved', body: `as ${conditions.user.name}` });
+  },
+});
+```
+
+Резервируй каскады для *fan-out поперёк фичей*, не для "шаг A потом шаг B".
+
+### Антипаттерн: "триггер читает выход другого триггера через глобальный стор"
+
+```ts title="Симптом"
+// trigger-a — запускает 'something' и пишет `lastSomethingAt` в Zustand
+// trigger-b — читает `lastSomethingAt` как условие и делает работу
+```
+
+Ты шлёшь скрытый канал. Триггер B больше не реагирует на что-то читаемое; он реагирует на мутацию в сторе, которую триггер A случайно сделал на стороне, и эта проводка не живёт ни в одном из двух файлов. Фикс: сделай каскад явным.
+
+```ts title="Фикс — триггер A эмитит каскад-событие"
+export const somethingTrigger = createTrigger<{
+  events:  { 'request:something': RequestPayload };
+  actions: { acknowledge: void };
+}>({
+  id: 'request-something',
+  events: ['request:something'],
+  required: [],
+  handler({ actions }) {
+    // Никакого побочного канала в сторе. Просто эмить следующее событие явно.
+    actions.acknowledge?.();
+    runtime.fire('something-acknowledged');
+  },
+});
+
+// триггер B слушает 'something-acknowledged' как настоящее событие.
+```
+
+Каскады появляются в инспекторе с parent runId. Побочные каналы через стор — нет. Последние делают кросс-фичную проводку untraceable; первые — задача на один grep.
+
+## Где заканчивается ответственность Triggery
+
+Не тянись к триггеру, когда:
+
+- **Побочный эффект локален одному компоненту.** `useEffect` короче и яснее.
+- **Тебе нужен state machine.** XState моделирует допустимые переходы; Triggery моделирует сценарии. Используй оба — обработчики могут вызывать сервисы.
+- **Тебе нужен stream-пайплайн.** RxJS даёт тебе операторы во времени. Обёртывай их выходы как условия.
+- **Тебе нужна кросс-таб / кросс-window оркестрация.** Это территория `BroadcastChannel` + (со временем) `@triggery/server`.
+- **"Сценарий" — это один вход, один выход, без пропусков.** Ни один файл в реестре не стоит нуля условий и нуля альтернатив.
+
+## Чек-лист ревьюера
+
+Когда ревьюишь PR, вводящий триггер, на этом diff стоит остановиться.
+
+- [ ] Id триггера читается как **имя сценария** (`notification-on-message`), а не имя события (`new-message`).
+- [ ] Хотя бы одно `required` условие или хотя бы одна *причина пропустить* в обработчике — иначе обработчик стреляет на каждый вызов.
+- [ ] Нет вызова `useEvent` внутри тела `useAction` в том же файле (правило `no-event-cascade` его поймает, но глаза быстрее).
+- [ ] Тело обработчика — под `max-handler-size` проекта. Если нет — спроси: это *один* сценарий или *два*?
+- [ ] Дженерик схемы — **inline** в вызове `createTrigger<{...}>`, не вынесен в удалённый `type` (вынесение безвредно, но делает файл сложнее читать end-to-end).
+- [ ] Поверхность портов достаточно мала, чтобы ты мог назвать каждое событие, условие и действие вслух на одном вдохе.
+
+Если отклоняешь PR, самый полезный однострочник: *"Какая третья фича читает или пишет это? Если ответ — никакая, оставь в компоненте."*
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Каскады"
+    description="Когда действие одного триггера запускает ещё одно событие — лимиты глубины, детект циклов, каскадное дерево инспектора."
+    href="/ru/guide/architecture/cascade/"
+  />
+  <LinkCard
+    title="Скоупы"
+    description="Несколько экземпляров одной триггер-логики бегут рядом без кросс-опыления."
+    href="/ru/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Владение"
+    description="Два провайдера, одно условие — что значит last-mount-wins на практике и как переопределить в тестах."
+    href="/ru/guide/architecture/ownership/"
+  />
+  <LinkCard
+    title="ESLint plugin"
+    description="Полный набор правил — no-dynamic-id, no-event-cascade, max-handler-size, max-ports-per-trigger, prefer-named-hook."
+    href="/ru/packages/eslint-plugin/"
+  />
+</CardGrid>

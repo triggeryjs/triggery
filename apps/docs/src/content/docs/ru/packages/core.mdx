@@ -1,0 +1,103 @@
+---
+title: "@triggery/core"
+description: "Framework-agnostic рантайм оркестрации. Без рантайм-зависимостей."
+sidebar:
+  order: 1
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Рантайм, на котором работают все биндинги Triggery. Framework-agnostic, без рантайм-зависимостей, запускается везде, где есть JavaScript (браузер, Node, Workers, React Native, edge).
+
+[![npm](https://img.shields.io/npm/v/@triggery/core?style=flat-square)](https://www.npmjs.com/package/@triggery/core)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/core?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/core)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core" />
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| [`createTrigger`](/ru/api/core/create-trigger/) | Описать сценарий (события, условия, required, обработчик). |
+| [`createRuntime`](/ru/api/core/create-runtime/) | Инстанцировать изолированный рантайм. |
+| [`getDefaultRuntime`](/ru/api/core/get-default-runtime/) / [`setDefaultRuntime`](/ru/api/core/set-default-runtime/) | Хелперы для глобального синглтона. |
+| [`createCheck`](/ru/api/core/create-check/) | Собрать хелперы `check.is/all/any` для контекста обработчика. |
+| [`createInspector`](/ru/api/core/create-inspector/) | Кастомный инспектор на кольцевом буфере. |
+| [`createScheduler`](/ru/api/core/create-scheduler/) | Собрать кастомный планировщик. |
+| Все публичные [типы](/ru/api/core/types/trigger-schema/) | TriggerSchema, TriggerCtx, Middleware, ConcurrencyStrategy, … |
+
+## Быстрый пример
+
+```ts
+import { createRuntime, createTrigger } from '@triggery/core';
+
+const runtime = createRuntime();
+
+const trigger = createTrigger<{
+  events:  { tick: number };
+  actions: { log: number };
+}>(
+  {
+    id: 'demo:tick',
+    events: ['tick'],
+    handler: ({ event, actions }) => actions.log?.(event.payload),
+  },
+  runtime,
+);
+
+runtime.registerAction('demo:tick', 'log', n => console.log('tick', n));
+runtime.fireSync('tick', 42);   // → "tick 42"
+```
+
+Это рантайм в чистом виде. В реальном приложении ручной `registerAction` не нужен — биндинги делают это через `useAction`.
+
+## Почему «framework-agnostic»?
+
+Рантайм — обычный JavaScript-объект с реестром на `Map`. Он не импортирует React. Не импортирует виртуальный DOM. Запускается:
+
+- В web-воркере или service-воркере.
+- В Node.js-процессе — CLI, сервер, edge-функция.
+- В React Native (DOM-адаптер рантайму не нужен).
+- В ванильной HTML-странице без бандлера.
+
+Одно и то же объявление `createTrigger({ … })` без изменений работает во всех перечисленных средах. Биндинги (~50 строк каждый) связывают `useEvent` / `useCondition` / `useAction` с жизненным циклом хост-фреймворка.
+
+## Возможности
+
+- **Индексированный диспатч** — `Map<eventKey, Trigger[]>`, никаких полных сканов.
+- **`required`-гейт** — обработчик пропускается (с записью в инспектор), пока не зарегистрированы все обязательные условия.
+- **Стратегии конкурентности** для асинхронных обработчиков: `take-latest` (по умолчанию), `take-every`, `take-first`, `queue`, `exhaust`, `sync`.
+- **Цепочки действий**: `actions.debounce(ms).foo(p)`, `actions.throttle`, `actions.defer`, `actions.queue`.
+- **Безопасность каскадов** — лимит глубины и обнаружение циклов в цепочках `action → fireEvent`.
+- **Middleware** — `onFire`, `onBeforeMatch`, `onSkip`, `onActionStart`, `onActionEnd`, `onError`, `onCascade`.
+- **Кольцевой буфер инспектора** — встроен, по умолчанию автоматически отключается в PROD.
+- **Last-mount-wins** для владения регистрацией с DEV warn-once.
+- **Чистый ESM**, без side-effects, tree-shakable.
+
+## Размер бандла
+
+Около **5 КБ gzipped** только для самого ядра. Каждый биндинг добавляет сверху **примерно 1 КБ**.
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/react" description="Биндинги для React 18+." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/solid" description="Биндинги для SolidJS." href="/ru/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Биндинги для Vue 3 Composition API." href="/ru/packages/vue/" />
+  <LinkCard title="@triggery/testing" description="Тестовый рантайм + fakeScheduler." href="/ru/packages/testing/" />
+  <LinkCard title="@triggery/vite" description="Автодискавери через virtual:triggery-registry." href="/ru/packages/vite/" />
+  <LinkCard title="@triggery/eslint-plugin" description="8 lint-правил: no-event-cascade, hook-rules, …" href="/ru/packages/eslint-plugin/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/core)
+- [npm](https://www.npmjs.com/package/@triggery/core)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/core/CHANGELOG.md)

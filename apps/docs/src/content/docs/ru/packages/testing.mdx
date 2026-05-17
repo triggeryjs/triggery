@@ -1,0 +1,144 @@
+---
+title: "@triggery/testing"
+description: "Утилиты для тестирования Triggery — изолированный рантайм, фейковый шедулер, заглушки условий и действий. Работает с Vitest, Jest и node:test."
+sidebar:
+  order: 5
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Утилиты для тестирования [Triggery](https://github.com/triggeryjs/triggery). **Без рантайм-зависимостей, framework-agnostic** — одинаково работает в тестах React, Solid, Vue, в Node или воркере; совместимо с Vitest, Jest и `node:test`.
+
+Тот же код триггера, который ты отправляешь в прод, выполняется в тестах без React, JSDOM или хост-фреймворка. Ты тестируешь сценарии, а не компоненты.
+
+[![npm](https://img.shields.io/npm/v/@triggery/testing?style=flat-square)](https://www.npmjs.com/package/@triggery/testing)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/testing?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/testing)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/testing" dev />
+
+Peer-зависимости: `@triggery/core`. Test-runner agnostic — никакой зависимости от `vi.useFakeTimers()` / `jest.useFakeTimers()`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `createTestRuntime({ triggers? })` | Изолированный рантайм на каждый тест. Без загрязнения глобального состояния. |
+| `mockCondition(trigger, name, value \| getter)` | Подсунуть условие без рендера компонента. |
+| `mockAction(trigger, name, fn)` | Зарегистрировать обработчик действия — обычно `vi.fn()` / `jest.fn()`. |
+| `flushMicrotasks()` | Опустошить дефолтный микротаск-шедулер перед проверкой. |
+| `createFakeScheduler()` | Управляемые виртуальные часы для `actions.debounce` / `throttle` / `defer`. |
+
+`createFakeScheduler()` предоставляет:
+
+- `install()` / `uninstall()` — подменяют `globalThis.setTimeout` / `clearTimeout` контролируемой реализацией.
+- `advance(ms)` — выполняет все таймеры, попадающие в окно, и опустошает микротаски.
+- `flushAll()` — выполняет все ожидающие таймеры независимо от запланированного времени.
+
+## Быстрый пример
+
+Триггер, который проверяет условие `user.isMod` и выполняет два действия:
+
+```ts title="message.test.ts"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, test, vi } from 'vitest';
+
+test('mod with notifications shows toast and plays sound', () => {
+  const rt = createTestRuntime();
+
+  const t = createTrigger<{
+    events:     { 'new-message': string };
+    conditions: { user: { isMod: boolean } };
+    actions:    { showToast: string; playSound: 'beep' | 'mod-alert' };
+  }>(
+    {
+      id: 'msg',
+      events: ['new-message'],
+      required: ['user'],
+      handler: ({ event, conditions, actions, check }) => {
+        if (!check.is('user', (u) => u.isMod)) return;
+        actions.showToast?.(event.payload);
+        actions.playSound?.('mod-alert');
+      },
+    },
+    rt,
+  );
+
+  rt.mockCondition(t, 'user', { isMod: true });
+  const showToast = vi.fn();
+  const playSound = vi.fn();
+  rt.mockAction(t, 'showToast', showToast);
+  rt.mockAction(t, 'playSound', playSound);
+
+  rt.fireSync('new-message', 'hi');
+
+  expect(showToast).toHaveBeenCalledWith('hi');
+  expect(playSound).toHaveBeenCalledWith('mod-alert');
+});
+```
+
+Без DOM, без провайдера, без `act()`. Триггер прогоняется напрямую.
+
+## Фейковый шедулер — тестируем debounce
+
+```ts
+import { createTestRuntime, createFakeScheduler } from '@triggery/testing';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+let clock: ReturnType<typeof createFakeScheduler>;
+beforeEach(() => { clock = createFakeScheduler(); clock.install(); });
+afterEach(()  => { clock.uninstall(); });
+
+test('actions.debounce(200) collapses bursts', () => {
+  const rt = createTestRuntime();
+  const search = vi.fn();
+  rt.mockAction(searchTrigger, 'search', search);
+
+  rt.fireSync('input', 'a');
+  rt.fireSync('input', 'ab');
+  rt.fireSync('input', 'abc');
+
+  clock.advance(199);
+  expect(search).not.toHaveBeenCalled();
+
+  clock.advance(1);            // total = 200 ms
+  expect(search).toHaveBeenCalledTimes(1);
+  expect(search).toHaveBeenCalledWith('abc');
+});
+```
+
+## Асинхронные обработчики — `take-latest`
+
+```ts
+test('take-latest cancels stale runs', async () => {
+  const rt = createTestRuntime();
+  rt.fire('search', 'a');      // gets cancelled
+  rt.fire('search', 'ab');     // gets cancelled
+  await rt.fire('search', 'abc'); // wins
+
+  expect(rt.inspect()?.outcome).toBe('completed');
+});
+```
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Тот же рантайм, только создан через createTestRuntime." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="Тесты на уровне компонентов поверх React Testing Library." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/solid" description="Тесты для Solid через @solidjs/testing-library." href="/ru/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Тесты для Vue через @vue/test-utils." href="/ru/packages/vue/" />
+  <LinkCard title="@triggery/eslint-plugin" description="Статические проверки, которые ловят то, что тесты могут упустить." href="/ru/packages/eslint-plugin/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/testing)
+- [npm](https://www.npmjs.com/package/@triggery/testing)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/testing/CHANGELOG.md)

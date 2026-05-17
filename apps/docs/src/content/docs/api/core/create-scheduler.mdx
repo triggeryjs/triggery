@@ -1,0 +1,123 @@
+---
+title: "createScheduler"
+description: "Build the dispatch scheduler. Exposed for custom runtime composition and tests."
+sidebar:
+  order: 7
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Constructs the dispatch scheduler used internally by the runtime. The two built-in strategies — `'microtask'` and `'sync'` — cover almost every real-world need; `createScheduler` is exposed for custom runtime composition, low-level tests, and benchmarking.
+
+The microtask scheduler batches enqueued tasks and drains them in `queueMicrotask`. The sync scheduler runs tasks immediately, in the caller's stack.
+
+## Import
+
+```ts
+import { createScheduler } from '@triggery/core';
+```
+
+## Signature
+
+```ts
+function createScheduler(strategy: SchedulerStrategy): SchedulerImpl;
+
+type SchedulerStrategy = 'sync' | 'microtask';
+
+type SchedulerImpl = {
+  enqueue(task: () => void): void;
+  flush(): void;
+};
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `strategy` | `'sync' \| 'microtask'` | Dispatch policy. |
+
+## Returns
+
+A `SchedulerImpl`:
+
+| Method | Description |
+|---|---|
+| `enqueue(task)` | Schedule a thunk. Microtask: batches into the next microtask drain. Sync: runs immediately. |
+| `flush()` | Drain any pending tasks now. For tests and `fireSync`. Sync scheduler keeps no queue, so its `flush` is a no-op. |
+
+## Examples
+
+### Microtask batching
+
+```ts twoslash
+import { createScheduler } from '@triggery/core';
+
+const sched = createScheduler('microtask');
+const log: number[] = [];
+
+sched.enqueue(() => log.push(1));
+sched.enqueue(() => log.push(2));
+sched.enqueue(() => log.push(3));
+
+// At this synchronous point, nothing has run yet.
+console.log('queued', log); // []
+
+await Promise.resolve(); // drain microtasks
+console.log('drained', log); // [1, 2, 3]
+```
+
+### Synchronous dispatch
+
+```ts twoslash
+import { createScheduler } from '@triggery/core';
+
+const sched = createScheduler('sync');
+const log: number[] = [];
+
+sched.enqueue(() => log.push(1));
+sched.enqueue(() => log.push(2));
+
+// Already executed inline.
+console.log(log); // [1, 2]
+```
+
+### Error isolation in microtask mode
+
+```ts twoslash
+import { createScheduler } from '@triggery/core';
+
+const sched = createScheduler('microtask');
+
+sched.enqueue(() => {
+  throw new Error('oops');
+});
+sched.enqueue(() => {
+  console.log('still runs');
+});
+
+await Promise.resolve();
+// Output: "[triggery] scheduler task failed: Error: oops"
+// Output: "still runs"
+```
+
+## Notes
+
+<Aside type="tip">
+The runtime picks the scheduler per-trigger from the `schedule: 'microtask' | 'sync'` field on `createTrigger`. You almost never need to call `createScheduler` directly — set `schedule: 'sync'` on a trigger if you want it dispatched in the caller's stack.
+</Aside>
+
+<Aside type="caution">
+Errors thrown from microtask tasks are caught and `console.error`-logged but do not propagate. This guards the queue from one bad task taking down everything queued behind it. Per-run failures surface in the inspector with `status: 'errored'` — use the inspector, not the scheduler error log, as the source of truth.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createRuntime" description="The runtime picks a scheduler per trigger automatically." href="/api/core/create-runtime/" />
+  <LinkCard title="createFakeScheduler" description="Virtual-clock scheduler for tests." href="/api/testing/fake-scheduler/" />
+  <LinkCard title="Scheduling guide" description="Microtask vs sync — when to pick which." href="/guide/essentials/events/" />
+  <LinkCard title="Concurrency strategies" description="How async handlers interleave under each strategy." href="/guide/async/concurrency/" />
+</CardGrid>

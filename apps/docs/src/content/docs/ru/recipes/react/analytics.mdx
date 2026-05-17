@@ -1,0 +1,247 @@
+---
+title: "Аналитика: fan-out"
+description: "Запускай одно событие ui-action на взаимодействие; пусть один триггер за фича-флагом раскидает его в Segment, Amplitude или GA4 — не трогая продьюсеров."
+sidebar:
+  order: 9
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Аналитический антипаттерн: каждая кнопка и каждая форма импортируют хелпер `track(...)`, который тянет Segment SDK, который тянет Amplitude, и всё это ещё за фича-флагом — и в момент, когда захочешь сменить провайдера, поменяется половина кодовой базы. Triggery переворачивает картину: компоненты запускают общий `ui:event`, один триггер маршрутизирует его в нужное место, а смена провайдера — изменение одного файла.
+
+<StackBlitzButton path="examples/vite-react-analytics" label="Открыть в StackBlitz" />
+
+## Сценарий
+
+1. **Каждое значимое UI-действие запускает `ui:event`** с `{ name, props }`.
+2. **Один триггер** решает, куда событие пойдёт — Segment, Amplitude, GA4 или всё сразу — на основе фича-флагов из условия.
+3. **Три реактора** владеют своими SDK. Они не знают, какие события бывают, — они знают только, как переслать событие в свою точку назначения.
+4. **Смена провайдеров** — переключение конфига, а не рефакторинг.
+
+## Структура файлов
+
+<FileTree>
+- src/
+  - triggers/
+    - **analytics.trigger.ts** маршрутизация
+  - features/
+    - analytics/
+      - SegmentReactor.tsx
+      - AmplitudeReactor.tsx
+      - Ga4Reactor.tsx
+      - FlagsProvider.tsx провайдер точек назначения
+    - dashboard/
+      - DashboardButton.tsx продьюсер (просто `fireUiEvent`)
+</FileTree>
+
+## 1. Триггер
+
+```ts title="src/triggers/analytics.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type UiEvent = {
+  name: string;
+  props?: Readonly<Record<string, unknown>>;
+};
+
+export type Destinations = {
+  segment:   boolean;
+  amplitude: boolean;
+  ga4:       boolean;
+};
+
+export const analyticsTrigger = createTrigger<{
+  events: {
+    'ui:event': UiEvent;
+  };
+  conditions: {
+    destinations: Destinations;
+  };
+  actions: {
+    sendToSegment:   UiEvent;
+    sendToAmplitude: UiEvent;
+    sendToGa4:       UiEvent;
+  };
+}>({
+  id: 'analytics-fan-out',
+  events: ['ui:event'],
+  required: ['destinations'],
+  handler({ event, check, actions }) {
+    if (check.is('destinations', d => d.segment))   actions.sendToSegment?.(event.payload);
+    if (check.is('destinations', d => d.amplitude)) actions.sendToAmplitude?.(event.payload);
+    if (check.is('destinations', d => d.ga4))       actions.sendToGa4?.(event.payload);
+  },
+});
+```
+
+Триггер не делает *ничего*, кроме маршрутизации. Добавление четвёртой точки — одна запись в схеме, один `check.is` и один новый файл реактора — никаких изменений в продьюсерах.
+
+## 2. Продьюсеры
+
+Кнопка теперь просто кнопка. Сравни со старым стилем `import { track } from './analytics'` — продьюсер вообще не подозревает о существовании аналитики, кроме того что запускает общее событие.
+
+```tsx title="src/features/dashboard/DashboardButton.tsx"
+import { useEvent } from '@triggery/react';
+import { analyticsTrigger } from '../../triggers/analytics.trigger';
+
+export function DashboardButton() {
+  const fireUiEvent = useEvent(analyticsTrigger, 'ui:event');
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        fireUiEvent({ name: 'dashboard:cta-clicked', props: { variant: 'hero' } });
+        // …business logic of the actual click here
+      }}
+    >
+      Try it
+    </button>
+  );
+}
+```
+
+<Aside type="tip">
+Хочешь перевести существующее приложение *постепенно*? Сделай тонкий хелпер, который оборачивает `fireUiEvent` под сигнатуру старого `track(name, props)`. Вызывающий код не меняется — он просто подхватывает маршрутизацию.
+</Aside>
+
+## 3. Провайдер флагов
+
+Одно условие отдаёт, какие точки назначения включены. Можешь подключить это к LaunchDarkly, своему сервису флагов, переключателю в `localStorage` — что угодно — триггеру всё равно.
+
+```tsx title="src/features/analytics/FlagsProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { analyticsTrigger, type Destinations } from '../../triggers/analytics.trigger';
+
+export function AnalyticsFlagsProvider({
+  destinations,
+  children,
+}: {
+  destinations: Destinations;
+  children: React.ReactNode;
+}) {
+  useCondition(analyticsTrigger, 'destinations', () => destinations, [destinations]);
+  return <>{children}</>;
+}
+```
+
+## 4. Реакторы
+
+Три компонента — каждый владеет ровно одним SDK. Рантайм вызывает реактор только тогда, когда триггер ему это поручил.
+
+```tsx title="src/features/analytics/SegmentReactor.tsx"
+import { useAction } from '@triggery/react';
+import { analyticsTrigger } from '../../triggers/analytics.trigger';
+import { segment } from '../../lib/analytics-segment';
+
+export function SegmentReactor() {
+  useAction(analyticsTrigger, 'sendToSegment', ({ name, props }) => {
+    segment.track(name, props ?? {});
+  });
+  return null;
+}
+```
+
+```tsx title="src/features/analytics/AmplitudeReactor.tsx"
+import { useAction } from '@triggery/react';
+import { amplitude } from '../../lib/analytics-amplitude';
+import { analyticsTrigger } from '../../triggers/analytics.trigger';
+
+export function AmplitudeReactor() {
+  useAction(analyticsTrigger, 'sendToAmplitude', ({ name, props }) => {
+    amplitude.track(name, props as Record<string, unknown>);
+  });
+  return null;
+}
+```
+
+```tsx title="src/features/analytics/Ga4Reactor.tsx"
+import { useAction } from '@triggery/react';
+import { analyticsTrigger } from '../../triggers/analytics.trigger';
+
+declare global { interface Window { gtag?: (...args: unknown[]) => void } }
+
+export function Ga4Reactor() {
+  useAction(analyticsTrigger, 'sendToGa4', ({ name, props }) => {
+    window.gtag?.('event', name, props ?? {});
+  });
+  return null;
+}
+```
+
+## 5. Собираем вместе
+
+```tsx title="src/App.tsx"
+import { useState } from 'react';
+import { AnalyticsFlagsProvider } from './features/analytics/FlagsProvider';
+import { AmplitudeReactor } from './features/analytics/AmplitudeReactor';
+import { Ga4Reactor } from './features/analytics/Ga4Reactor';
+import { SegmentReactor } from './features/analytics/SegmentReactor';
+import { DashboardButton } from './features/dashboard/DashboardButton';
+
+export function App() {
+  const [destinations] = useState({ segment: true, amplitude: false, ga4: true });
+
+  return (
+    <AnalyticsFlagsProvider destinations={destinations}>
+      <SegmentReactor />
+      <AmplitudeReactor />
+      <Ga4Reactor />
+      <DashboardButton />
+    </AnalyticsFlagsProvider>
+  );
+}
+```
+
+## Планирование
+
+Вызовы аналитики обычно *не* на критическом пути клика — их хочется убрать с главного потока, но при этом не блокировать рендер. Triggery по умолчанию использует планировщик микротасок, и здесь это верный ответ: обработчик клика возвращается синхронно, React перерендеривает, *затем* срабатывает триггер.
+
+```ts
+export const analyticsTrigger = createTrigger<{ /* …schema… */ }>({
+  id: 'analytics-fan-out',
+  schedule: 'microtask',   // default — explicit for clarity
+  // ...
+});
+```
+
+<Aside type="note" title="Планировщики в Triggery v1">
+Рантайм поставляется с двумя планировщиками — `'microtask'` (по умолчанию) и `'sync'`. Планировщик `'idle'`, откладывающий диспатч через `requestIdleCallback`, есть в [пост-1.0 роадмапе](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) и подошёл бы как раз для аналитического fan-out. Для большинства приложений батчинга от `'microtask'` уже достаточно.
+</Aside>
+
+## Тест
+
+```ts title="src/triggers/analytics.trigger.test.ts"
+import { createTestRuntime, mockAction, mockCondition } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { analyticsTrigger } from './analytics.trigger';
+
+describe('analytics-fan-out', () => {
+  it('routes to enabled destinations only', async () => {
+    const rt = createTestRuntime({ triggers: [analyticsTrigger] });
+    const sendToSegment   = vi.fn();
+    const sendToAmplitude = vi.fn();
+    const sendToGa4       = vi.fn();
+    mockCondition(rt, analyticsTrigger, 'destinations', {
+      segment: true, amplitude: false, ga4: true,
+    });
+    mockAction(rt, analyticsTrigger, 'sendToSegment',   sendToSegment);
+    mockAction(rt, analyticsTrigger, 'sendToAmplitude', sendToAmplitude);
+    mockAction(rt, analyticsTrigger, 'sendToGa4',       sendToGa4);
+
+    await rt.fire('ui:event', { name: 'cta-clicked', props: { variant: 'hero' } });
+
+    expect(sendToSegment).toHaveBeenCalledOnce();
+    expect(sendToGa4).toHaveBeenCalledOnce();
+    expect(sendToAmplitude).not.toHaveBeenCalled();
+  });
+});
+```
+
+## Варианты и см. также
+
+<CardGrid>
+  <LinkCard title="Борьба со спагетти" href="/ru/guide/architecture/anti-spaghetti/" description="Почему общий ui:event масштабируется лучше типизированных track-хелперов." />
+  <LinkCard title="useEvent" href="/ru/api/react/use-event/" description="Справочник по хуку." />
+</CardGrid>

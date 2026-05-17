@@ -1,0 +1,243 @@
+---
+title: "Server-side rendering"
+description: "Что Triggery делает — и чего не делает — во время SSR в V1, почему гидрация безопасна по построению, и паттерны для streaming SSR с Next.js, Remix и SolidStart."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+В V1 Triggery — это **клиентский рантайм оркестрации**. Решение строгое, и оно окупается в трёх местах: нет рассинхронов гидрации, нет двойных срабатываний на сервере, а модули триггеров чисто попадают в серверный бандл без падений. Цена: серверный диспатч обработчиков — реальный запуск логики триггеров во время SSR — приедет только в V2 с пакетом `@triggery/server`.
+
+Эта страница объясняет, что именно происходит на сервере в V1, почему так выбрано, как использовать streaming SSR (Next.js App Router, Remix, SolidStart) и куда движется roadmap.
+
+## Поведение V1 в двух словах
+
+| Поверхность | На сервере | На клиенте |
+|---|---|---|
+| `createTrigger(config)` | Регистрирует триггер в рантайме. | Так же. |
+| `createRuntime()` | Создаёт объект рантайма (без доступа к DOM). | Так же. |
+| `useEvent(trigger, name)` | Возвращает стабильную no-op-функцию. `fire(payload)` — тихий no-op. | Возвращает реальный эмиттер. |
+| `useCondition(trigger, name, getter, deps)` | Возвращает `undefined`. Геттер **не** вызывается. | Регистрирует в `useEffect`. |
+| `useAction(trigger, name, handler)` | Возвращает `undefined`. Обработчик **не** регистрируется. | Регистрирует в `useEffect`. |
+| `runtime.fire(name, payload)` | Ставит в очередь на планировщике микротасок. Обработчики не работают, пока их не зарегистрировал `useAction` (то есть на сервере — никогда). | Реальный диспатч. |
+| `runtime.fireSync(name, payload)` | Диспатчит синхронно. Без зарегистрированных обработчиков действий побочных эффектов нет. | Реальный диспатч. |
+| `trigger.inspect()` | На сервере возвращает `undefined` (истории запусков нет). | Возвращает свежий снимок. |
+| `useInspect` / `useInspectHistory` | Возвращают `undefined` / `[]`. | Реальные значения, как только рантайм что-нибудь запустит. |
+
+Хуки не падают на сервере. Они возвращают безопасные значения по умолчанию и **откладывают реальную работу в `useEffect`** — это lifecycle-хук, который во время SSR не запускается. В этом весь приём.
+
+## Почему такое решение
+
+Если бы Triggery пытался запускать обработчики на сервере, поломались бы три вещи:
+
+1. **Рассинхроны гидрации.** Если серверный рендер запустит `'app:ready'`, а клиентский запустит то же самое — действия, выполненные на сервере, должны или *не* выполниться повторно, или выполниться второй раз, или быть дедуплицированы по run-id. Ни один из этих ответов не имеет удовлетворительной формы в V1. Решение «на сервере ничего не делать» делает гидрацию тривиально безопасной.
+2. **Нет `useEffect` на сервере.** React (и Solid, и Vue) не запускают коллбэки эффектов во время SSR. Хуки Triggery регистрируются в эффектах намеренно — там определён жизненный цикл. Пропуск серверной стороны означает, что `useCondition` на сервере не регистрируется, не читает и не вызывает изменений состояния.
+3. **Нет DOM, нет источников событий.** Работа триггера — реагировать на события из браузера (клики, фреймы WebSocket, intersection-observer'ы). На сервере их нет.
+
+Сложив всё вместе, получаем контракт: **модуль триггера на сервере инертен**.
+
+## Что работает на сервере
+
+На самом деле — многое. Импорт модуля триггера, создание рантайма, вызов `runtime.graph()` для извлечения метаданных — всё это чистая работа, не зависящая от DOM.
+
+```ts title="server.ts"
+import { createRuntime } from '@triggery/core';
+import { messageTrigger } from './triggers/message.trigger';
+
+const runtime = createRuntime();
+console.log(runtime.graph()); // valid: returns the static trigger metadata
+console.log(messageTrigger.id); // valid: returns 'message-received'
+```
+
+Сам рантайм — обычный JS-объект — не обращается к DOM, не вызывает `setTimeout` при конструировании, не трогает `window` или `document`. `createRuntime` **идемпотентен между серверными рендерами**: каждый вызов создаёт свежий рантайм со своим приватным буфером инспектора.
+
+Так серверные интеграции фреймворков (Next.js, Remix, SolidStart) и поднимают рантайм на каждый запрос: создают внутри обработчика запроса и отбрасывают при отправке ответа.
+
+## Где попадают хуки на сервере
+
+У хуков каждого биндинга на сервере одна форма: либо стабильный no-op, либо короткое замыкание мимо пути регистрации, потому что host-фреймворк не дошёл до фазы эффектов.
+
+```tsx title="@triggery/react — useCondition"
+export function useCondition(trigger, name, getter, deps = []) {
+  const runtime = useRuntime();
+  const scope = useScope();
+  const getterRef = useRef(getter);
+  getterRef.current = getter;
+  const stableGetter = useCallback(() => getterRef.current(), deps);
+
+  useEffect(() => {
+    // ← This block does not run during SSR. The `register / unregister` lifecycle
+    //    is therefore entirely client-side. On the server, the hook returns
+    //    `undefined`, no registration happens, no getter is called.
+    const token = runtime.registerCondition(trigger.id, name, stableGetter, { scope });
+    return () => token.unregister();
+  }, [runtime, trigger.id, name, stableGetter, scope]);
+}
+```
+
+`useEvent` возвращает эмиттер, обёрнутый в `useCallback`. На сервере эмиттер всё равно вызываемый — но если код твоего компонента зовёт `fire(payload)` во время рендера (так делать не надо), вызов уходит в рантайм без зарегистрированных обработчиков действий (потому что `useAction` ещё не отработал свой `useEffect`), и ничего не происходит. **Не запускай события из рендера**, ни на сервере, ни на клиенте — это обычное правило React, которое Triggery не нарушает.
+
+У Solid и Vue поведение похожее:
+
+- **Solid** — `onCleanup` и вызов `registerCondition` живут внутри setup-функции компонента. Во время SSR с `renderToString` из `solid-js/web` Solid запускает setup, но трактует реактивные примитивы как инертные; путь регистрации проходит, но инстанс рантайма принадлежит запросу и удаляется в конце. Никакие данные гидрации не пересекают границу.
+- **Vue** — `onScopeDispose` и регистрация происходят внутри `setup()`. На сервере `setup` запускается; рантайм видит регистрацию и тут же выбрасывает её вместе с запросом. Никакого долговечного состояния не остаётся.
+
+Поведение React самое строгое из трёх (эффекты на сервере вообще не работают), поэтому именно его описываем подробно. Двое других ведут себя так же за счёт того, что рантайм пер-запросный.
+
+## Streaming SSR с Next.js (App Router)
+
+Паттерн: **помечай trigger-несущие компоненты `'use client'`**, чтобы SSR отрендерил их статическую разметку, но отложил работу триггеров до клиента. Сам `TriggerRuntimeProvider` — клиентский компонент.
+
+```tsx title="src/components/triggery-root.tsx"
+'use client';
+
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { useState, type ReactNode } from 'react';
+
+export function TriggeryRoot({ children }: { children: ReactNode }) {
+  // Per-tab runtime, created lazily in the browser on first render.
+  const [runtime] = useState(() => createRuntime());
+  return <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>;
+}
+```
+
+```tsx title="src/app/layout.tsx — server component"
+import { TriggeryRoot } from '../components/triggery-root';
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <TriggeryRoot>{children}</TriggeryRoot>
+      </body>
+    </html>
+  );
+}
+```
+
+Дальше любой компонент, использующий `useEvent` / `useCondition` / `useAction`, живёт в `'use client'`-файле. Серверные компоненты выше по дереву свободно их компонуют — Next сериализует границу, и клиентское дерево гидрирует рантайм.
+
+<Aside type="caution">
+Не импортируй `@triggery/react` (и свои `*.trigger.ts`-файлы) из серверного компонента, который *одновременно* использует server-only-API (например, `next/headers`). Сам пакет безопасен для сервера, но смесь клиентских хуков и server-only-API в одном файле сбивает бандлер с толку. Держи код триггеров на своём `'use client'`-острове.
+</Aside>
+
+См. [React Server Components](/ru/guide/ssr/react-server-components/) — там RSC разобран отдельно.
+
+## Remix и Tanstack Start
+
+Маршруты Remix — полноценные React-компоненты — работают по той же модели, что и Pages Router у Next. Оберни корневой layout в `<TriggerRuntimeProvider>`; код триггеров работает только в браузере, потому что хуки регистрируются в `useEffect`.
+
+```tsx title="app/root.tsx (Remix)"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { useState } from 'react';
+import { Outlet } from '@remix-run/react';
+
+export default function App() {
+  const [runtime] = useState(() => createRuntime());
+  return (
+    <html lang="en">
+      <body>
+        <TriggerRuntimeProvider runtime={runtime}>
+          <Outlet />
+        </TriggerRuntimeProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+В Remix ничего специфичного беречь не приходится — SSR-проход рендерит статический HTML, клиент гидрируется, коллбэки `useEffect` срабатывают, условия и действия регистрируются. Tanstack Start устроен так же.
+
+## SolidStart
+
+SSR у SolidStart по духу похож, но использует `renderToStream` из `solid-js/web`. `TriggerRuntimeProvider` для Solid — обычный компонент на context-API, без лишних церемоний. Размести его один раз в корне.
+
+```tsx title="src/entry-server.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/solid';
+import { App } from './App';
+
+export default function ServerEntry() {
+  // Per-request runtime — disposed when the response finishes.
+  const runtime = createRuntime();
+  return (
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  );
+}
+```
+
+SSR у Solid запускает setup-функции охотнее, чем у React, поэтому регистрации действительно выполняются на сервере — но рантайм при этом пер-запросный и `fire` не получает, так что у этих регистраций нет наблюдаемого эффекта. Рантайм собирается сборщиком мусора в конце запроса вместе с любым промежуточным состоянием.
+
+## Как избежать рассинхронов гидрации
+
+Правило одно: **разметка с серверного рендера должна совпадать с разметкой первого клиентского коммита**. Хуки Triggery возвращают одинаковые значения по умолчанию с обеих сторон:
+
+- `useEvent` возвращает одну и ту же форму эмиттера, обёрнутую в `useCallback` — срабатывания во время рендера — no-op'ы и на сервере, и на клиенте (запускать из рендера всё равно нельзя).
+- `useCondition` и `useAction` возвращают `undefined` везде.
+- `useInspect(trigger)` возвращает `undefined` на сервере *и* на самом первом клиентском коммите (рантайм ещё ничего не запускал).
+- `useInspectHistory(limit)` возвращает пустой массив на сервере и на первом коммите; live-tail стартует после первого срабатывания.
+
+Если ты делаешь дебаг-панель, которая читает `useInspectHistory` и ничего не рендерит, когда список пуст, — серверный HTML и первый клиентский HTML идентичны, никакого рассинхрона нет.
+
+Одно место, где надо быть аккуратным: не пытайся выводить *видимый* результат `trigger.inspect()` во время первого рендера. Сервер запусков не видел (вернёт `undefined`); клиент на первом рендере запусков тоже не видел (тоже `undefined`). После первого commit-эффекта и первого срабатывания клиент разойдётся с сервером — но это нормальный пост-гидрационный путь обновлений, а не рассинхрон.
+
+## Что насчёт fire-and-render-сценариев?
+
+Если запускаешь событие из `useEffect(() => fire('app:ready'), [])`, этот эффект работает **только на клиенте**. Серверный рендер не затронут; клиент коммитит, эффект запускается, событие срабатывает, рантайм диспатчит его на планировщике микротасок, реакторы работают. Это нормальный паттерн «did mount», работает без церемоний.
+
+Если хочешь запустить событие из server-only-контекста (например, серверного компонента с уже полученными данными) и чтобы реактор узнал об этом на клиенте — у V1 транспорта для этого нет. Пришлось бы сериализовать «to do» в страницу (например, через хук в духе `dehydrate`) и заново запустить событие на клиенте. Это паттерн уровня рецепта, а не возможность рантайма.
+
+## Куда вписывается серверный рантайм V2
+
+`@triggery/server` (V2, в roadmap) отвечает на вопрос, который эта страница в основном обходит: **что если я хочу, чтобы логика триггера реально работала на сервере — с долговечными таймерами, ретраями и транспортом в браузер?**
+
+В общих чертах V2 вводит:
+
+- **Серверный рантайм** со своим планировщиком, переживающим запрос — на бэке Redis / Postgres / твоей очереди.
+- **Транспортный слой**, который переносит срабатывания из одного рантайма в другой (браузер → сервер → другие браузеры, сервер → сервер внутри кластера).
+- **Server-only-типы действий** для работы с БД, очередями, сторонними API.
+- **Примитив async-correlation**, который связывает срабатывание, запланированное на сервере, с исходным клиентским запуском.
+
+Ничего из этого в V1 нет. Обещание V1 уже выполнено: клиентский слой координации, не мешающий тебе делать SSR. V2 — отдельный пакет, opt-in, аддитивный — модули триггеров V1 продолжат работать без изменений.
+
+См. [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) — там текущая форма.
+
+## TL;DR — паттерны по фреймворкам
+
+| Фреймворк | Размещение провайдера | Рантайм на каждый запрос? |
+|---|---|---|
+| **Next.js (App Router)** | Внутри `'use client'`-границы рядом с корневым layout. | Да — `useState(() => createRuntime())` в клиентском компоненте провайдера. |
+| **Next.js (Pages Router)** | В `_app.tsx`. | Да — тот же ленивый `useState`-инициализатор. |
+| **Remix / Tanstack Start** | В `root.tsx`. | Да. |
+| **SolidStart** | В `entry-server.tsx` и `entry-client.tsx`. | Да, на каждый запрос на сервере; один раз при монтировании на клиенте. |
+| **Nuxt (Vue)** | В `app.vue`. | Да — Nuxt автоматически создаёт свежий рантайм на каждый запрос через composables в стиле `useState`. |
+| **Astro islands** | Внутри island-компонента на React/Solid/Vue. | На каждый остров — каждый остров владеет своим рантаймом. |
+| **Статический экспорт (`output: 'export'`)** | Где угодно — серверного рантайма нет, только рендер во время сборки. | Один рантайм на сессию браузера, как у любого клиентского SPA. |
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="React Server Components"
+    description="Границы 'use client', файлы триггеров как клиентские модули, гибридные страницы."
+    href="/ru/guide/ssr/react-server-components/"
+  />
+  <LinkCard
+    title="StrictMode (React)"
+    description="Почему двойной вызов эффектов в Triggery безопасен по построению."
+    href="/ru/guide/ssr/strict-mode/"
+  />
+  <LinkCard
+    title="Provider"
+    description="TriggerRuntimeProvider — обёртка, которую SSR-страницы монтируют один раз рядом с корнем."
+    href="/ru/api/react/trigger-runtime-provider/"
+  />
+  <LinkCard
+    title="Roadmap"
+    description="@triggery/server (V2), транспорт, долговечные таймеры, серверные действия."
+    href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md"
+  />
+</CardGrid>

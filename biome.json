@@ -14,7 +14,11 @@
       "!**/.changeset",
       "!**/*.tsbuildinfo",
       "!**/pnpm-lock.yaml",
-      "!templates"
+      "!templates",
+      "!apps/docs/.astro",
+      "!apps/docs/src/components/**/*.astro",
+      "!apps/docs/src/content.config.ts",
+      "!apps/docs/src/content/docs/**"
     ]
   },
   "formatter": {

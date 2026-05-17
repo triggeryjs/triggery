@@ -1,0 +1,337 @@
+---
+title: "Обработчики"
+description: "Контекст обработчика — event, conditions, actions, check, signal, meta — основная справочная страница."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+**Обработчик** — это функция, которую вызывает рантайм, когда отправленное событие совпадает с триггером и присутствуют все `required` условия. Он получает один аргумент — `ctx` — у которого шесть полей:
+
+```ts
+handler({ event, conditions, actions, check, signal, meta }) {
+  //         │       │           │        │      │       │
+  //         │       │           │        │      │       └─ runId, triggerId, инфо о каскаде
+  //         │       │           │        │      └─ AbortSignal — переключается при вытеснении / dispose
+  //         │       │           │        └─ предикаты check.is / check.all / check.any
+  //         │       │           └─ actions.foo?.(payload) + actions.debounce/throttle/defer
+  //         │       └─ pull-only снимок зарегистрированных геттеров условий
+  //         └─ { name, payload } — discriminated union объявленных событий
+}
+```
+
+Обработчик — это обычный JavaScript. Никакого реактивного графа вокруг него; никакие прокси наружу не утекают. На каждый вызов выдаётся свежий `ctx`. Дальше — пробежка по каждому полю.
+
+## `event` — discriminated union
+
+`event` — это discriminated union по всем событиям, перечисленным в схеме. Форма — `{ readonly name: K; readonly payload: EventMap[K] }` для каждого `K`. Разветвляй по `event.name`, чтобы сузить `event.payload`:
+
+```ts title="src/triggers/message.trigger.ts"
+type Message = { author: string; text: string };
+
+export const messageTrigger = createTrigger<{
+  events: {
+    'new-message':   Message;
+    'edited':        Message;
+    'channel-empty': void;
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message', 'edited', 'channel-empty'],
+  handler({ event }) {
+    switch (event.name) {
+      case 'new-message':
+        // event.payload: Message
+        console.log('new', event.payload.author);
+        break;
+      case 'edited':
+        // event.payload: Message
+        console.log('edit', event.payload.text);
+        break;
+      case 'channel-empty':
+        // event.payload: void
+        console.log('empty channel');
+        break;
+    }
+  },
+});
+```
+
+Если в триггере объявлено ровно одно событие, тип `event.payload` — это просто payload этого события, без switch.
+
+## `conditions` — типизированная карта геттеров
+
+`conditions` — это зафиксированный снимок значений условий триггера, лениво читаемых при первом обращении. Каждый элемент — `T | undefined`, потому что регистрации может ещё не быть. Прокси кеширует на прогон — два чтения одного и того же условия дадут одно и то же значение.
+
+```ts
+handler({ conditions, event }) {
+  // Ручная проверка — сужает тип в TS.
+  if (!conditions.user)     return;
+  if (!conditions.settings) return;
+
+  // Оба не undefined здесь.
+  if (!conditions.settings.notifications) return;
+  if (event.payload.channelId === conditions.activeChannelId) return;
+
+  // …дальше.
+}
+```
+
+Три вещи на запомнить:
+
+1. **Порядок важен для стоимости, не для корректности.** Рантайм зовёт геттер только тогда, когда ты его прочитал. Ставь дешёвые проверки впереди.
+2. **Прочёл один раз, ветвись много.** `const s = conditions.settings; if (!s) return; if (!s.notifications) return; if (s.dnd) return;` — идиоматично.
+3. **Никакой распаковки через `.value`.** Что прочитал — то и есть значение, которое вернул геттер.
+
+См. [Условия](/ru/guide/essentials/conditions/) для стороны регистрации.
+
+## `actions` — прокси с опциональными членами + цепочка таймеров
+
+`actions` — это поверхность побочных эффектов. Каждое объявленное действие — `((payload) => void) | undefined`. Плюс три композируемые обёртки:
+
+```ts
+handler({ actions, event }) {
+  // Обычный вызов — no-op, если не зарегистрировано.
+  actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+
+  // Вызовы с таймером.
+  actions.debounce(800).playSound?.('beep');
+  actions.throttle(2000).updateBadge?.(event.payload.channelId);
+  actions.defer(100).analytics?.({ kind: 'msg.received' });
+}
+```
+
+`debounce`, `throttle`, `defer` возвращают новый прокси с такой же формой — композируемый, но плоский. Рантайм владеет состоянием таймеров на каждый триггер и отменяет их при dispose.
+
+Действие с void-payload вызывается без аргумента: `actions.beep?.()`.
+
+См. [Действия](/ru/guide/essentials/actions/) для стороны регистрации и модели таймеров.
+
+## `check` — типизированные предикаты над условиями
+
+`check` — это маленький DSL, который делает три вещи, которые иначе пришлось бы писать руками: сужает `T | undefined`, гейтит на предикате и аккуратно возвращает `false`, если условие не зарегистрировано.
+
+### `check.is(key, predicate)`
+
+True, если условие существует и предикат вернул правду. Предикат получает значение, типизированное как `NonNullable<T>`:
+
+```ts
+if (check.is('settings', (s) => s.notifications)) {
+  // Ветка, когда settings зарегистрировано И s.notifications — true.
+}
+
+if (!check.is('user', (u) => u.id === event.payload.authorId)) {
+  // Пропускаем, когда user не зарегистрирован ИЛИ предикат false.
+}
+```
+
+Это идиоматичное сокращение для «если X присутствует и X.y truthy». Ручная версия тоже нормально; `check.is` короче и красиво показывается в `snapshotKeys` инспектора.
+
+### `check.all(map)`
+
+Каждое перечисленное условие должно существовать, и его предикат должен вернуть true. Ключи карты — имена условий, значения — предикаты:
+
+```ts
+if (!check.all({
+  settings:      (s) => s.notifications && !s.dnd,
+  user:          (u) => u.isActive,
+  activeChannel: (c) => c.id !== event.payload.channelId,
+})) {
+  return;
+}
+// Все три есть и проходят — едем дальше.
+```
+
+Отсутствующее условие (без зарегистрированного геттера) приводит к тому, что `all` вернёт `false` — так же, как и непрошедший предикат. Режима «частичная правда» нет.
+
+## `check.any(map)`
+
+Хотя бы одно из перечисленных условий должно существовать и пройти. Отсутствующие условия пропускаются (не считаются провалом):
+
+```ts
+if (check.any({
+  isPriorityChannel: (b) => b === true,
+  isMentionMe:       (b) => b === true,
+})) {
+  actions.showUrgentToast?.({ title: 'You were mentioned' });
+}
+```
+
+`any` короткозамыкает на первом совпадении.
+
+### Когда что использовать
+
+- **Одно условие, одна проверка** → `check.is`.
+- **Несколько условий, все должны пройти** → `check.all`.
+- **Несколько условий-escape-hatch, любое из которых подходит** → `check.any`.
+- **Сложная комбинированная логика** → ручной `if/else` с явным сужением — `check` не пытается быть query language.
+
+## `signal` — abort-сигнал этого прогона
+
+`signal` — это `AbortSignal`, который рантайм переключает, когда:
+
+- Новый прогон вытесняет этот (при `concurrency: 'take-latest'`, по умолчанию).
+- Рантайм уничтожается.
+- Триггер разрегистрируется.
+
+Для sync-обработчиков `signal` — формальность: они возвращаются до того, как может случиться вытеснение. Для async-обработчиков пробрасывай его в `fetch` / async-итерацию / event listener:
+
+```ts
+async handler({ event, signal, actions }) {
+  const res = await fetch(`/api/messages/${event.payload.channelId}`, { signal });
+  if (signal.aborted) return;
+  const data = await res.json();
+  if (signal.aborted) return;
+  actions.show?.(data);
+}
+```
+
+Сигнал помогает двумя способами:
+
+1. **`fetch(url, { signal })`** — сетевой слой прервёт запрос, когда сигнал переключится. Никакого зря потраченного трафика.
+2. **`if (signal.aborted) return;` после каждого `await`** — защитно, чтобы медленный ответ не задиспатчил действия для уже устаревшего события.
+
+При `concurrency: 'queue'` сигналы не переключаются на старте нового прогона — прогоны сериализуются. При `take-every` — тоже не переключаются. См. [Стратегии параллелизма](/ru/guide/async/concurrency/).
+
+## `meta` — идентичность прогона и инфо о каскаде
+
+`meta` несёт идентифицирующую информацию о прогоне:
+
+```ts
+type MetaCtx = {
+  readonly runId:           string;   // уникальный на прогон
+  readonly triggerId:       string;   // id твоего триггера
+  readonly scheduledAt:     number;   // performance.now() на старте прогона
+  readonly cascadeDepth:    number;   // 0 для top-level, >0 если запущен из другого триггера
+  readonly parentRunId?:    string;   // прогон, отправивший событие, с которого начался этот
+  readonly parentTriggerId?: string;  // id родительского триггера
+};
+```
+
+Распространённое применение — структурированный логинг:
+
+```ts
+handler({ event, meta, actions }) {
+  console.log(`[${meta.triggerId} / ${meta.runId}] firing for`, event.name);
+  if (meta.cascadeDepth > 0) {
+    console.log(`  cascaded from ${meta.parentTriggerId} / ${meta.parentRunId}`);
+  }
+}
+```
+
+`runId` — тот же id, по которому инспектор ключует записи, так что серверный лог и таймлайн инспектора тривиально коррелируют. `cascadeDepth` и `parentRunId` — это то, что питает отрисовку каскадной цепочки в `@triggery/devtools-redux`.
+
+## Возвращаемое значение
+
+Обработчик может вернуть `void` или `Promise<void>`. Оба first-class:
+
+```ts
+handler({ event, actions }) {
+  if (event.name === 'new-message') actions.show?.(event.payload);
+}
+
+async handler({ event, signal, actions }) {
+  const data = await fetch('/x', { signal }).then((r) => r.json());
+  actions.show?.(data);
+}
+```
+
+Если обработчик кидает (или реджектит), рантайм ловит, помечает запись инспектора `'errored'` и зовёт хук middleware `onError`. Триггер остаётся зарегистрированным — следующее событие отработает обработчик нормально.
+
+Возврат чего-то отличного от `undefined` игнорируется — тип это запрещает. Обработчик — для побочных эффектов, не для вычислений.
+
+## Общие паттерны
+
+### Ранний return при skip
+
+Самая распространённая форма — guard, потом действие:
+
+```ts
+handler({ event, conditions, actions, check }) {
+  if (!conditions.settings) return;
+  if (event.payload.channelId === conditions.activeChannelId) return;
+  if (!check.is('settings', (s) => s.notifications)) return;
+
+  actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+}
+```
+
+Читается сверху вниз как спецификация: «пропусти, если нет settings; пропусти, если тот же канал; пропусти, если notifications выключены; иначе — тост». Файл триггера — это спецификация.
+
+### Fan-out действий
+
+Несколько эффектов в одном прогоне:
+
+```ts
+handler({ event, actions, check }) {
+  if (check.is('settings', (s) => s.notifications)) {
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  }
+  if (check.is('settings', (s) => s.sound && !s.dnd)) {
+    actions.debounce(800).playSound?.('beep');
+  }
+  actions.incrementBadge?.(event.payload.channelId);
+  actions.defer(100).analytics?.({ kind: 'msg.received' });
+}
+```
+
+Каждое действие независимо; инспектор записывает список `executedActions` на прогон — можно увидеть, какие именно побочные эффекты отработали.
+
+### Каскад — отправка другого события
+
+Достучаться до рантайма, чтобы отправить дочернее событие изнутри обработчика:
+
+```ts
+import { getDefaultRuntime } from '@triggery/core';
+
+handler({ event, meta }) {
+  if (event.name === 'user:signed-in') {
+    getDefaultRuntime().fire('preload-inbox', { userId: event.payload.userId });
+    // Новое событие в следующем обработчике несёт cascadeDepth=1 и parentRunId=meta.runId.
+  }
+}
+```
+
+Рантайм помечает новый вызов как каскад и проверяет лимит глубины. См. [Каскад](/ru/guide/architecture/cascade/).
+
+### Логинг с `meta`
+
+Для структурного трейсинга:
+
+```ts
+import { logger } from '~/logger';
+
+handler({ event, meta }) {
+  logger.info('trigger run', {
+    triggerId:    meta.triggerId,
+    runId:        meta.runId,
+    eventName:    event.name,
+    cascadeDepth: meta.cascadeDepth,
+    parentRunId:  meta.parentRunId,
+  });
+}
+```
+
+Те же поля попадают в инспектор, так что прод-логи и записи DEV-инспектора выстраиваются по `runId`.
+
+<CardGrid>
+  <LinkCard
+    title="Асинхронные обработчики"
+    description="Полная история async — await'ы, прокидка signal, error boundaries."
+    href="/ru/guide/async/async-handlers/"
+  />
+  <LinkCard
+    title="Стратегии параллелизма"
+    description="take-latest, take-every, take-first, queue, exhaust — когда какая подходит."
+    href="/ru/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Отмена"
+    description="Как правильно читать signal, передавать его в fetch, прерывать вложенную работу."
+    href="/ru/guide/async/cancellation/"
+  />
+  <LinkCard
+    title="Каскад"
+    description="Кросс-триггерный fanout, лимиты глубины, детект циклов, devtools-вид."
+    href="/ru/guide/architecture/cascade/"
+  />
+</CardGrid>

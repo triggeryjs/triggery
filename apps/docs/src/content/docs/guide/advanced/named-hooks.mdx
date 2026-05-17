@@ -1,0 +1,228 @@
+---
+title: Named hooks
+description: "createNamedHooks turns a trigger's schema into per-port hooks like useNewMessageEvent and useShowToastAction, no codegen step required."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+The generic `useEvent` / `useCondition` / `useAction` hooks read fine in small files. Once a trigger has four or five ports, every wiring component starts looking the same: a `useEvent(trigger, 'foo')` here, a `useCondition(trigger, 'bar', …)` there. The trigger name and a string literal repeat themselves into the noise. **Named hooks** is the ergonomic cure — one helper that turns the schema into a flat object of port-specific hooks, with no codegen and no extra build step.
+
+## The shape
+
+`createNamedHooks(trigger)` returns an object whose keys are derived from the schema. For a trigger that looks like this:
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string; channelId: string } };
+  conditions: { user: { id: string }; settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string }; playSound: void };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user', 'settings'],
+  handler({ event, conditions, actions, check }) {
+    if (!conditions.user || !conditions.settings) return;
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+  },
+});
+```
+
+You get five hooks, one per port:
+
+```ts title="src/triggers/message.hooks.ts"
+import { createNamedHooks } from '@triggery/react';
+import { messageTrigger } from './message.trigger';
+
+export const {
+  useNewMessageEvent,    // useEvent(messageTrigger, 'new-message')
+  useUserCondition,      // useCondition(messageTrigger, 'user', …)
+  useSettingsCondition,  // useCondition(messageTrigger, 'settings', …)
+  useShowToastAction,    // useAction(messageTrigger, 'showToast', …)
+  usePlaySoundAction,    // useAction(messageTrigger, 'playSound', …)
+} = createNamedHooks(messageTrigger);
+```
+
+Each one wraps the corresponding generic hook with the trigger and port-name baked in. No type assertions, no runtime parsing — the names are static, derived from the schema by TypeScript's template-literal type system.
+
+## What this looks like in a component
+
+Compare the same wiring written both ways. With generic hooks:
+
+```tsx title="Chat.tsx (generic hooks)"
+import { useEvent, useCondition } from '@triggery/react';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function Chat({ channelId, user }: Props) {
+  const fireNewMessage = useEvent(messageTrigger, 'new-message');
+  useCondition(messageTrigger, 'user', () => user, [user]);
+  // …
+}
+```
+
+With named hooks:
+
+```tsx title="Chat.tsx (named hooks)"
+import { useNewMessageEvent, useUserCondition } from '../triggers/message.hooks';
+
+export function Chat({ channelId, user }: Props) {
+  const fireNewMessage = useNewMessageEvent();
+  useUserCondition(() => user, [user]);
+  // …
+}
+```
+
+Three fewer string literals, no `messageTrigger` repeated, and the call sites read like ordinary domain hooks. Refactor `new-message` → `message-received` in the schema and TypeScript breaks `useNewMessageEvent` at the import site for you.
+
+## The TS mechanism (one mapped type, one template literal)
+
+The hook names are computed by the type system, not generated to disk. The relevant chunk of `@triggery/core/types.ts` is small:
+
+```ts title="Inside @triggery/core"
+type CapFirst<S extends string> =
+  S extends `${infer A}${infer B}` ? `${Uppercase<A>}${B}` : S;
+
+type KebabToCamel<S extends string> =
+  S extends `${infer A}-${infer B}` ? `${A}${CapFirst<KebabToCamel<B>>}` : S;
+
+export type ToPascal<S extends string> = CapFirst<KebabToCamel<S>>;
+
+export type NamedHooks<S extends TriggerSchema> = {
+  readonly [K in EventKey<S> as `use${ToPascal<K>}Event`]: EventHook<EventMap<S>[K]>;
+} & {
+  readonly [K in ConditionKey<S> as `use${ToPascal<K>}Condition`]: ConditionHook<ConditionMap<S>[K]>;
+} & {
+  readonly [K in ActionKey<S> as `use${ToPascal<K>}Action`]: ActionHook<ActionMap<S>[K]>;
+};
+```
+
+Three mapped types over the three schema maps, each one remapped with `as` to a template-literal key. The translation rules:
+
+| Schema key | Hook name |
+|------------|-----------|
+| `'new-message'` (event)       | `useNewMessageEvent` |
+| `'app:ready'` (event)         | `useApp:readyEvent` — **avoid kebab-case substitutes** (use the generic hook for `'app:ready'`) |
+| `'user'` (condition)          | `useUserCondition` |
+| `'currentUserId'` (condition) | `useCurrentUserIdCondition` |
+| `'showToast'` (action)        | `useShowToastAction` |
+| `'play-sound'` (action)       | `usePlaySoundAction` |
+
+Two-step rule for kebab-case: each `-` is removed and the next letter is upper-cased, then the whole string is `CapFirst`'d. camelCase keys are upper-cased on the first letter; colons, dots and slashes are passed through verbatim (which is why colon-keys produce odd names — see the next section).
+
+### Naming caveats
+
+Some valid JS strings produce hook names you can't actually type at a call site:
+
+- Colon / dot / slash keys (`'app:ready'`, `'router.transition'`) — the template literal preserves the punctuation. The type exists, but the property is not callable as `useApp:readyEvent` in source code. Use the generic `useEvent(trigger, 'app:ready')` in that case.
+- Numeric-leading keys (`'2fa-required'`) — same problem. Avoid.
+- Reserved JS identifiers in `as` keys (`'class'` → `useClassCondition`) — fine because the resulting identifier is `useClassCondition`, not `class`.
+
+The eslint rule [`prefer-named-hook`](https://github.com/triggeryjs/triggery/tree/main/packages/eslint-plugin) only suggests the named hook when the resulting name is a valid JS identifier; it stays quiet on punctuation-bearing keys.
+
+## When to use named hooks
+
+A rough rule:
+
+- **2–3 ports** in a trigger — generic hooks read fine, named hooks add a re-export file for little gain.
+- **4+ ports**, or two components touching the same trigger — named hooks pay off. The flat import list is much easier to grep and refactor than a fan of `useEvent(trigger, 'literal')` calls.
+- **Trigger lives in a shared package** — always export named hooks. Consumers of your package get hook-shaped ergonomics without having to know the trigger object.
+- **Inline / one-shot triggers** — don't bother; the trigger is already local to the file. Use generic hooks or `useInlineTrigger`.
+
+A pattern that scales: put the trigger and its named hooks side-by-side, re-export both from the feature's barrel:
+
+```ts title="src/features/chat/index.ts"
+export { messageTrigger } from './message.trigger';
+export {
+  useNewMessageEvent,
+  useUserCondition,
+  useSettingsCondition,
+  useShowToastAction,
+  usePlaySoundAction,
+} from './message.hooks';
+```
+
+Consumer code never re-imports `messageTrigger` directly except to call `trigger.disable()` for a feature flag, or in tests.
+
+## The ESLint nudge
+
+`@triggery/eslint-plugin` ships a rule `prefer-named-hook` that flags this:
+
+```tsx
+// ⚠ prefer-named-hook
+const fire = useEvent(messageTrigger, 'new-message');
+```
+
+…and suggests the autofix:
+
+```tsx
+const fire = useNewMessageEvent();
+```
+
+The rule only fires when (a) a named-hooks export exists in the same module graph and (b) the resulting hook name is a valid JS identifier. Disable per file with `// eslint-disable-next-line` if you're in a deliberate exception (e.g. dynamic event names in a wrapper hook of your own).
+
+## Performance — is the Proxy worth worrying about?
+
+No. The Proxy is one allocation per `createNamedHooks(trigger)` call (typically once per app), and each property access caches the resulting hook so React sees the same function reference across renders. At call time the named hook does literally one thing: invoke the generic hook with one extra string argument bound. The cost is in the noise compared to the React render itself.
+
+The bullet-point version of the implementation:
+
+- One `Proxy` per `createNamedHooks(trigger)`.
+- One `Map` keyed by hook-name; first lookup creates the hook function, every later lookup returns the cached reference.
+- The hook function is a 1-line forwarder to `useEvent` / `useCondition` / `useAction`.
+
+There is no codegen, no `eval`, no string parsing on the hot path.
+
+## Solid and Vue: same shape
+
+The Solid and Vue bindings expose `createNamedHooks` with identical typing. The hooks call into their framework-specific `useEvent` / `useCondition` / `useAction` under the hood — the surface stays the same:
+
+```ts title="Solid — src/triggers/message.hooks.ts"
+import { createNamedHooks } from '@triggery/solid';
+import { messageTrigger } from './message.trigger';
+
+export const { useNewMessageEvent, useUserCondition, useShowToastAction } =
+  createNamedHooks(messageTrigger);
+```
+
+```vue title="Vue — Chat.vue"
+<script setup lang="ts">
+import { useNewMessageEvent } from '../triggers/message.hooks';
+const fireNewMessage = useNewMessageEvent();
+</script>
+```
+
+Cross-framework projects (a React shell with Solid micro-frontends, say) end up with the same named-hook names on both sides — handy when you grep across the codebase.
+
+## Anti-patterns
+
+- **Building the Proxy inside a component.** `createNamedHooks(trigger)` is meant to run once at module top level, like `createTrigger`. Calling it inside a function component breaks hook-name stability between renders.
+- **Mixing named and generic hooks in the same file with no reason.** Pick one per file. Inconsistency is the cost.
+- **Re-exporting the proxy directly** (`export const messageHooks = createNamedHooks(messageTrigger)`). Then call sites become `messageHooks.useNewMessageEvent()` — almost what we started with. Destructure at the export site.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Trigger anatomy"
+    description="The full schema generic — exactly what each map ends up as in the hook names."
+    href="/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Inline triggers"
+    description="useInlineTrigger for cases where a *.trigger.ts file plus named hooks is overkill."
+    href="/guide/advanced/inline-triggers/"
+  />
+  <LinkCard
+    title="Schema typing"
+    description="How the schema generic feeds into NamedHooks<S> via template literal types."
+    href="/guide/typescript/schema-typing/"
+  />
+  <LinkCard
+    title="@triggery/eslint-plugin"
+    description="prefer-named-hook, no-dynamic-id, exhaustive-conditions and friends."
+    href="/packages/eslint-plugin/"
+  />
+</CardGrid>

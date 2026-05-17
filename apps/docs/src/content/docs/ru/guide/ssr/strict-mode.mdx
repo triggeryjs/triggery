@@ -1,0 +1,278 @@
+---
+title: "StrictMode (React)"
+description: "React StrictMode дважды вызывает useEffect, чтобы выявить баги в cleanup. Стек last-mount-wins у Triggery безопасен по построению — а двойные dev-рендеры Solid и Vue ведут себя так же."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`<StrictMode>` у React существует, чтобы сделать целый класс багов невозможным игнорировать. В dev он намеренно монтирует каждый компонент, тут же размонтирует и снова монтирует — так что любое состояние, не убранное при unmount, становится видно *немедленно*, а не после навигации, переключения вкладок или hot-reload. Те же правила распространяются на `useEffect`: каждый эффект запускается, чистится, потом запускается снова.
+
+Если твой `useEffect` регистрирует подписку, которая *не* убирается в возвращённой функции, StrictMode сразу показывает дубликат регистрации. В этом и смысл. Обратная сторона: каждой библиотеке, чьи хуки что-нибудь регистрируют, нужно пережить цикл mount-unmount-mount без утечек, двойных срабатываний или потерянных обработчиков.
+
+Triggery — переживает. Эта страница — объяснение почему.
+
+## Что StrictMode на самом деле делает
+
+```tsx
+<StrictMode>
+  <App />
+</StrictMode>
+```
+
+В dev жизненный цикл рендера React выглядит так:
+
+1. Смонтировать компонент.
+2. Запустить эффекты.
+3. Запустить cleanup-функцию каждого эффекта.
+4. Запустить эффекты снова.
+5. (Дальше идёт пользовательское взаимодействие.)
+
+В проде StrictMode — no-op, дерево монтируется один раз. Так что если твой код корректен только при условии «эффекты запускаются ровно один раз», баг ты найдёшь в проде, через недели.
+
+Поэтому документация React явно рекомендует StrictMode для новых приложений, а сниппет в [Getting started](/ru/guide/getting-started/) у Triggery оборачивает корень именно в него.
+
+## Почему Triggery безопасен
+
+Хуки Triggery регистрируют токен в `useEffect` и снимают регистрацию в cleanup. Полный цикл StrictMode выглядит так:
+
+```text
+1. Mount   — registerCondition('settings', getter)  → token A pushed
+2. Cleanup — token A.unregister()                   → stack empty
+3. Mount   — registerCondition('settings', getter)  → token B pushed
+                                                      (same closure, same value)
+4. …user interacts…
+5. Unmount — token B.unregister()                   → stack empty
+```
+
+После шага 3 активна ровно **одна** регистрация. Первая (token A) полностью убрана до того, как её место занимает вторая (token B). Никаких двойных срабатываний триггера; никаких дубликатов условия; значение, которое видит триггер, однозначно.
+
+Механика — **стек** на пару (trigger, name), который ведёт рантайм, а не плоская мапа. Регистрация — пушится в стек. Снятие — удаляется откуда бы она ни была в стеке (чаще всего с верха, но рантайм проходит весь стек на всякий случай). «Активное» значение — всегда вершина стека.
+
+```ts title="What the runtime stack looks like"
+{
+  triggerId: 'message-received',
+  conditionStacks: {
+    settings: [
+      // Stack — top of array is the active registration
+      <getter from <SettingsPanel /> mount #2>,
+    ],
+    activeChannelId: [
+      <getter from <Chat /> mount #2>,
+    ],
+  },
+  actionStacks: {
+    showToast: [
+      <handler from <NotificationLayer /> mount #2>,
+    ],
+  },
+}
+```
+
+Когда в момент срабатывания рантайм читает `conditions.settings`, он берёт **вершину стека**. Когда обработчик зовёт `actions.showToast?.()`, берётся вершина стека действий. Last-mount-wins — согласовано, детерминированно, безопасно при StrictMode.
+
+## Семантика refcount + cleanup
+
+Ключевой инвариант: **на каждый вызов `register*` приходится ровно один `unregister`**, и рантайм никогда не путает cleanup одного монтирования с регистрацией другого, даже если их токены разные.
+
+Вот тот же React-хук, с комментариями:
+
+```tsx title="@triggery/react — useCondition"
+export function useCondition(trigger, name, getter, deps = []) {
+  const runtime = useRuntime();
+  const scope = useScope();
+  const getterRef = useRef(getter);
+  getterRef.current = getter;
+  const stableGetter = useCallback(() => getterRef.current(), deps);
+
+  useEffect(() => {
+    // (A) on mount: register, get back a token whose .unregister() removes
+    //     *this exact registration* (matched by identity, not by name).
+    const token = runtime.registerCondition(trigger.id, name, stableGetter, { scope });
+
+    // (B) on cleanup: unregister that exact token. The stack pops the
+    //     matching entry — even if it's not at the top (e.g. two providers
+    //     mounted in sequence).
+    return () => token.unregister();
+  }, [runtime, trigger.id, name, stableGetter, scope]);
+}
+```
+
+Важны три свойства:
+
+1. **Токены уникальны на каждую регистрацию.** Два вызова `useCondition` создают две отдельные записи в стеке, даже если их `getter` — одна и та же ссылка на функцию.
+2. **`unregister` идемпотентен.** Вызов дважды — no-op. StrictMode не зовёт cleanup дважды, но если родительский компонент держал токен вручную и снял регистрацию, React-cleanup всё равно вызвал бы свой — и второй вызов прошёл бы тихо.
+3. **Активное зеркало всегда отражает вершину стека.** Для горячего пути чтения рантайм хранит «текущее значение» на плоском `Map<name, fn>` — но это лишь зеркало; источник истины — стек. Когда вершина меняется (регистрация вытолкнута), зеркало обновляется.
+
+Это и делает так, что цикл «mount → cleanup → mount» выглядит, будто отработал только второй mount.
+
+## Никаких дубликатов регистраций обработчиков
+
+Самый частый баг «библиотека ломается под StrictMode»: обработчик, подписавшийся в mount #1, остаётся подписанным, а mount #2 добавляет *ещё одну* подписку. Теперь события вызывают двух обработчиков.
+
+В Triggery такого не бывает, потому что:
+
+- Cleanup-функция из `useEffect` запускается перед вторым mount.
+- Cleanup зовёт `token.unregister()`, который удаляет ровно ту запись в стеке, которую добавил mount #1.
+- К моменту второго mount стек пуст, и mount #2 пушит свою регистрацию.
+
+Если твой обработчик `useAction` логирует каждый вызов, увидишь ровно один лог на срабатывание, каждый раз. То же верно для `useEvent` (он даже не регистрирует — просто возвращает стабильный коллбэк) и для `useInspectHistory` (подписывается на инспектор и отписывается в cleanup).
+
+```tsx title="A test that proves it"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider, useAction } from '@triggery/react';
+import { createTrigger } from '@triggery/core';
+import { render } from '@testing-library/react';
+import { StrictMode } from 'react';
+import { expect, test, vi } from 'vitest';
+
+const t = createTrigger<{ events: { 'ping': void }; actions: { onPing: void } }>({
+  id: 'strict',
+  events: ['ping'],
+  handler: ({ actions }) => actions.onPing?.(),
+});
+
+function Reactor({ onPing }: { onPing: () => void }) {
+  useAction(t, 'onPing', onPing);
+  return null;
+}
+
+test('one fire == one action call, even under StrictMode', () => {
+  const runtime = createRuntime();
+  const onPing = vi.fn();
+  render(
+    <StrictMode>
+      <TriggerRuntimeProvider runtime={runtime}>
+        <Reactor onPing={onPing} />
+      </TriggerRuntimeProvider>
+    </StrictMode>,
+  );
+
+  runtime.fireSync('ping');
+  expect(onPing).toHaveBeenCalledTimes(1);
+});
+```
+
+В библиотеке, не справляющейся со StrictMode, этот тест падает с двойным вызовом `onPing`. У Triggery — проходит.
+
+## Несколько живых регистраций: когда важен last-mount-wins
+
+Цикл mount-unmount-mount у StrictMode — один случай. Другой случай — реально разные два компонента, оба регистрирующие одно и то же условие или действие:
+
+```tsx
+<SettingsPanelA />  {/* useCondition('settings', () => valueA) */}
+<SettingsPanelB />  {/* useCondition('settings', () => valueB) */}
+```
+
+Рантайм один раз ругается в DEV («multiple condition registrations for 'settings' on trigger 'message-received' — last-mount-wins») и использует последний запушенный геттер. Когда `<SettingsPanelB />` размонтируется, стек автоматически откатывается к геттеру `<SettingsPanelA />` — никакого ручного cleanup, никакого глобального состояния.
+
+Это намеренно: тот же механизм, на который опирается StrictMode, в обобщённом виде. DEV-warning помогает поймать *случайные* дубликаты регистрации (скопипащенный компонент); семантика стека делает *намеренные* слоистые регистрации (например, override от feature-флага) детерминированными.
+
+## Solid: двойной вызов owner'а в dev
+
+Owner-graph-модель Solid означает, что компоненты монтируются один раз, а реактивность отслеживается через сигналы — по умолчанию аналога «двойного вызова эффектов» из React тут нет. Однако:
+
+- **HMR** перезапускает setup-функции; срабатывают коллбэки `onCleanup`, потом setup перезапускается.
+- **Некоторые плагины Solid** (например, `solid-devtools`) инструментируют owner-граф и могут перезапустить setup в dev.
+
+Биндинги Triggery для Solid зовут `runtime.registerCondition(...)` прямо в setup, а `onCleanup(() => token.unregister())` — после. Применяется тот же цикл «register → cleanup → register» — last-mount-wins на стеке, никаких дубликатов регистраций.
+
+```tsx title="@triggery/solid — useCondition"
+export function useCondition(trigger, name, getter) {
+  const runtime = useRuntime();
+  const scope = useScope();
+  const token = runtime.registerCondition(trigger.id, name, getter, { scope });
+  onCleanup(() => token.unregister());
+}
+```
+
+Если ты пишешь Solid-компонент, в котором setup перезапускается (HMR или иначе), сначала отрабатывает cleanup, потом новый setup пушит свежую регистрацию. Инвариант тот же.
+
+## Vue: отслеживание реактивности в dev
+
+В Vue 3 `setup()` запускается один раз на инстанс компонента — никакого двойного вызова в dev. Биндинги Triggery используют `onScopeDispose(() => token.unregister())`, чтобы привязать время жизни регистрации к компоненту (или к явному `effectScope`). Когда effect-скоуп удаляется, токен снимается; если ты заново монтируешь компонент, начинается новый скоуп и пушится свежая регистрация.
+
+```ts title="@triggery/vue — useCondition"
+export function useCondition(trigger, name, getter) {
+  const runtime = useRuntime();
+  const scope = useScope();
+  const token = runtime.registerCondition(trigger.id, name, getter, { scope });
+  onScopeDispose(() => token.unregister());
+}
+```
+
+Hot-module-reload в Vue по умолчанию подменяет определение компонента без удаления активного скоупа — поэтому регистрации Triggery *переживают* HMR. Это полезное свойство (история инспектора сохраняется между правками), и его нет у React.
+
+## Гоняй набор тестов с включённым StrictMode
+
+Оборачивание тестового приложения в `<StrictMode>` — бесплатная страховка. По цене это почти даром — вторая пара mount/cleanup проходит за микросекунды — а ловит реальный класс багов в момент их появления.
+
+```tsx title="src/test-utils/render-with-runtime.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { render, type RenderOptions } from '@testing-library/react';
+import { StrictMode, type ReactElement } from 'react';
+
+export function renderWithRuntime(ui: ReactElement, options: RenderOptions = {}) {
+  const runtime = createRuntime();
+  return {
+    runtime,
+    ...render(ui, {
+      ...options,
+      wrapper: ({ children }) => (
+        <StrictMode>
+          <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>
+        </StrictMode>
+      ),
+    }),
+  };
+}
+```
+
+Если тест начинает падать только под StrictMode — баг в пути cleanup, и тестируемая библиотека — одна из двух: либо сам тестируемый компонент, либо то, на что он подписан. Сам Triggery безопасен для StrictMode — если тест падает здесь, компонент течёт не-Triggery-подпиской.
+
+## HMR и реестр триггеров
+
+Связанный вопрос о жизненном цикле: что происходит, когда [`@triggery/vite`](/ru/packages/vite/) делает hot-replace файла `*.trigger.ts`?
+
+Автообнаружение перезапускает `createTrigger(config)` на новом модуле. `registerTrigger` у рантайма **идемпотентен по id** — найдя существующий триггер с тем же id, он сносит старую регистрацию (отменяет in-flight-обработчики, чистит таймеры, де-индексирует имена событий) и подменяет конфиг новым. История инспектора сохраняется (она привязана к `runId`, а не к идентичности объекта триггера).
+
+Стеки condition/action *не* очищаются при замене триггера — ими владеют компоненты, а не триггер. Если id триггера остаётся прежним, существующие стеки продолжают применяться; новый обработчик работает против тех же зарегистрированных провайдеров и реакторов. Именно это делает HMR таким бодрым: правишь триггер, сохраняешь, следующее срабатывание запускает новую логику без перемонтирования компонентов.
+
+См. [Автообнаружение](/ru/guide/advanced/auto-discovery/) — там полная история HMR.
+
+## TL;DR
+
+| Беспокойство | Поведение Triggery |
+|---|---|
+| React StrictMode mount → unmount → mount | Между mount-ами отрабатывает cleanup, стек пуст, второй mount пушит одну регистрацию. Одна живая регистрация. |
+| Два провайдера для одного условия | Last-mount-wins на стеке. Снятие второго возвращает к первому. DEV-warning один раз. |
+| Асинхронные обработчики в полёте во время cleanup | `signal.aborted` переключается в true; обработчик может коротко завершиться. Новый mount стартует с чистого листа. |
+| HMR файла триггера | Триггер заменяется атомарно; существующие стеки condition/action сохраняются; история инспектора сохраняется. |
+| Solid `onCleanup` / Vue `onScopeDispose` | Та же семантика стека — last-mount-wins, никаких дубликатов. |
+
+Принцип во всех трёх биндингах один: **регистрируй токен на пути mount, снимай его на пути cleanup, никогда не предполагай, что эффекты запускаются ровно один раз**. Это и делает рантайм безопасным по построению.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Server-side rendering"
+    description="Другая сторона SSR-монеты — что делают хуки на сервере (ничего) и почему."
+    href="/ru/guide/ssr/server-side-rendering/"
+  />
+  <LinkCard
+    title="React Server Components"
+    description="Где ставить 'use client' и как server actions соединять с клиентскими триггерами."
+    href="/ru/guide/ssr/react-server-components/"
+  />
+  <LinkCard
+    title="Интеграционные тесты"
+    description="Оборачивай рендеры в тестах в StrictMode — самый простой способ ловить утечки в момент появления."
+    href="/ru/guide/testing/integration-testing/"
+  />
+  <LinkCard
+    title="Автообнаружение (HMR)"
+    description="Как @triggery/vite делает hot-replace файлов триггеров без перемонтирования компонентов."
+    href="/ru/guide/advanced/auto-discovery/"
+  />
+</CardGrid>

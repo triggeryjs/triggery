@@ -1,0 +1,158 @@
+---
+title: Why Triggery
+description: "The problem with useEffect-driven side effects, and how event → conditions → actions addresses it."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Most apps don't fail because their state management is wrong. They fail because their **side effects** are wrong — the "when this happens and that's true, do those three things in the right order" rules that bind features together. Triggery is a tiny, opinionated abstraction for exactly that layer and nothing else.
+
+## The shape of the problem
+
+Imagine a chat app. A new message arrives over WebSocket. Three things should happen:
+
+1. A toast appears — unless the user is already looking at the conversation.
+2. A bleep sound plays — unless the user disabled it, or DND is on.
+3. The channel badge ticks up — unless the message is from the current user themselves.
+
+Each of these is a tiny rule, but together they sprawl. They depend on data owned by *three* features (chat state, audio settings, current user). They produce side effects in *three more* features (toast layer, audio system, sidebar badge). The rule itself is "scenario logic" — it doesn't belong inside the toast component, or the audio component, or the chat component. But it has to live somewhere.
+
+The places it normally lives are:
+
+```tsx title="The usual outcomes"
+// In the chat component — has all the inputs, has none of the outputs.
+function ChatRoom({ channelId }: Props) {
+  const settings = useSettings();
+  const currentChannel = useCurrentChannel();
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const { showToast } = useToastDispatcher();
+  const incrementBadge = useBadgeStore(s => s.increment);
+
+  useEffect(() => {
+    const handler = (msg: Message) => {
+      if (msg.channelId === currentChannel) return;
+      if (settings.notifications) showToast({ title: msg.author, body: msg.text });
+      if (settings.sound && !settings.dnd) audioRef.current?.play();
+      if (msg.authorId !== currentUser.id) incrementBadge(msg.channelId);
+    };
+    socket.on('new-message', handler);
+    return () => socket.off('new-message', handler);
+  }, [settings, currentChannel, /* every captured value */]);
+}
+```
+
+Or — worse — split across three `useEffect`s in three components, each subscribing to the same socket event from its own corner. Or — much worse — one giant Redux Saga that nobody touches.
+
+Reading any of these answers two questions:
+
+- "What does my code do?" → eventually, with patience.
+- "What does this *scenario* do, in one place I can show a product manager?" → never.
+
+## The shape of the solution
+
+Triggery says: name the scenario, declare its inputs and outputs as typed ports, and write the rule as one function. That's it.
+
+```ts title="src/triggers/message.trigger.ts"
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null; currentUserId: string };
+  actions:    { showToast: ToastPayload; playSound: 'beep'; incrementBadge: string };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (event.payload.authorId === conditions.currentUserId) return;
+
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+    if (check.is('settings', s => s.sound && !s.dnd)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+    actions.incrementBadge?.(event.payload.channelId);
+  },
+});
+```
+
+The chat, the audio, the badge and the settings panels remain *blissfully ignorant* of each other. Each registers exactly one port — `useEvent`, `useCondition` or `useAction` — for the trigger. The trigger file is the single artifact that knows the whole scenario, and it is forty lines that read top to bottom.
+
+## The three abstractions
+
+Triggery has only three primitives, mapped onto the three component roles you already write.
+
+### Events
+
+A typed message bus, but a humble one. An event is fired from a producer (a button click, a WebSocket frame, a router transition) with a typed payload. Multiple triggers can react to the same event. Multiple producers can fire the same event. The runtime doesn't care.
+
+What's special: events go through a **scheduler** (microtask by default), so a burst of events in the same tick are batched. Producing an event never re-renders the producer.
+
+### Conditions
+
+A condition is a piece of "world state" that the trigger handler may want to read at fire time. A `<UserProvider>` registers `useCondition(messageTrigger, 'currentUserId', () => user.id, [user])` and goes about its day. When an event fires, the runtime calls the getter — that's the only moment the value is read. Components with conditions don't re-render because the trigger fires. **Conditions are pull-only**.
+
+`required` lists conditions that must exist for the handler to run at all. The whole notification scenario is meaningless without `settings` — so the trigger lists it as required, and gracefully skips with an inspector entry if no provider is mounted yet.
+
+### Actions
+
+An action is a side-effect channel. The reactor — the `<NotificationLayer>` — uses `useAction(trigger, 'showToast', handler)`. When the trigger calls `actions.showToast(payload)`, that handler runs. Like conditions, actions are pull-only: the reactor isn't re-rendered.
+
+Actions get a tiny but high-leverage proxy on top: `actions.debounce(800).playSound?.()` or `actions.throttle(2000).updateBadge?.(n)`. The runtime owns the timer.
+
+## What Triggery is not
+
+Triggery is small on purpose. There are several adjacent problems it doesn't solve, and it stays out of their way.
+
+- **Not a state manager.** State lives in your store of choice — Zustand, Redux, Jotai, MobX, Signals, or just `useState`. Triggery's conditions wrap state with a getter so the runtime can ask for it. The Zustand/Redux/Jotai adapters do this work in 30 lines.
+- **Not a reactive engine.** No incremental graphs, no signals, no `derived`. The runtime is push-when-events-fire, pull-when-handler-asks. Effector / MobX / Signals are excellent at incremental computation; Triggery wraps their outputs as conditions.
+- **Not a state machine.** XState is the right tool for "the user navigates X → Y → Z with finite legal transitions". Triggery is the right tool for "an event happened — given some state, do some things".
+- **Not a stream library.** RxJS gives you operators over time. Triggery gives you scenarios over events. You can use both.
+- **Not a Redux/saga replacement.** RTK listenerMiddleware works fine inside Redux apps; Triggery is a superset that doesn't require a Redux store.
+
+## When to use Triggery
+
+Pick Triggery when:
+
+- Your side-effect logic crosses feature boundaries. (One event from feature A flips two states and pings three reactors in features B, C, D.)
+- You want the rule for a scenario to live in *one file* that a product person can review.
+- You write tests for business logic, not just UI, and you want trigger handlers to be near-pure functions of a snapshot.
+- You ship a component library or platform that needs to coordinate effects across consuming apps without locking them to a particular store.
+- You use multiple frameworks in the same codebase (e.g. React + Solid micro-frontends) and want one orchestration layer.
+
+Don't bother with Triggery when:
+
+- Your only side effects are tightly coupled to a single component and never grow ("toggle a class on click"). A plain `useEffect` is shorter.
+- You're inside a heavy XState chart already. Triggery handlers can call into XState services if needed, but don't replace one with the other.
+- You need server-side orchestration with persistent timers and external workers. That's `@triggery/server` territory (V2) — until then, use Temporal or BullMQ.
+
+## So… how does the code look at the end?
+
+Three small files, plus existing components that gained one hook call each. The new file (`message.trigger.ts`) is the only artifact whose diff explains the *behaviour change* — every other change is mechanical wiring.
+
+That's the goal of the whole library.
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Getting started"
+    description="Install, scaffold and run the first trigger."
+    href="/guide/getting-started/"
+  />
+  <LinkCard
+    title="Trigger anatomy"
+    description="The full field-by-field walkthrough of createTrigger."
+    href="/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Anti-spaghetti"
+    description="When NOT to make a trigger, and how to keep handler files short."
+    href="/guide/architecture/anti-spaghetti/"
+  />
+  <LinkCard
+    title="Compare with alternatives"
+    description="Detailed comparisons with XState, Redux Saga, redux-observable, MobX and Effector."
+    href="/migration/comparison/"
+  />
+</CardGrid>

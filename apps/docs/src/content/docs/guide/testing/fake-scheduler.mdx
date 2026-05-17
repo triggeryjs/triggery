@@ -1,0 +1,372 @@
+---
+title: Fake scheduler
+description: "A deterministic virtual clock that intercepts setTimeout / clearTimeout so debounce, throttle and defer tests run without `await new Promise(setTimeout, …)` flakes."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`actions.debounce(800).play?.()` is a tiny convenience in production and a small nightmare in tests. Real wall clocks make tests slow and flaky; `vi.useFakeTimers()` works inside Vitest but doesn't help in Jest-with-ESM or `node:test`; and timers scheduled from inside a microtask handler tend to land just outside whatever window you set up.
+
+`createFakeScheduler` from [`@triggery/testing`](/packages/testing/) is a thin, test-runner-agnostic replacement for `globalThis.setTimeout` / `globalThis.clearTimeout`. You install it, fire your events, advance the clock by the exact number of milliseconds you care about, then assert. It works the same in Vitest, Jest, `bun:test` and `node:test`.
+
+## The shape of a debounce test
+
+```ts title="src/triggers/__tests__/debounce.test.ts"
+import { createTrigger } from '@triggery/core';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(() => fs.uninstall());
+
+test('debounces a burst of fires into one action call', async () => {
+  const rt = createTestRuntime();
+  const trigger = createTrigger<{
+    events:  { 'new-message': void };
+    actions: { playSound: 'beep' };
+  }>(
+    {
+      id: 'message-received',
+      events: ['new-message'],
+      handler: ({ actions }) => actions.debounce(800).playSound?.('beep'),
+    },
+    rt,
+  );
+  const playSound = vi.fn();
+  rt.mockAction(trigger, 'playSound', playSound);
+
+  rt.fireSync('new-message');
+  rt.fireSync('new-message');
+  rt.fireSync('new-message');
+
+  expect(playSound).not.toHaveBeenCalled(); // still inside the window
+  await fs.advance(799);
+  expect(playSound).not.toHaveBeenCalled(); // 1 ms shy
+  await fs.advance(1);
+  expect(playSound).toHaveBeenCalledExactlyOnceWith('beep');
+});
+```
+
+No `await new Promise((r) => setTimeout(r, 800))`. No "wait, the CI ran it in 803 ms and the test passed by luck". The clock only advances when you advance it.
+
+## What `createFakeScheduler` does
+
+Under the hood it swaps the two global timer functions for a virtual clock:
+
+```ts title="Conceptually, what install() does"
+const originalSetTimeout   = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
+
+globalThis.setTimeout   = (fn, ms) => {
+  // record { fn, runAt: now + ms } in a private map, return a numeric id
+};
+globalThis.clearTimeout = (id) => {
+  // remove the matching record from the map
+};
+```
+
+That's it. The scheduler doesn't touch `setInterval`, `requestAnimationFrame`, `process.nextTick`, microtasks, or `Date.now`. Only `setTimeout` and `clearTimeout` — which is exactly what Triggery's `debounce` / `throttle` / `defer` wrappers use internally.
+
+The implementation is in `@triggery/testing` — zero runtime deps, ~60 lines.
+
+## API
+
+```ts
+import { createFakeScheduler, type FakeScheduler } from '@triggery/testing';
+
+const fs: FakeScheduler = createFakeScheduler();
+```
+
+```ts
+interface FakeScheduler {
+  install():   void;             // swap setTimeout / clearTimeout
+  uninstall(): void;             // restore native versions (idempotent)
+  now():       number;           // virtual clock value, ms since install
+  advance(ms:  number): Promise<void>;
+  flushAll():           Promise<void>;
+  pending():            number;
+}
+```
+
+### `install()` / `uninstall()`
+
+Swap globals on `install`, restore them on `uninstall`. Both are idempotent — calling `install()` twice is a no-op, same for `uninstall()`. The virtual clock and pending-timer map reset on `uninstall`.
+
+The standard pattern is the `beforeEach`/`afterEach` pair above. Don't share a scheduler instance across an entire file — installing and uninstalling per-test gives you deterministic isolation.
+
+```ts title="Per-test isolation"
+beforeEach(() => fs.install());
+afterEach(()  => fs.uninstall());
+```
+
+If you forget `uninstall`, the next test starts with a fake `setTimeout` and may hang forever waiting for a timer that no one will ever advance.
+
+### `advance(ms)`
+
+Move the virtual clock forward by `ms` and run every timer due in that window:
+
+```ts
+setTimeout(cbA, 100);
+setTimeout(cbB, 200);
+setTimeout(cbC, 300);
+
+await fs.advance(150); // runs cbA only
+await fs.advance(100); // runs cbB
+await fs.advance(50);  // runs cbC
+```
+
+`advance` returns a promise that resolves after microtasks are drained — so callers can `await fs.advance(N)` and then assert immediately, without worrying about a queued microtask still pending. (Two `Promise.resolve()` rounds is the internal trick — same as `flushMicrotasks`.)
+
+Ordering rules inside one `advance`:
+
+- Timers are run in scheduled-time order (`runAt` ascending).
+- Same `runAt` → FIFO by registration order.
+- A timer scheduled *during* a callback that happens to fall within `target` (the new clock value after the advance) **runs in the same call** — handy for cascades.
+- A timer scheduled with `runAt > target` waits for a later advance.
+
+Negative `ms` throws — `await expect(fs.advance(-1)).rejects.toThrow(/ms must be/)`.
+
+### `flushAll()`
+
+Run *every* pending timer, regardless of scheduled time, in scheduled-time order. The virtual clock jumps to the max `runAt` of any timer that ran.
+
+```ts
+setTimeout(cb1, 100);
+setTimeout(cb2, 50_000);
+
+await fs.flushAll();
+expect(cb1).toHaveBeenCalledOnce();
+expect(cb2).toHaveBeenCalledOnce();
+expect(fs.now()).toBe(50_000);
+```
+
+Use `flushAll` for "I don't care about the exact timing, just see what eventually happens" assertions. It's the right tool for asserting "the queue is empty" at the end of a test:
+
+```ts
+afterEach(async () => {
+  await fs.flushAll();
+  expect(fs.pending()).toBe(0); // catch leaks
+  fs.uninstall();
+});
+```
+
+### `pending()`
+
+Returns the number of timers currently in the queue. Useful as a leak detector:
+
+```ts
+expect(fs.pending()).toBe(0);
+```
+
+A test that ends with `pending() > 0` usually means a debounced action that no test ever advanced past. Either advance the clock to drain it, or `await fs.flushAll()` in `afterEach`.
+
+### `now()`
+
+Returns the virtual clock value in ms since `install`. Resets to `0` on `uninstall`.
+
+```ts
+expect(fs.now()).toBe(0);
+await fs.advance(500);
+expect(fs.now()).toBe(500);
+```
+
+## Worked example — throttle
+
+```ts title="Throttle: first call goes through, follow-ups are dropped until the window expires"
+import { createTrigger } from '@triggery/core';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(() => fs.uninstall());
+
+test('throttle(2000) drops calls inside the window', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events:  { tick: number };
+    actions: { update: number };
+  }>(
+    {
+      id: 'throttled',
+      events: ['tick'],
+      handler: ({ event, actions }) => actions.throttle(2_000).update?.(event.payload),
+    },
+    rt,
+  );
+  const update = vi.fn();
+  rt.mockAction(t, 'update', update);
+
+  rt.fireSync('tick', 1);
+  expect(update).toHaveBeenCalledExactlyOnceWith(1);
+
+  rt.fireSync('tick', 2);
+  rt.fireSync('tick', 3);
+  expect(update).toHaveBeenCalledTimes(1); // both dropped
+
+  await fs.advance(2_000);
+  rt.fireSync('tick', 4);
+  expect(update).toHaveBeenCalledTimes(2);
+  expect(update).toHaveBeenLastCalledWith(4);
+});
+```
+
+## Worked example — defer
+
+```ts title="Defer: schedule an action to run after a delay, regardless of further fires"
+test('defer(1000) runs the action exactly once after 1s', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{ events: { msg: string }; actions: { log: string } }>(
+    {
+      id: 'deferred',
+      events: ['msg'],
+      handler: ({ event, actions }) => actions.defer(1_000).log?.(event.payload),
+    },
+    rt,
+  );
+  const log = vi.fn();
+  rt.mockAction(t, 'log', log);
+
+  rt.fireSync('msg', 'a');
+  await fs.advance(999);
+  expect(log).not.toHaveBeenCalled();
+  await fs.advance(1);
+  expect(log).toHaveBeenCalledExactlyOnceWith('a');
+});
+```
+
+## Combining with `vi.useFakeTimers()`
+
+Don't. The two systems both replace `setTimeout` and will fight for ownership. `createFakeScheduler` is enough on its own — and unlike `vi.useFakeTimers()` it works identically in Jest and `node:test`, so you don't end up with a test-runner-specific test suite.
+
+The only valid reason to mix them is if **another library you use** (not Triggery) relies on `Date.now` or `process.hrtime` and you want to freeze those too. In that case:
+
+1. Install Vitest's fake timers with `vi.useFakeTimers({ toFake: ['Date', 'performance'] })` — restrict it to time sources, not `setTimeout`.
+2. Then install Triggery's fake scheduler.
+
+The two now operate on disjoint surfaces. But this is exotic — most projects don't need it.
+
+## Test-runner agnostic — works in Vitest, Jest, Bun, `node:test`
+
+The scheduler has zero dependencies on Vitest globals or `vi`. You can use it from any runner:
+
+```ts title="Jest (ESM)"
+import { describe, expect, it, jest, afterEach, beforeEach } from '@jest/globals';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(()  => fs.uninstall());
+
+it('debounces', async () => {
+  // ...same as the Vitest example, with `jest.fn()` instead of `vi.fn()`
+});
+```
+
+```ts title="node:test"
+import { afterEach, beforeEach, mock, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(()  => fs.uninstall());
+
+test('debounces', async () => {
+  // ...use mock.fn() and assert.equal(...)
+});
+```
+
+```ts title="bun:test"
+import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+
+const fs = createFakeScheduler();
+beforeEach(() => fs.install());
+afterEach(()  => fs.uninstall());
+
+test('debounces', async () => {
+  // ...same shape, Bun's mock + expect
+});
+```
+
+## Patterns and pitfalls
+
+### Drain microtasks before assertions
+
+`advance` returns a promise specifically because handlers may queue microtasks. **Always `await` it.**
+
+```ts
+fs.advance(500); // ⛔ — missed `await`
+expect(action).toHaveBeenCalled(); // may pass or fail depending on timing
+```
+
+```ts
+await fs.advance(500); // ✓
+expect(action).toHaveBeenCalled();
+```
+
+### Don't share a scheduler across test files
+
+If you import `fs` from a helper module, every file that imports it shares the same instance. That's fine as long as `install`/`uninstall` is per-test and never overlaps — but a single forgotten `uninstall` poisons the next test. Safer: create one per `describe` or per file.
+
+### Time-sensitive teardown
+
+If a test ends with timers in the queue (e.g. you fired but never advanced), the next test's `install` will see them. Either drain them in `afterEach` (`await fs.flushAll()`), or accept that `fs.uninstall()` clears the queue too — both are valid.
+
+### Combining with async handlers
+
+A handler that does `await fetch(…)` schedules its post-fetch work as a microtask, not a `setTimeout`. The fake scheduler doesn't touch microtasks — `await rt.flushMicrotasks()` is what you want there. Use `advance` only for time-based action wrappers (`debounce`/`throttle`/`defer`).
+
+```ts title="Both, in order"
+rt.fire('fetch', { url: '/x' });
+await rt.flushMicrotasks();   // let the handler reach its `await fetch`
+await fs.advance(500);        // let any debounced follow-up fire
+```
+
+### Don't advance into the future blindly
+
+`await fs.advance(1_000_000)` works but is wasteful — the scheduler runs every timer due in that window, sorted by `runAt`. If you only need to drain "everything that's queued", `await fs.flushAll()` is more honest.
+
+## A drop-in test helper
+
+If you don't want the `beforeEach`/`afterEach` ceremony in every file:
+
+```ts title="src/test-utils/scheduler.ts"
+import { createFakeScheduler, type FakeScheduler } from '@triggery/testing';
+import { afterEach, beforeEach } from 'vitest';
+
+let fs: FakeScheduler;
+export const getScheduler = (): FakeScheduler => fs;
+
+beforeEach(() => { fs = createFakeScheduler(); fs.install(); });
+afterEach (() => { fs.uninstall(); });
+```
+
+Import `getScheduler` wherever you need to `advance` or assert on `pending`. Every test gets a fresh instance, every test cleans up.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Debouncing &amp; throttling"
+    description="The production semantics of actions.debounce / throttle / defer that you're testing here."
+    href="/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Unit testing"
+    description="createTestRuntime, mockCondition, mockAction — the setup these scheduler tests build on."
+    href="/guide/testing/unit-testing/"
+  />
+  <LinkCard
+    title="Integration testing"
+    description="When the fake scheduler isn't enough — wiring real React / Solid / Vue trees."
+    href="/guide/testing/integration-testing/"
+  />
+  <LinkCard
+    title="@triggery/testing"
+    description="API reference for createTestRuntime, createFakeScheduler and mock helpers."
+    href="/packages/testing/"
+  />
+</CardGrid>

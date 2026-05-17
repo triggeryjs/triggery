@@ -1,0 +1,302 @@
+---
+title: "React Server Components"
+description: "Triggery — клиентский слой оркестрации. Здесь — где ставить границы 'use client' в RSC-приложениях, как соединять серверные действия с триггерами и какие гибридные паттерны работают."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+React Server Components (RSC) делят React-дерево на две половины — код, работающий на сервере и никогда не уезжающий в браузер, и код, который гидрируется и работает в браузере. Triggery твёрдо во второй половине: каждому хуку (`useEvent`, `useCondition`, `useAction`, `useInspect`, `useInspectHistory`) нужны `useEffect` и реальный DOM, а они есть только на клиенте.
+
+Эта страница — практическое руководство: где проходит граница `'use client'`, как файлы триггеров уживаются с серверными компонентами и как соединить server action с клиентским триггером, чтобы запись в БД зажгла уведомление в трёх компонентах подальше.
+
+## Базовое правило
+
+**Всё, что вызывает хук Triggery, должно жить в `'use client'`-файле.** Файлы модулей триггеров (`*.trigger.ts`) — чистые модули — импортируют `createTrigger`, объявляют конфиг, экспортируют объект триггера. Но потребляются они *клиентскими* компонентами, поэтому на практике их тоже стоит помечать `'use client'`, чтобы бандлер не пытался выполнить их на сервере.
+
+```ts title="src/triggers/message.trigger.ts"
+'use client';
+
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings?.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+Директива `'use client'` сверху — подсказка бандлеру, что модуль принадлежит клиентскому бандлу. Самому триггеру — данным плюс замыканию-обработчику — на директиву всё равно, но явная пометка предотвращает частую ошибку: серверный компонент пытается *вызвать* `createTrigger` на сервере (это сработает, но впустую тратит CPU и создаёт серверный рантайм, которым никто не пользуется).
+
+## Где ставится провайдер рантайма
+
+`TriggerRuntimeProvider` — клиентский компонент. Оберни его в своём файле и размести сразу под корневым layout:
+
+```tsx title="src/components/triggery-root.tsx"
+'use client';
+
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { useState, type ReactNode } from 'react';
+
+export function TriggeryRoot({ children }: { children: ReactNode }) {
+  const [runtime] = useState(() => createRuntime());
+  return <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>;
+}
+```
+
+```tsx title="src/app/layout.tsx (server component — no directive)"
+import { TriggeryRoot } from '../components/triggery-root';
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <TriggeryRoot>{children}</TriggeryRoot>
+      </body>
+    </html>
+  );
+}
+```
+
+Сам layout — серверный компонент. Внутри него граница `TriggeryRoot` помечает: «всё ниже — клиентское». Проп `children` при этом может всё ещё быть деревом серверных компонентов — и *эти* серверные компоненты могут содержать свои `'use client'`-острова дальше вниз. RSC так и устроен; Triggery эту форму не меняет.
+
+```text title="What ends up where"
+RootLayout                 ← server component
+└── TriggeryRoot           ← 'use client' boundary
+    ├── ServerComponent    ← still a server component (rendered into the boundary)
+    │   ├── ClientLeaf     ← 'use client'; uses useEvent / useCondition / useAction
+    │   └── ServerLeaf     ← server, no Triggery hooks here
+    └── ClientHeader       ← 'use client'
+```
+
+## Компоненты, использующие хуки
+
+Любой компонент, вызывающий `useEvent`, `useCondition`, `useAction`, `useInspect` или `useInspectHistory`, должен быть `'use client'`:
+
+```tsx title="src/features/Chat.tsx"
+'use client';
+
+import { useEvent, useCondition } from '@triggery/react';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function Chat({ channelId }: { channelId: string }) {
+  const fire = useEvent(messageTrigger, 'new-message');
+  useCondition(messageTrigger, 'activeChannelId', () => channelId, [channelId]);
+
+  return (
+    <button onClick={() => fire({ author: 'Alice', text: 'hi' })}>
+      send a fake message
+    </button>
+  );
+}
+```
+
+```tsx title="src/features/NotificationLayer.tsx"
+'use client';
+
+import { useAction } from '@triggery/react';
+import { toast } from 'sonner';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function NotificationLayer() {
+  useAction(messageTrigger, 'showToast', (payload) => {
+    toast.success(payload.title, { description: payload.body });
+  });
+  return null;
+}
+```
+
+Серверный компонент, который *рендерит* один из таких, — это нормально: серверные компоненты могут компоновать клиентские как детей. Чего нельзя — это **вызывать** хук из серверного компонента.
+
+## Серверные компоненты, диспатчащие в триггеры
+
+У серверных компонентов нет доступа к рантайму. Они не могут импортировать `useEvent` (на сервере он бы упал) и не могут добраться до инстанса клиентского рантайма. Мост — это **обычный HTTP-fetch с клиента в Route Handler или server action** и *клиентский* слушатель события, который запускает триггер, когда fetch вернётся.
+
+```ts title="src/app/api/messages/route.ts (server route)"
+import { NextResponse } from 'next/server';
+
+export async function POST(req: Request) {
+  const body = await req.json();
+  await db.insertMessage(body); // your real persistence
+  return NextResponse.json({ ok: true, id: body.id });
+}
+```
+
+```tsx title="src/features/Compose.tsx (client)"
+'use client';
+
+import { useEvent } from '@triggery/react';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function Compose() {
+  const fire = useEvent(messageTrigger, 'new-message');
+
+  async function send(text: string) {
+    const res = await fetch('/api/messages', {
+      method: 'POST',
+      body: JSON.stringify({ author: 'Alice', text }),
+    });
+    const { id } = await res.json();
+    fire({ author: 'Alice', text, channelId: id });
+  }
+
+  return <button onClick={() => send('hi')}>send</button>;
+}
+```
+
+Триггер срабатывает **на клиенте, после подтверждения сервера**. Обработчик читает условия, зарегистрированные другими клиентскими компонентами, и зовёт действия, зарегистрированные другими клиентскими реакторами. У сервера про триггер нулевая осведомлённость.
+
+В этом и есть граница V1: **сервер может попросить клиент что-то сделать; залезть в клиентский рантайм напрямую он не может**. Клиент управляет своей оркестрацией сам.
+
+## Server actions (Next.js / React 19)
+
+С server actions всё устроено так же, как с route handlers:
+
+```ts title="src/app/actions.ts"
+'use server';
+
+import { db } from '@/db';
+
+export async function postMessage(payload: { author: string; text: string }) {
+  await db.insertMessage(payload);
+  return { ok: true as const, id: payload.author + '-' + Date.now() };
+}
+```
+
+```tsx title="src/features/Compose.tsx"
+'use client';
+
+import { useEvent } from '@triggery/react';
+import { useTransition } from 'react';
+import { postMessage } from '../app/actions';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function Compose() {
+  const fire = useEvent(messageTrigger, 'new-message');
+  const [pending, startTransition] = useTransition();
+
+  function send() {
+    startTransition(async () => {
+      const result = await postMessage({ author: 'Alice', text: 'hi' });
+      if (result.ok) fire({ author: 'Alice', text: 'hi', channelId: result.id });
+    });
+  }
+
+  return <button onClick={send} disabled={pending}>send</button>;
+}
+```
+
+Форма та же — позови сервер, дождись результата, потом `fire`. Server action — это просто fetch с более приятной эргономикой.
+
+<Aside type="caution">
+**V1: триггеры не умеют автоматически мостить к server actions.** У рантайма нет понятия «действие, работающее на сервере». Если нужен серверный побочный эффект, *вызови* server action явно из обработчика (или из вызывающего компонента) и дай ему вернуть payload, на котором запустится клиентский триггер. Пакет V2 `@triggery/server` вводит настоящий транспорт, закрывающий этот разрыв — а пока паттерн — ручной fetch или вызов server action.
+</Aside>
+
+## Гибридные страницы: данные на сервере, оркестрация на клиенте
+
+Типичная гибридная страница запрашивает данные в серверном компоненте и рендерит интерактивные кусочки как клиентские острова. Triggery встаёт чисто, потому что рантайм поднят выше островов:
+
+```tsx title="src/app/messages/[channelId]/page.tsx (server component)"
+import { db } from '@/db';
+import { MessageList } from './message-list';
+import { Compose } from '@/features/Compose';
+import { NotificationLayer } from '@/features/NotificationLayer';
+
+export default async function Page({ params }: { params: { channelId: string } }) {
+  const messages = await db.messages.findMany({ where: { channelId: params.channelId } });
+  return (
+    <main>
+      <MessageList initial={messages} channelId={params.channelId} />
+      <Compose />
+      <NotificationLayer />
+    </main>
+  );
+}
+```
+
+Страница рендерится целиком на сервере: HTML для `MessageList`, `Compose`, `NotificationLayer` уезжает вниз. При гидрации каждый `'use client'`-остров подключается к провайдеру `TriggeryRoot`, размещённому в layout. Друг друга они находят через триггер — `Compose` запускает событие, `NotificationLayer` реагирует, `MessageList` обновляется через своё React-состояние. Сервер ничего из этого не видит.
+
+## Паттерн одной схемой
+
+```text
+Browser                               Server
+─────────                             ───────
+                                      RootLayout (server)
+                                      └── <TriggeryRoot>      ← 'use client' boundary
+                                          └── <Outlet />
+                                              └── Page (server, async)
+                                                   ├── <MessageList initial={…}>  'use client'
+                                                   ├── <Compose />                'use client'
+                                                   └── <NotificationLayer />      'use client'
+
+(rendered HTML ships down, hydrates)
+
+Browser side:
+  Compose fires 'new-message' ──microtask──▶ messageTrigger handler
+  handler reads conditions (settings, activeChannelId)
+  handler calls actions.showToast?(…)
+  NotificationLayer's useAction handler renders the toast.
+
+  All of this happens entirely client-side. The server has no visibility.
+```
+
+## Streaming и Suspense
+
+Streaming SSR в React 19 / Next App Router рендерит серверные компоненты потоком HTML-чанков; клиентские острова гидрируются по мере прихода их JS. С точки зрения Triggery:
+
+- Провайдер монтируется, когда приходит его чанк. До этого хуки во вложенных островах не отрабатывали.
+- После монтирования острова регистрируют условия и действия в своих `useEffect`. Пока они этого не сделали, срабатывания либо пропускаются (`required` не выполнен), либо проходят без реактора.
+- Если запускаешь событие из клиентского компонента, который смонтирован раньше своего реактора, инспектор записывает «fired-but-unhandled». Это нормально — у триггера логика «нет реактора — ничего не делать». Следующее срабатывание после монтирования обоих запустит действия как обычно.
+
+На практике это значит: **размести `<NotificationLayer />`-реактор в layout**, а не внутри маршрута страницы, который может уйти в Suspense. Реакторы дешёвые; пока действие не сработало, они ничего видимого не рендерят. Размещение в layout гарантирует, что они живы для каждого перехода между страницами.
+
+## Подводные камни
+
+### Server-only-модули
+
+`'use server'`-файл не может импортировать `*.trigger.ts`-модуль с `'use client'` сверху — бандлер свалится. Если нужны общие типы между сервером и клиентом (например, интерфейс `Message`, который используется в payload'ах событий), положи их в `types.ts` без директивы и импортируй этот файл с обеих сторон.
+
+### `getDefaultRuntime()` на сервере
+
+`getDefaultRuntime()` ленивый — создаёт глобальный рантайм при первом вызове. В RSC-окружении это значит, что **серверный процесс тоже имеет рантайм по умолчанию** — и он *общий* между запросами. Не регистрируй триггеры против рантайма по умолчанию в серверном коде; протечёт между запросами. Лекарство — то же, что и в тестах: передавай явный рантайм в `createTrigger(config, runtime)` или вызывай `createTrigger` только из `'use client'`-модулей.
+
+### Рассинхроны гидрации
+
+`useInspect` и `useInspectHistory` возвращают `undefined` / `[]` на сервере и на первом клиентском рендере — одно и то же значение с обеих сторон, рассинхрона нет. Если делаешь дебаг-панель, которая показывает «no runs yet», пока список пуст, и таблицу — когда непуст, серверный HTML и первый гидрационный HTML идентичны. Обновления начинают приходить после первого commit'а эффектов; это клиентское обновление, а не рассинхрон гидрации.
+
+### Обработчики действий, трогающие server-only-API
+
+Так делать не надо. Обработчик действия — это замыкание, зарегистрированное через `useAction`, живёт в клиентском компоненте и работает в браузере. Если нужно писать в БД из обработчика — обработчик вызывает server action (или `fetch`), ждёт результат и передаёт его в следующий шаг. Server-only-API живут внутри server action.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Server-side rendering"
+    description="Общий контракт SSR: что делают хуки на сервере, безопасность гидрации, рецепты по фреймворкам."
+    href="/ru/guide/ssr/server-side-rendering/"
+  />
+  <LinkCard
+    title="StrictMode (React)"
+    description="React StrictMode дважды вызывает эффекты — паттерн refcount + cleanup у Triggery безопасен по построению."
+    href="/ru/guide/ssr/strict-mode/"
+  />
+  <LinkCard
+    title="Provider"
+    description="TriggerRuntimeProvider — что делает, как вкладываются скоупы, где монтируется в RSC-приложении."
+    href="/ru/api/react/trigger-runtime-provider/"
+  />
+  <LinkCard
+    title="Roadmap"
+    description="@triggery/server (V2) — запланированный транспорт, закрывающий разрыв сервер-клиент для триггеров."
+    href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md"
+  />
+</CardGrid>

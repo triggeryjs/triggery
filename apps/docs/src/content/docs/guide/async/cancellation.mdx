@@ -1,0 +1,348 @@
+---
+title: Cancellation
+description: "Where the abort signal comes from, how to clean up resources, and how to chain your own AbortController to the trigger's signal."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Every async handler receives an `AbortSignal` as `ctx.signal`. This page covers where the signal originates, the idiomatic cleanup patterns, and the interop story for code that needs its own `AbortController`.
+
+If you haven't read [Async handlers](/guide/async/async-handlers/) and [Concurrency strategies](/guide/async/concurrency/) yet, start there — they cover the basics of `signal.throwIfAborted()` and abort behaviour per strategy.
+
+## The three sources of abort
+
+Triggery flips `signal.aborted` to `true` for one of three reasons. Every one has a stable string in `signal.reason` that you can also read from the inspector.
+
+| Source | When it happens | `signal.reason` |
+|---|---|---|
+| `take-latest` supersedes | A newer event for the same trigger fires while this run is still in flight, **and** the trigger uses `concurrency: 'take-latest'`. | `'superseded-by-latest'` |
+| Runtime / scope disposed | `runtime.dispose()` is called, the hosting `<TriggerScope>` unmounts, or the trigger is removed via `trigger.dispose()`. | `'disposed'` |
+| HMR reload | Vite / webpack HMR replaced the module that defined the trigger. The old instance is disposed before the new one boots. | `'hmr'` |
+
+That's the complete list. There is no "user clicked cancel" source — if a user-driven cancel is what you need, expose it by firing a follow-up event with `take-latest`, or wire your own `AbortController` (see [Interop](#abortcontroller-interop)).
+
+## Inspector records the reason
+
+Every abort lands in the inspector ring buffer with `status: 'aborted'` and the reason string. The buffer is on in DEV by default; you can also enable it in PROD via `createRuntime({ inspector: true })`.
+
+```ts
+import { getDefaultRuntime } from '@triggery/core';
+
+const recent = getDefaultRuntime().getInspectorBuffer();
+const aborts = recent.filter((s) => s.status === 'aborted');
+for (const s of aborts) {
+  console.log(s.triggerId, s.runId, s.reason);
+  // search-query  run_3   superseded-by-latest
+  // search-query  run_4   disposed
+}
+```
+
+Inside React, `useInspectHistory(trigger)` from `@triggery/react` gives you a live list. The DevTools Bridge (`@triggery/devtools-bridge`) serialises the same snapshots over `postMessage` to a Redux DevTools-compatible extension.
+
+## Manual signal use in long-running operations
+
+For anything that takes more than one I/O call — chunked downloads, paginated APIs, file reads, worker round-trips — check `signal` at every boundary. The runtime can't interrupt your code between awaits; that's still on you.
+
+```ts title="paginated fetch with explicit checks"
+async handler({ event, conditions, signal, actions }) {
+  if (!conditions.apiBase) return;
+  let cursor: string | null = null;
+  const all: Item[] = [];
+
+  do {
+    const url = `${conditions.apiBase}/items?cursor=${cursor ?? ''}`;
+    const page = await fetch(url, { signal }).then((r) => r.json() as Promise<Page>);
+    signal.throwIfAborted();
+    all.push(...page.items);
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+
+  actions.setItems?.(all);
+}
+```
+
+```ts title="chunked reader with stream cancellation"
+async handler({ event, signal, actions }) {
+  const res = await fetch(event.payload.url, { signal });
+  if (!res.body) throw new Error('no body');
+  const reader = res.body.getReader();
+
+  try {
+    let received = 0;
+    while (true) {
+      signal.throwIfAborted();
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      actions.throttle(100).reportProgress?.({ received });
+    }
+    actions.reportDone?.({ bytes: received });
+  } finally {
+    reader.releaseLock();
+  }
+}
+```
+
+Two patterns worth pointing out:
+
+- The reader uses `try { … } finally { reader.releaseLock(); }`. The `finally` runs whether the loop exits cleanly, throws (including `AbortError` from `throwIfAborted`), or is interrupted by an outer abort. Resource cleanup belongs in `finally`, not in `signal.addEventListener('abort')`, because the latter doesn't fire if the abort happens before the listener is attached.
+- `actions.throttle(100).reportProgress?.(...)` makes the per-chunk action calls cheap. The throttled timer is cancelled with the trigger if the runtime disposes.
+
+## The `signal.addEventListener('abort', cleanup)` pattern
+
+When you own a resource that is **not** AbortSignal-aware (a database client, a WebSocket you opened, a `setInterval`), attach a one-shot abort listener:
+
+```ts
+async handler({ event, signal, actions }) {
+  const ws = new WebSocket(event.payload.streamUrl);
+
+  // Tear down the socket if anything aborts the run.
+  const onAbort = () => ws.close(1000, 'trigger aborted');
+  signal.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('message', (e) => {
+        actions.appendChunk?.({ chunk: e.data });
+      });
+      ws.addEventListener('close', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('ws error')));
+    });
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+    if (ws.readyState !== WebSocket.CLOSED) ws.close(1000, 'handler done');
+  }
+}
+```
+
+Three things to notice:
+
+1. `{ once: true }` is mandatory — without it, you leak the listener on every run that completes normally.
+2. The matching `removeEventListener` runs in `finally`, covering both the success path and the abort path.
+3. The cleanup is *idempotent*: calling `ws.close()` twice is harmless. Cleanup callbacks should always be idempotent because the runtime may invoke abort, your `finally` may fire, and any explicit retry in the catch path may all run.
+
+<Aside type="tip">
+Prefer `AbortSignal`-aware APIs whenever they exist. `fetch`, `ReadableStream`, `setTimeout`, `EventTarget.addEventListener`, `lock`, IndexedDB transactions wrapped in [`idb`](https://github.com/jakearchibald/idb) — all of them accept a signal. Code that uses native signal support never leaks, never needs `removeEventListener`, and reads better.
+</Aside>
+
+## Resource cleanup checklist
+
+Use this list when reviewing an async handler that owns resources:
+
+- [ ] Every `fetch(...)` receives `{ signal }`.
+- [ ] Every `setTimeout / setInterval` either accepts a signal (`AbortSignal.timeout`) or is cleared in `finally`.
+- [ ] Every `addEventListener` either passes `{ signal }` or is matched by `removeEventListener` in `finally`.
+- [ ] Every reader / writer (`ReadableStream`, file handle, DB transaction) is closed / released in `finally`.
+- [ ] Every `EventSource`, `WebSocket`, `BroadcastChannel` you created in the handler is closed.
+- [ ] You do not store a reference to the run's `signal` or any of its abort listeners outside the handler closure.
+
+If everything on this list is satisfied, the only way to leak is to write `fetch(url)` without `{ signal }` — and the eslint rule `fetch-signal` from `@triggery/eslint-plugin` flags exactly that case.
+
+## AbortController interop
+
+You may want to chain your own `AbortController` to `ctx.signal` — usually for one of three reasons:
+
+- A per-request **timeout** on top of the trigger's lifetime.
+- A **user-driven cancel** button.
+- A **fan-out** where you start several parallel requests and want one of them to also be cancellable independently.
+
+The standard browser API for "abort if either of these signals abort" is [`AbortSignal.any`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/any_static).
+
+```ts title="trigger signal + per-request timeout"
+async handler({ event, signal, actions }) {
+  const composite = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
+  const res = await fetch(event.payload.url, { signal: composite });
+  signal.throwIfAborted();          // distinguishes superseded vs timeout
+  actions.show?.(await res.json());
+}
+```
+
+If the trigger is superseded → `signal.aborted` is true, `throwIfAborted` throws, run is classified `'aborted'`. If the timeout fires first → `signal.aborted` is false, `fetch` rejects with `AbortError` from the timeout, the catch path can branch on `composite.reason` if you saved it.
+
+```ts title="trigger signal + user-driven cancel"
+async handler({ event, conditions, signal, actions }) {
+  if (!conditions.userCancel) return;
+  const userSignal = conditions.userCancel.signal;
+  const composite = AbortSignal.any([signal, userSignal]);
+
+  try {
+    const res = await fetch(event.payload.url, { signal: composite });
+    signal.throwIfAborted();
+    actions.show?.(await res.json());
+  } catch (err) {
+    if (signal.aborted) throw err;                // superseded — let the runtime classify
+    if (userSignal.aborted) {                     // user clicked cancel — your scenario
+      actions.showCancelled?.({ url: event.payload.url });
+      return;
+    }
+    throw err;                                    // unrelated — surface as 'errored'
+  }
+}
+```
+
+Here `conditions.userCancel` is a `{ signal: AbortSignal }` wrapper exposed by your cancel-button component as a condition. The trigger's signal and the user's signal are merged for the `fetch` call, then the catch path disambiguates.
+
+```ts title="fan-out with per-request controllers"
+async handler({ event, signal, actions }) {
+  const ctrls = event.payload.urls.map(() => {
+    const ac = new AbortController();
+    signal.addEventListener('abort', () => ac.abort(signal.reason), { once: true });
+    return ac;
+  });
+
+  const responses = await Promise.allSettled(
+    event.payload.urls.map((u, i) => fetch(u, { signal: ctrls[i]!.signal })),
+  );
+  signal.throwIfAborted();
+  actions.showAll?.({ responses });
+}
+```
+
+Each request has its own controller; the trigger signal propagates to all of them via a single abort listener. You could call `ctrls[2].abort()` mid-handler to cancel just one request without affecting the rest of the run.
+
+## Common pitfall: race conditions in writes after abort
+
+The runtime aborts the *handler function*. It does **not** unwind work the handler already dispatched. Anything that landed in your store before the abort point is still there.
+
+```ts
+async handler({ event, conditions, signal, actions }) {
+  const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+  signal.throwIfAborted();
+  actions.setData?.(data);          // ← already in the store
+  signal.throwIfAborted();          // ← if this throws, setData has already fired
+  actions.markReady?.();             // ← never reached
+}
+```
+
+If the run is superseded between `setData` and `markReady`, your UI shows the data but the "ready" flag is still false. Two common fixes:
+
+- **Tag writes with a run id** (`meta.runId`). Reactors discard writes whose run id doesn't match the latest one for that trigger.
+- **Collect locally; dispatch at the end.** Pay the latency, get atomic transitions:
+
+  ```ts
+  async handler({ event, signal, actions }) {
+    const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+    signal.throwIfAborted();
+    // Only after the last await — both actions either land or neither does.
+    actions.setData?.(data);
+    actions.markReady?.();
+  }
+  ```
+
+There is no "right" answer — the trade-off is incremental UX vs atomic semantics. The wrong answer is to leave the gap unaddressed.
+
+## Common pitfall: missing `throwIfAborted`
+
+```ts
+// ✗ Silent — the handler runs to completion, dispatches stale data.
+async handler({ event, signal, actions }) {
+  const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+  actions.show?.(data);
+}
+```
+
+What happens under `take-latest`:
+
+- Run A starts a `fetch`. Run B fires, aborts A's `signal`, starts its own fetch.
+- A's `fetch` rejects with `AbortError`. **But your handler never sees that** — `.then(r => r.json())` is on the resolved branch only.
+- Wait — `fetch` rejects, so the chain rejects. Yes. So the handler rejects with `AbortError`, the runtime sees `signal.aborted` is true, classifies as `'aborted'`. Cleaner than you'd think.
+
+Now the actually broken variant:
+
+```ts
+// ✗ Catches AbortError, swallows it, continues with stale data.
+async handler({ event, signal, actions }) {
+  try {
+    const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+    actions.show?.(data);
+  } catch {
+    actions.show?.({ items: [] });        // ← also runs after a real abort
+  }
+}
+```
+
+The catch-all swallows `AbortError` from the abort, and now `actions.show?.({ items: [] })` clobbers whatever the *newer* run wrote. Always check `signal.aborted` in catch blocks:
+
+```ts
+try { /* … */ }
+catch (err) {
+  if (signal.aborted) throw err;        // let the runtime see it as 'aborted'
+  actions.show?.({ items: [] });
+}
+```
+
+## Common pitfall: swallowed `AbortError` corrupting the run status
+
+`AbortError` is a real `Error` (a `DOMException` with `name === 'AbortError'`, technically). If you log it as a generic failure, your error reporter will think the run failed — when it actually completed cleanly.
+
+```ts
+// ✗ Sentry will track every supersede as an error.
+async handler({ event, signal, actions }) {
+  try {
+    /* … */
+  } catch (err) {
+    console.error('search failed', err);
+    Sentry.captureException(err);
+    actions.showError?.({ message: 'Search failed' });
+  }
+}
+```
+
+```ts
+// ✓ Distinguish.
+async handler({ event, signal, actions }) {
+  try {
+    /* … */
+  } catch (err) {
+    if (signal.aborted) throw err;                // not an error path
+    Sentry.captureException(err);
+    actions.showError?.({ message: 'Search failed' });
+  }
+}
+```
+
+The same logic applies anywhere you have a `try/catch`: aborts re-throw, real errors are handled.
+
+## Common pitfall: caching the signal for a later run
+
+`ctx.signal` is owned by **this run** and is invalidated when the run ends. Storing it in a module-scope variable, a closure that outlives the handler, or a returned promise produces wrong behaviour and can leak.
+
+```ts
+// ✗ Cached signal — undefined behaviour.
+let lastSignal: AbortSignal | undefined;
+
+async handler({ signal, event, actions }) {
+  lastSignal = signal;             // ← do not do this
+  /* … */
+}
+
+// elsewhere — this signal may already be aborted or for a different run.
+if (lastSignal?.aborted) { /* … */ }
+```
+
+If you need cross-run cancellation, expose a cancel mechanism as a *condition* (an external `AbortController` whose signal you read via `useCondition`) and merge it with the per-run signal using `AbortSignal.any` inside the handler. Don't try to thread `ctx.signal` outside its run.
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Async handlers"
+    description="async/await idioms, signal propagation, error flow and the relationship between handler return and run lifecycle."
+    href="/guide/async/async-handlers/"
+  />
+  <LinkCard
+    title="Concurrency strategies"
+    description="How each strategy interacts with abort — when take-latest aborts, when queue waits, when exhaust skips."
+    href="/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Debouncing and throttling"
+    description="The proxy chain timers — also cancelled by the same dispose lifecycle as the signal."
+    href="/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Inspector"
+    description="Read aborted runs and their reason strings from the runtime's ring buffer or React's useInspectHistory."
+    href="/guide/advanced/inspector/"
+  />
+</CardGrid>

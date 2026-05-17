@@ -1,0 +1,180 @@
+---
+title: "migrateFromListenerMiddleware"
+description: "Сгенерировать триггеры из вызовов RTK listenerMiddleware.startListening({ actionCreator, effect })."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Проходит по файлу, использующему `createListenerMiddleware` / `startListening` из Redux Toolkit, и генерирует один `*.trigger.ts` на каждую регистрацию `startListening({ actionCreator, effect })`. Исходный файл остаётся нетронутым — адоптеры просматривают сгенерированные триггеры, подвязывают их в компонентах через `useEvent`, а когда готовы — удаляют регистрацию middleware.
+
+Поставляется как программный API и как CLI-команда (`triggery-codemod migrate-from-listener-middleware`).
+
+## Импорт
+
+```ts
+import { migrateFromListenerMiddleware } from '@triggery/codemod';
+```
+
+## Сигнатура
+
+```ts
+function migrateFromListenerMiddleware(
+  options: MigrateFromListenerMiddlewareOptions,
+): MigrateFromListenerMiddlewareResult;
+
+interface MigrateFromListenerMiddlewareOptions {
+  readonly file: string;
+  readonly outDir?: string;
+  readonly dryRun?: boolean;
+  readonly project?: import('ts-morph').Project;
+}
+
+interface MigrateFromListenerMiddlewareResult {
+  readonly file: string;
+  readonly migrated: readonly MigratedListener[];
+}
+
+interface MigratedListener {
+  readonly eventName: string;
+  readonly triggerFilePath: string;
+  readonly triggerFileContent: string;
+}
+```
+
+## Параметры
+
+| Параметр | Тип | Обязательный | Описание |
+|---|---|---|---|
+| `file` | `string` | да | Путь к файлу, объявляющему middleware. |
+| `outDir` | `string` | нет | Директория для сгенерированных файлов триггеров. По умолчанию — директория исходника. |
+| `dryRun` | `boolean` | нет | Спланировать изменения и вернуть их без записи на диск. |
+| `project` | `ts-morph.Project` | нет | Предсуществующий project — переиспользуй между батчами. |
+
+## Возвращает
+
+| Поле | Описание |
+|---|---|
+| `file` | Исходный файл, который был обработан. |
+| `migrated` | По одной записи на каждый обработанный вызов `startListening` — имя, выходной путь, сгенерированный исходник. |
+
+## Поддерживаемые формы
+
+Codemod распознаёт каноническую форму RTK:
+
+```ts
+startListening({
+  actionCreator: someAction,
+  effect: (action, listenerApi) => { /* … */ },
+});
+```
+
+Другие формы — `matcher`, `predicate` или `type` — обнаруживаются, но в V1 не трансформируются. Исходный файл не переписывается, так что повторные прогоны идемпотентны.
+
+## CLI
+
+```
+triggery-codemod migrate-from-listener-middleware [--out-dir <path>] [--dry-run] <file>
+```
+
+| Флаг | Обязательный | Описание |
+|---|---|---|
+| `--out-dir` | нет | Переопределить дефолтную выходную директорию. |
+| `--dry-run` | нет | Распечатать запланированные изменения без записи. |
+
+## Примеры
+
+### Программно
+
+```ts
+import { migrateFromListenerMiddleware } from '@triggery/codemod';
+
+const result = migrateFromListenerMiddleware({
+  file: 'src/store/listenerMiddleware.ts',
+  outDir: 'src/triggers',
+});
+
+for (const m of result.migrated) {
+  console.log(m.eventName, '→', m.triggerFilePath);
+}
+```
+
+### CLI
+
+```
+triggery-codemod migrate-from-listener-middleware --out-dir src/triggers src/store/listenerMiddleware.ts
+```
+
+Вывод:
+
+```
+Migrated 3 listener(s) from src/store/listenerMiddleware.ts:
+  • user-logged-in → src/triggers/user-logged-in.trigger.ts
+  • product-added  → src/triggers/product-added.trigger.ts
+  • cart-checked-out → src/triggers/cart-checked-out.trigger.ts
+```
+
+### Что генерируется
+
+Для каждого `startListening({ actionCreator: userLoggedIn, effect: (action, api) => {...} })` codemod пишет:
+
+```ts
+import { createTrigger } from '@triggery/core';
+
+/**
+ * Auto-migrated from a Redux Toolkit listenerMiddleware `startListening`
+ * registration. Review the generated handler …
+ */
+export const userLoggedInTrigger = createTrigger<{
+  events: { 'user-logged-in': unknown };
+  conditions: Record<string, never>;
+  actions: Record<string, never>;
+}>({
+  id: 'user-logged-in',
+  events: ['user-logged-in'],
+  required: [],
+  async handler({ event, conditions, actions, check }) {
+    // TODO: original RTK effect body — refactor dispatch/getState into actions/conditions.
+    const action = event.payload;
+    /* … original effect body … */
+  },
+});
+```
+
+Имя события выводится из текста символа `actionCreator`. Codemod не пытается разрезолвить `.type` на action creator'е — это требовало бы type info — поэтому если slug'и action creator'а не совпадают с `type`-строкой слайса, имена событий правь руками.
+
+### Шаги дальше
+
+Сгенерированные триггеры — это стартеры. После прогона codemod-скрипта:
+
+1. Замени `listenerApi.dispatch(x)` на действие Triggery — добавь `actions.<name>` в схему, зарегистрируй через `useAction` в подходящем компоненте.
+2. Замени чтения `listenerApi.getState()` типизированными условиями — регистрируй через `useCondition`.
+3. Подключи зажигание нового события: компоненты, которые раньше диспатчили слушаемое действие, теперь зовут `useEvent(trigger, 'name')`.
+4. Когда каждый потребитель подвязан — удаляй блок `startListening`.
+
+## Замечания
+
+<Aside type="caution" title="Исходный файл не трогается">
+По дизайну codemod **добавляет** триггеры, но никогда **не удаляет** оригинальную регистрацию middleware. Это делает миграцию инкрементальной и обратимой — и старая (RTK), и новая (Triggery) ветки могут работать параллельно, пока ты не подтвердишь паритет.
+</Aside>
+
+<Aside type="caution" title="Неканонические формы пропускаются">
+`startListening({ matcher, … })` и `startListening({ predicate, … })` тихо пропускаются. Мигрируй их вручную — им обычно нужно реальное знание домена о том, какие действия учитывать.
+</Aside>
+
+<Aside type="tip">
+Сначала прогони с `--dry-run` в CI, чтобы увидеть footprint миграции до коммита. Массив `migrated` в результате точно говорит, сколько слушателей обработано.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="extractTrigger" description="Другой codemod — useEffect → trigger." href="/ru/api/codemod/extract-trigger/" />
+  <LinkCard title="createTrigger" description="Конструктор, который использует сгенерированный файл." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="useEvent" description="Замени `dispatch(someAction(payload))` типизированным эмиттером события." href="/ru/api/react/use-event/" />
+  <LinkCard title="Руководство по миграции" description="Паттерны listener middleware → Triggery." href="/ru/migration/from-rtk-listener/" />
+</CardGrid>

@@ -1,0 +1,201 @@
+---
+title: "createFakeScheduler"
+description: "Virtual-clock scheduler. Replaces setTimeout / clearTimeout so timer-based handlers are deterministic."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+A test-runner agnostic virtual clock. After `install()`, `globalThis.setTimeout` and `clearTimeout` are replaced so no real timers fire — instead, `advance(ms)` runs every callback that becomes due within the window. Useful for testing `actions.debounce / throttle / defer` chains without `await new Promise(setTimeout, …)` flakes.
+
+No dependency on Vitest's `vi.useFakeTimers()` — works in plain `node:test`, Jest, and bare Vitest alike.
+
+## Import
+
+```ts
+import { createFakeScheduler } from '@triggery/testing';
+```
+
+## Signature
+
+```ts
+function createFakeScheduler(): FakeScheduler;
+
+interface FakeScheduler {
+  install(): void;
+  uninstall(): void;
+  now(): number;
+  advance(ms: number): Promise<void>;
+  flushAll(): Promise<void>;
+  pending(): number;
+}
+```
+
+## Methods
+
+| Method | Description |
+|---|---|
+| `install()` | Replace `globalThis.setTimeout` / `clearTimeout` with the fake controller. Idempotent. |
+| `uninstall()` | Restore the originals, clear pending timers, reset the virtual clock to 0. Safe to call multiple times. |
+| `now()` | Current virtual clock value, in ms since install. |
+| `advance(ms)` | Move the clock forward by `ms` and run every timer that becomes due in that window. Drains microtasks after. |
+| `flushAll()` | Run every pending timer regardless of scheduled time. Useful for "give up on the clock, see what eventually happens". |
+| `pending()` | Number of timers still pending. |
+
+## Examples
+
+### Debounce drains after the wait
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
+const ft = createFakeScheduler();
+
+beforeEach(() => ft.install());
+afterEach(() => ft.uninstall());
+
+it('debounces keystrokes', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { keystroke: string };
+    actions: { search: string };
+  }>(
+    {
+      id: 'demo',
+      events: ['keystroke'],
+      handler({ event, actions }) {
+        actions.debounce(300).search?.(event.payload);
+      },
+    },
+    rt,
+  );
+
+  const search = vi.fn();
+  rt.mockAction(t, 'search', search);
+
+  rt.fireSync('keystroke', 'a');
+  rt.fireSync('keystroke', 'ab');
+  rt.fireSync('keystroke', 'abc');
+
+  await ft.advance(299);
+  expect(search).not.toHaveBeenCalled();
+
+  await ft.advance(1);
+  expect(search).toHaveBeenCalledExactlyOnceWith('abc');
+});
+```
+
+### Throttle window
+
+```ts twoslash
+import { createFakeScheduler } from '@triggery/testing';
+import { expect, it } from 'vitest';
+
+it('runs at most one timer per window', async () => {
+  const ft = createFakeScheduler();
+  ft.install();
+  try {
+    let calls = 0;
+    setTimeout(() => calls++, 100);
+    setTimeout(() => calls++, 200);
+    setTimeout(() => calls++, 300);
+
+    expect(ft.pending()).toBe(3);
+    await ft.advance(150);
+    expect(calls).toBe(1);
+
+    await ft.flushAll();
+    expect(calls).toBe(3);
+    expect(ft.pending()).toBe(0);
+  } finally {
+    ft.uninstall();
+  }
+});
+```
+
+### Defer
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createFakeScheduler, createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('defers an action by a fixed delay', async () => {
+  const ft = createFakeScheduler();
+  ft.install();
+  try {
+    const rt = createTestRuntime();
+    const t = createTrigger<{
+      events: { ping: void };
+      actions: { log: void };
+    }>(
+      {
+        id: 'demo',
+        events: ['ping'],
+        handler({ actions }) {
+          actions.defer(500).log?.();
+        },
+      },
+      rt,
+    );
+
+    const log = vi.fn();
+    rt.mockAction(t, 'log', log);
+
+    rt.fireSync('ping');
+    await ft.advance(499);
+    expect(log).not.toHaveBeenCalled();
+    await ft.advance(1);
+    expect(log).toHaveBeenCalledOnce();
+  } finally {
+    ft.uninstall();
+  }
+});
+```
+
+### Clock interrogation
+
+```ts twoslash
+import { createFakeScheduler } from '@triggery/testing';
+
+const ft = createFakeScheduler();
+ft.install();
+
+setTimeout(() => {}, 250);
+console.log(ft.now());      // 0
+console.log(ft.pending());  // 1
+await ft.advance(250);
+console.log(ft.now());      // 250
+console.log(ft.pending());  // 0
+
+ft.uninstall();
+```
+
+## Notes
+
+<Aside type="tip" title="Always pair install / uninstall">
+Forgetting `uninstall()` leaks fake timers across tests — subsequent tests using real `setTimeout` will block forever (the fake one doesn't fire on its own). Use `beforeEach`/`afterEach` or `try`/`finally` to make the pair robust.
+</Aside>
+
+<Aside type="caution" title="Microtasks vs timers">
+`advance()` drains pending microtasks after running timers, but only those queued during the advance. For purely microtask-based async chains, prefer [`flushMicrotasks`](/api/testing/flush-microtasks/) — `createFakeScheduler` doesn't intercept `queueMicrotask` or promise resolution.
+</Aside>
+
+<Aside>
+The fake scheduler is intentionally limited to `setTimeout` and `clearTimeout`. `setInterval`, `setImmediate`, and Node's `process.nextTick` are not virtualized — if your handler uses one of those, plug in `vi.useFakeTimers()` instead.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTestRuntime" description="Pair this with the test runtime for trigger tests." href="/api/testing/create-test-runtime/" />
+  <LinkCard title="flushMicrotasks" description="Drain microtasks (no timer interception)." href="/api/testing/flush-microtasks/" />
+  <LinkCard title="createScheduler" description="The runtime's real scheduler — what we're stand-in for." href="/api/core/create-scheduler/" />
+  <LinkCard title="Debouncing & throttling guide" description="When to use debounce / throttle / defer in handlers." href="/guide/async/debouncing-throttling/" />
+</CardGrid>

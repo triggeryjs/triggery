@@ -1,0 +1,20 @@
+---
+title: "Showcase"
+description: "Projects shipping Triggery in production. Add yours via PR."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery is pre-1.0 and the public showcase is still empty. If you ship something with Triggery — a side project, a feature inside a larger app, a demo — we'd love to list it here.
+
+<Aside type="tip" title="Submit your project">
+Open a PR using the [`showcase-template.md`](https://github.com/triggeryjs/triggery/tree/main/.github/ISSUE_TEMPLATE) — name, one-line description, link, optional screenshot. We accept anything that uses Triggery in a non-trivial way (more than the counter example).
+</Aside>
+
+<CardGrid>
+  <LinkCard title="Submit your project" description="Open a PR with name, description and link." href="https://github.com/triggeryjs/triggery/issues/new?template=showcase.yml" />
+  <LinkCard title="Awesome Triggery" description="Articles, talks and tutorials." href="/ecosystem/awesome/" />
+  <LinkCard title="Integrations" description="Vite, ESLint, codemod, CLI, devtools." href="/ecosystem/integrations/" />
+</CardGrid>

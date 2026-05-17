@@ -1,0 +1,161 @@
+---
+title: "@triggery/solid"
+description: "Биндинги Triggery для SolidJS — useEvent, useCondition, useAction, provider, scope. Нативно поддерживают сигналы и onCleanup."
+sidebar:
+  order: 3
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Биндинги [SolidJS](https://www.solidjs.com) для [Triggery](https://github.com/triggeryjs/triggery). Та же форма хуков, что в `@triggery/react` и `@triggery/vue`, нативно работают с сигналами Solid и жизненным циклом `onCleanup`. **Без рантайм-зависимостей** — тонкая прослойка над жизненным циклом поверх `@triggery/core`.
+
+[![npm](https://img.shields.io/npm/v/@triggery/solid?style=flat-square)](https://www.npmjs.com/package/@triggery/solid)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/solid?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/solid)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/solid solid-js" />
+
+Peer-зависимости: `solid-js >= 1.8.0`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `useEvent` | Типизированный эмиттер событий со стабильной идентичностью на протяжении жизни компонента. |
+| `useCondition` | Регистрирует pull-only геттер условия. Естественно читает сигналы. |
+| `useAction` | Регистрирует обработчик действия. Автоочистка через `onCleanup`. |
+| `useInlineTrigger` | Одноразовые триггеры внутри компонента. |
+| `<TriggerRuntimeProvider>` | Внедрить кастомный рантайм через context API Solid. |
+| `<TriggerScope>` | Ограничить регистрации условий/действий поддеревом-фичей. |
+
+## Быстрый старт
+
+Три небольших файла. Триггер читается как спецификация, компоненты знают только о своём порту.
+
+### 1. Опиши триггер
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+
+export const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string; author: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({
+      title: event.payload.author,
+      body:  event.payload.text,
+    });
+  },
+});
+```
+
+### 2. Оберни дерево
+
+```tsx title="src/index.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/solid';
+import { render } from 'solid-js/web';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+render(
+  () => (
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  ),
+  document.getElementById('root')!,
+);
+```
+
+### 3. Подключи компоненты
+
+```tsx title="src/App.tsx"
+import { createSignal, type Component } from 'solid-js';
+import { useAction, useCondition, useEvent } from '@triggery/solid';
+import { messageTrigger } from './triggers/message.trigger';
+
+const SettingsProvider: Component = () => {
+  const [settings] = createSignal({ sound: true, notifications: true });
+  useCondition(messageTrigger, 'settings', () => settings());
+  return null;
+};
+
+const Chat: Component = () => {
+  const fire = useEvent(messageTrigger, 'new-message');
+  return (
+    <button onClick={() => fire({ text: 'hi', author: 'Alice' })}>
+      send
+    </button>
+  );
+};
+
+const Toast: Component = () => {
+  useAction(messageTrigger, 'showToast', ({ title, body }) =>
+    console.log(`[${title}] ${body}`),
+  );
+  return null;
+};
+
+export const App: Component = () => (
+  <>
+    <SettingsProvider />
+    <Chat />
+    <Toast />
+  </>
+);
+```
+
+Нажми на кнопку — `Toast` залогирует. Переключи `settings.notifications` в `false` — тишина.
+
+## Чем интеграция с Solid отличается от React
+
+Компоненты Solid выполняют свой setup один раз. Никаких `useCallback`, массивов зависимостей и танцев с ref — просто замыкай то, что нужно. Геттеры условий, читающие сигналы, автоматически видят актуальное значение в момент срабатывания, потому что сигналы Solid — это чистые функции.
+
+```tsx
+// Сравни с React: ни массива deps, ни useCallback, ни мемоизации.
+useCondition(trigger, 'settings', () => settings());
+```
+
+## Очистка
+
+Все composables автоматически очищаются через `onCleanup` — они работают и внутри setup'а компонента, и внутри отдельных `createRoot()`-скоупов. Никаких ручных disposer'ов.
+
+## Рецепты
+
+<CardGrid>
+  <LinkCard title="Счётчик (Solid)" description="Hello-world рецепт." href="/ru/recipes/solid/counter/" />
+  <LinkCard title="Конвейер уведомлений" description="Тост + звук + бейдж в трёх компонентах." href="/ru/recipes/solid/notification-pipeline/" />
+  <LinkCard title="Поиск с дебаунсом" description="take-latest + AbortSignal для автокомплита." href="/ru/recipes/react/debounced-search/" />
+</CardGrid>
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Рантайм, который оборачивает этот биндинг." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="Идентичная форма хуков для React 18+/19." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/vue" description="Идентичная форма хуков для Vue 3." href="/ru/packages/vue/" />
+  <LinkCard title="@triggery/testing" description="Тестируй триггер без рендера Solid." href="/ru/packages/testing/" />
+  <LinkCard title="@triggery/vite" description="Автодискавери через virtual:triggery-registry." href="/ru/packages/vite/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/solid)
+- [npm](https://www.npmjs.com/package/@triggery/solid)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/solid/CHANGELOG.md)

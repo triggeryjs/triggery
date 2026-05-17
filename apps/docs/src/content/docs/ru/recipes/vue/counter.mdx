@@ -1,0 +1,65 @@
+---
+title: Счётчик
+description: "Самый простой рецепт Triggery во Vue 3 — одно событие, одно действие, один компонент."
+sidebar:
+  order: 1
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Тот же счётчик, что и в [React](/ru/recipes/react/counter/) и [Solid](/ru/recipes/solid/counter/) версиях. Файл триггера идентичен; меняется только компонент.
+
+## Триггер
+
+```ts title="src/triggers/counter.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const counterTrigger = createTrigger<{
+  events:  { increment: void; decrement: void };
+  actions: { adjust: number };
+}>({
+  id: 'counter',
+  events: ['increment', 'decrement'],
+  handler({ event, actions }) {
+    actions.adjust?.(event.name === 'increment' ? 1 : -1);
+  },
+});
+```
+
+## Компонент
+
+```vue title="src/Counter.vue"
+<script setup lang="ts">
+import { useAction, useEvent } from '@triggery/vue';
+import { ref } from 'vue';
+import { counterTrigger } from './triggers/counter.trigger';
+
+const count = ref(0);
+
+const inc = useEvent(counterTrigger, 'increment');
+const dec = useEvent(counterTrigger, 'decrement');
+
+useAction(counterTrigger, 'adjust', delta => {
+  count.value += delta;
+});
+</script>
+
+<template>
+  <div>
+    <button @click="dec()">−</button>
+    <output>{{ count }}</output>
+    <button @click="inc()">+</button>
+  </div>
+</template>
+```
+
+Vue-биндинг использует `provide`/`inject` для рантайма и `onScopeDispose` для очистки — те же гарантии жизненного цикла, что и у cleanup'а React `useEffect`.
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="Версия для React" href="/ru/recipes/react/counter/" description="Тот же триггер, React-хуки." />
+  <LinkCard title="Версия для Solid" href="/ru/recipes/solid/counter/" description="C createSignal." />
+  <LinkCard title="Пайплайн уведомлений (Vue)" href="/ru/recipes/vue/notification-pipeline/" description="Полный многокомпонентный сценарий." />
+  <LinkCard title="Пакет @triggery/vue" href="/ru/packages/vue/" description="Справочник по хукам." />
+</CardGrid>

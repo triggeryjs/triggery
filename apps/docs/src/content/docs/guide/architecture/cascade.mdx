@@ -1,0 +1,250 @@
+---
+title: Cascades
+description: "When one trigger's action fires another event — depth limits, cycle detection, and when a cascade is a smell."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+A **cascade** is a fire that happens inside a running handler. A `useAction` body calls `runtime.fire('next-event')`; that event in turn matches another trigger; that trigger's handler runs; and so on. Cascades let scenarios fan out across features without the producer of the second event needing to know about the producer of the first.
+
+They also let you build infinite loops in three lines, so the runtime ships with two safety belts on by default — a depth limit and a per-fire cycle check — plus a middleware hook to observe whatever passes.
+
+## Anatomy of a cascade
+
+Below is the chain Triggery actually tracks. `A` fires the top-level event; its handler invokes an action; that action — or the handler itself — calls `runtime.fire` to emit a new event; trigger `B` is subscribed to that event and runs; and so on.
+
+```text
+                     +-- depth 0 (top-level fire) --+
+fire('user:signed-in')                              |
+        |                                           |
+        v                                           |
+  trigger A (id: 'session-bootstrap')               |
+        |                                           |
+        | actions.welcomeToast?.()  --- depth 1 ----+
+        |        \                                  |
+        |         runtime.fire('toast:shown')       |
+        |                |                          |
+        |                v                          |
+        |          trigger B (id: 'toast-analytics')|
+        |                |                          |
+        |                | runtime.fire(...)  --- depth 2 --- ...
+        |                                           |
+        v                                           |
+   (handler returns)                                |
+                     +-------------------------------+
+```
+
+The runtime's bookkeeping is in `meta`:
+
+```ts
+handler({ event, meta }) {
+  meta.cascadeDepth;     // 0 for top-level, 1 for "fired from inside a parent handler", …
+  meta.parentRunId;      // the run id of the parent trigger (undefined at depth 0)
+  meta.parentTriggerId;  // the trigger id of the parent (undefined at depth 0)
+}
+```
+
+Same fields land on the inspector snapshot, which is what feeds the DevTools cascade tree view.
+
+## Default safety: `maxCascadeDepth`
+
+`createRuntime` defaults `maxCascadeDepth` to **3**. Anything beyond that is skipped — the runtime emits an `onCascade` event with `kind: 'overflow'` and dispatch stops for that chain. No exception is thrown by default.
+
+```ts title="src/main.ts"
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  maxCascadeDepth: 3, // default — keep small on purpose
+});
+```
+
+The number is small on purpose. Three steps is enough for the legitimate cases ("event → handler → cascade-event → handler → cascade-event → handler"). Four or more usually means somebody bolted a small pipeline onto the trigger registry instead of writing a function. Raising the limit is a smell unless you have a written reason.
+
+### What an overflow looks like
+
+`onCascade` middleware fires with the full context. Without any middleware installed, the overflow is silent at runtime but still annotated in the inspector buffer (status `'skipped'`, reason `cascade-overflow`).
+
+```ts title="src/cascade-logger.ts"
+import type { Middleware } from '@triggery/core';
+
+export const cascadeLogger: Middleware = {
+  name: 'cascade-logger',
+  onCascade({ parentTriggerId, parentRunId, newEventName, cascadeDepth, kind }) {
+    if (kind === 'overflow') {
+      console.warn(
+        `[cascade] depth ${cascadeDepth} exceeded — '${newEventName}' from ${parentTriggerId}/${parentRunId} dropped`,
+      );
+    }
+  },
+};
+```
+
+## Cycle detection
+
+Independent of depth, the runtime detects **cycles** per top-level fire. While a handler runs, the dispatcher keeps a parent-chain reference; before re-entering a trigger it walks that chain looking for the trigger's id. A hit means "this exact trigger is already running upstream in the chain" — the second invocation is skipped with `kind: 'cycle'`.
+
+```text
+  fire('a')          ┐
+       v             │
+   trigger X         │
+       v             │  walk chain: X is already in here → cycle
+   actions.foo()     │
+       v             │
+   runtime.fire('b') │
+       v             │
+   trigger Y         │
+       v             │
+   actions.bar()     │
+       v             │
+   runtime.fire('a') ┘  → onCascade({ kind: 'cycle' }), trigger X skipped
+```
+
+Cycle detection is **per-top-level-fire** — independent top-level fires don't share a chain. The check is O(depth), not O(triggers-in-runtime), so the safety belt doesn't cost anything on the hot path even with thousands of triggers registered.
+
+<Aside type="tip">
+A cycle in production is almost always a regression. Subscribe to `onCascade` and log `kind: 'cycle'` to Sentry / your error monitor; the parent ids tell you exactly which two triggers fed each other.
+</Aside>
+
+## Configuring cascade behaviour
+
+There is one knob today — `maxCascadeDepth` — plus the `onCascade` middleware hook. Future opt-in modes (`'forbid'`, `'throw'`) live on the roadmap.
+
+```ts title="src/main.ts"
+const runtime = createRuntime({
+  maxCascadeDepth: 5,           // raise if you have a deliberately deeper chain
+  middleware: [cascadeLogger],  // observe overflow + cycle events
+});
+```
+
+If you want stricter behaviour today, write the middleware:
+
+```ts title="src/strict-cascade.ts"
+import type { Middleware } from '@triggery/core';
+
+export const strictCascade: Middleware = {
+  name: 'strict-cascade',
+  onCascade({ kind, newEventName, parentTriggerId }) {
+    throw new Error(
+      `[cascade] ${kind} — '${newEventName}' from ${parentTriggerId} (cascade strict-mode on)`,
+    );
+  },
+};
+```
+
+The throw lands in the parent handler's `try/catch` (per [Error handling](/guide/essentials/handlers/)) — it is *not* propagated to `runtime.fire`, which is fire-and-forget by design.
+
+## DEV: forbid cascades altogether
+
+In the editor, prefer the **static** check from the ESLint plugin. The runtime cascade limit catches what slipped through at run time; the lint rule keeps cascades out of the codebase.
+
+```js title="eslint.config.js"
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  {
+    plugins: { '@triggery': triggery },
+    rules: {
+      // disallow `useEvent(...)` calls inside a `useAction(...)` handler
+      '@triggery/no-event-cascade': 'error',
+    },
+  },
+];
+```
+
+This catches the most common cascade by static structure — a reactor that fires another event. The runtime keeps the depth limit on top, because some legitimate cascades aren't `useEvent`-shaped (e.g. a handler that calls `runtime.fire` directly).
+
+## When a cascade is fine
+
+Cascades earn their keep when each step is **independent and meaningful on its own**:
+
+- **Modal close → analytics event.** The modal scenario doesn't care that something is tracking it. The analytics scenario doesn't care which modal closed.
+- **Auth refresh succeeded → re-arm watchers.** The watchers care about "the session changed", not "the refresh trigger did the change".
+- **Document opened → recently-viewed list update.** Two scenarios — opening a document, and bookkeeping for recent items — share an event boundary.
+
+In each case the parent is short, the child is short, and neither has to read or call the other.
+
+```ts title="OK — modal-close → analytics"
+export const closeModalTrigger = createTrigger<{
+  events:  { 'modal:close-requested': { modalId: string } };
+  actions: { closeModal: { modalId: string } };
+}>({
+  id: 'close-modal',
+  events: ['modal:close-requested'],
+  required: [],
+  handler({ event, actions }) {
+    actions.closeModal?.(event.payload);
+    runtime.fire('modal:closed', event.payload);
+  },
+});
+
+export const trackModalCloseTrigger = createTrigger<{
+  events:  { 'modal:closed': { modalId: string } };
+  actions: { trackEvent: AnalyticsEvent };
+}>({
+  id: 'track-modal-close',
+  events: ['modal:closed'],
+  required: [],
+  handler({ event, actions }) {
+    actions.trackEvent?.({ name: 'modal:closed', modalId: event.payload.modalId });
+  },
+});
+```
+
+## When a cascade is a smell
+
+The chain stops being orchestration and starts being a coded function the moment **one step exists only to enable the next**.
+
+- **Three triggers, one outcome.** `validate → save → toast` is a function with a misleading registry footprint. Consolidate (see [Anti-spaghetti](/guide/architecture/anti-spaghetti/)).
+- **A cascade that feeds back.** Trigger A produces event B; trigger B produces event A; you discover this via a cycle warning. Stop, find a third trigger that owns the truth, and have both depend on it.
+- **A cascade across a `setTimeout` or `await`.** Cascade tracking only follows the **synchronous** part of an async handler — after the first `await`, the next `runtime.fire` is a fresh top-level emit. If your "cascade" only works because the parent is sync, you are relying on an implementation detail; lift it into an explicit producer.
+
+<Aside type="caution" title="Async cascade caveat">
+After the first `await` in an async handler, the dispatch context is restored to the caller's frame. A subsequent `runtime.fire` is treated as a brand-new top-level emit: `cascadeDepth` resets to 0, `parentRunId` is undefined, cycle detection no longer sees the chain. If you need traceable orchestration across an `await`, capture `meta.runId` before the await and pass it through your event payload, or split the post-await work into its own trigger that *is* reached synchronously.
+</Aside>
+
+## Inspector cascade tree
+
+When the inspector is on (DEV default, opt-in for PROD), every run carries `parentRunId` / `parentTriggerId` in the snapshot. `@triggery/devtools-redux` and `@triggery/devtools-bridge` render that as a tree:
+
+```text
+run_3k  session-bootstrap     fire    new-user
+ └─ run_3l  welcome-toast     fire    toast:shown
+     └─ run_3m  toast-analytics fire   (no actions)
+```
+
+You can build the same view from `runtime.getInspectorBuffer()` in 30 lines for a custom panel — see [Inspector](/guide/advanced/inspector/).
+
+## Cheat sheet
+
+| Want… | Reach for |
+|---|---|
+| Hard ceiling on chain length | `createRuntime({ maxCascadeDepth })` |
+| Observe overflows and cycles | `Middleware.onCascade` |
+| Reject cascades in the editor | `@triggery/no-event-cascade` |
+| Throw on every cascade event | Custom `onCascade` middleware that re-throws |
+| Inspect a specific chain | `meta.parentRunId` + `runtime.getInspectorBuffer()` |
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Anti-spaghetti"
+    description="When NOT to make a trigger, and how to split a fat one before it grows cascades."
+    href="/guide/architecture/anti-spaghetti/"
+  />
+  <LinkCard
+    title="Scopes"
+    description="Run the same trigger logic in isolated panels without cross-pollination."
+    href="/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Middleware"
+    description="The full lifecycle hook surface — onFire, onCascade, onSkip, onActionStart, onActionEnd, onError."
+    href="/guide/advanced/middleware/"
+  />
+  <LinkCard
+    title="Inspector"
+    description="Ring buffer, useInspect, the DevTools cascade tree."
+    href="/guide/advanced/inspector/"
+  />
+</CardGrid>

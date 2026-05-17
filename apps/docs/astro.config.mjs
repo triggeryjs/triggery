@@ -1,0 +1,438 @@
+import sitemap from '@astrojs/sitemap';
+import starlight from '@astrojs/starlight';
+import { defineConfig } from 'astro/config';
+import starlightThemeNova from 'starlight-theme-nova';
+
+const REPO = 'https://github.com/triggeryjs/triggery';
+// SITE = production origin where the docs are served.
+// BASE = URL path-prefix under that origin (root by default).
+//
+// In Starlight 0.37, Astro `base` is auto-prepended for the sidebar/nav and
+// the hero image, but NOT for in-body `<LinkCard href="/…">`, `<LinkButton>`
+// or hero `actions[].link` — those render literally. We have hundreds of
+// internal `<LinkCard>` hrefs across the doc set, so forcing a base prefix
+// would break the whole site.
+//
+// Deployment options:
+//   1. Org-root Pages at `triggeryjs.github.io` — create a separate empty
+//      repo `triggeryjs/triggeryjs.github.io` and have CI push the docs
+//      artifact there. This is the default config below.
+//   2. Custom domain (e.g. `triggery.dev`) — set up DNS CNAME → GH Pages
+//      and add a CNAME file. Same result, prettier URL.
+//   3. Project-Pages sub-path `triggeryjs.github.io/triggery/` (current
+//      single-repo setup) — works only after manually fixing every
+//      LinkCard/LinkButton href in MDX. Not recommended.
+const SITE = process.env.TRIGGERY_DOCS_SITE ?? 'https://triggeryjs.github.io';
+const BASE = process.env.TRIGGERY_DOCS_BASE ?? '';
+
+export default defineConfig({
+  site: SITE,
+  base: BASE,
+  trailingSlash: 'always',
+  integrations: [
+    sitemap(),
+    starlight({
+      title: 'Triggery',
+      description:
+        'Declarative business-logic orchestration. Framework-agnostic core with React, Solid and Vue bindings.',
+      logo: {
+        src: './src/assets/logo_trig.webp',
+        replacesTitle: false,
+      },
+      favicon: '/favicon.png',
+      social: [
+        { icon: 'github', label: 'GitHub', href: REPO },
+        { icon: 'x.com', label: 'X', href: 'https://x.com/triggeryjs' },
+        { icon: 'discord', label: 'Discord', href: 'https://discord.gg/triggery' },
+      ],
+      editLink: {
+        baseUrl: `${REPO}/edit/main/apps/docs/`,
+      },
+      lastUpdated: true,
+      pagination: true,
+      tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 4 },
+      // English root + Russian stub. Starlight falls back to the root locale
+      // for any page missing in `ru/`, so a single `ru/index.mdx` is enough to
+      // bring the language switcher back. Add another locale only after at
+      // least its `index.mdx` is in place; otherwise nothing changes.
+      defaultLocale: 'root',
+      locales: {
+        root: { label: 'English', lang: 'en' },
+        ru: { label: 'Русский', lang: 'ru' },
+      },
+      plugins: [
+        starlightThemeNova({
+          // Nova accepts per-locale labels and hrefs as `Record<lang, string>`.
+          // Keys match `locales.<locale>.lang` from the Starlight config.
+          // Astro `base` is NOT auto-prefixed — include it manually if you
+          // ever switch from base='' to a sub-path deployment.
+          nav: [
+            {
+              label: { en: 'Guide', ru: 'Руководство' },
+              href: { en: `${BASE}/guide/`, ru: `${BASE}/ru/guide/` },
+            },
+            {
+              label: { en: 'Recipes', ru: 'Рецепты' },
+              href: { en: `${BASE}/recipes/`, ru: `${BASE}/ru/recipes/` },
+            },
+            {
+              label: { en: 'Examples', ru: 'Примеры' },
+              href: { en: `${BASE}/examples/`, ru: `${BASE}/ru/examples/` },
+            },
+            {
+              label: { en: 'API', ru: 'API' },
+              href: { en: `${BASE}/api/`, ru: `${BASE}/ru/api/` },
+            },
+            {
+              label: { en: 'Packages', ru: 'Пакеты' },
+              href: { en: `${BASE}/packages/`, ru: `${BASE}/ru/packages/` },
+            },
+            {
+              label: { en: 'Ecosystem', ru: 'Экосистема' },
+              href: { en: `${BASE}/ecosystem/`, ru: `${BASE}/ru/ecosystem/` },
+            },
+          ],
+        }),
+      ],
+      customCss: [
+        // Nova 0.10 ships shiki.css (Twoslash popover styles + diff highlight
+        // utilities) but, unlike 0.11+, doesn't auto-inject it. We add it
+        // ourselves so `ts twoslash` code blocks get visible hover popovers.
+        'starlight-theme-nova/shiki.css',
+        // The popover container styles come from the renderer package itself.
+        'shiki-twoslash-renderer/style.css',
+        './src/styles/brand.css',
+      ],
+      components: {
+        // Inject the `<twoslash-root>` / `<twoslash-trigger>` / `<twoslash-content>`
+        // custom-element runtime (which wires hover state via @aria-ui/core).
+        // Without it the popovers stay `display: none`.
+        Head: './src/components/HeadWithTwoslash.astro',
+      },
+      sidebar: [
+        // Every entry with an explicit `label:` also has a `translations.ru`
+        // override so the RU sidebar matches the actual RU article title.
+        // Autogenerated entries pick up `title:` per locale from each MDX file
+        // automatically — they don't need explicit translations.
+        {
+          label: 'Guide',
+          translations: { ru: 'Руководство' },
+          items: [
+            { label: 'Introduction', slug: 'guide', translations: { ru: 'Введение' } },
+            {
+              label: 'Getting started',
+              slug: 'guide/getting-started',
+              translations: { ru: 'Начало работы' },
+            },
+            {
+              label: 'Why Triggery',
+              slug: 'guide/why-triggery',
+              translations: { ru: 'Зачем нужен Triggery' },
+            },
+            {
+              label: 'Essentials',
+              translations: { ru: 'Основы' },
+              collapsed: false,
+              items: [
+                {
+                  label: 'Trigger anatomy',
+                  slug: 'guide/essentials/trigger-anatomy',
+                  translations: { ru: 'Анатомия триггера' },
+                },
+                {
+                  label: 'Events',
+                  slug: 'guide/essentials/events',
+                  translations: { ru: 'События' },
+                },
+                {
+                  label: 'Conditions',
+                  slug: 'guide/essentials/conditions',
+                  translations: { ru: 'Условия' },
+                },
+                {
+                  label: 'Actions',
+                  slug: 'guide/essentials/actions',
+                  translations: { ru: 'Действия' },
+                },
+                {
+                  label: 'Handlers',
+                  slug: 'guide/essentials/handlers',
+                  translations: { ru: 'Обработчики' },
+                },
+                {
+                  label: 'Runtime',
+                  slug: 'guide/essentials/runtime',
+                  translations: { ru: 'Рантайм' },
+                },
+              ],
+            },
+            {
+              label: 'Async & concurrency',
+              translations: { ru: 'Асинхронность и параллелизм' },
+              collapsed: true,
+              items: [
+                {
+                  label: 'Async handlers',
+                  slug: 'guide/async/async-handlers',
+                  translations: { ru: 'Асинхронные обработчики' },
+                },
+                {
+                  label: 'Concurrency strategies',
+                  slug: 'guide/async/concurrency',
+                  translations: { ru: 'Стратегии параллелизма' },
+                },
+                {
+                  label: 'Debouncing & throttling',
+                  slug: 'guide/async/debouncing-throttling',
+                  translations: { ru: 'Debounce и throttle' },
+                },
+                {
+                  label: 'Cancellation',
+                  slug: 'guide/async/cancellation',
+                  translations: { ru: 'Отмена' },
+                },
+              ],
+            },
+            {
+              label: 'Architecture',
+              translations: { ru: 'Архитектура' },
+              collapsed: true,
+              items: [
+                {
+                  label: 'Anti-spaghetti',
+                  slug: 'guide/architecture/anti-spaghetti',
+                  translations: { ru: 'Борьба со спагетти' },
+                },
+                {
+                  label: 'Cascades',
+                  slug: 'guide/architecture/cascade',
+                  translations: { ru: 'Каскады' },
+                },
+                {
+                  label: 'Scopes',
+                  slug: 'guide/architecture/scopes',
+                  translations: { ru: 'Области видимости' },
+                },
+                {
+                  label: 'Ownership',
+                  slug: 'guide/architecture/ownership',
+                  translations: { ru: 'Владение' },
+                },
+              ],
+            },
+            {
+              label: 'Advanced',
+              translations: { ru: 'Продвинутые темы' },
+              collapsed: true,
+              items: [
+                {
+                  label: 'Middleware',
+                  slug: 'guide/advanced/middleware',
+                  translations: { ru: 'Middleware' },
+                },
+                {
+                  label: 'Inspector',
+                  slug: 'guide/advanced/inspector',
+                  translations: { ru: 'Инспектор' },
+                },
+                {
+                  label: 'Auto-discovery',
+                  slug: 'guide/advanced/auto-discovery',
+                  translations: { ru: 'Автообнаружение' },
+                },
+                {
+                  label: 'Named hooks',
+                  slug: 'guide/advanced/named-hooks',
+                  translations: { ru: 'Именованные хуки' },
+                },
+                {
+                  label: 'Inline triggers',
+                  slug: 'guide/advanced/inline-triggers',
+                  translations: { ru: 'Встроенные триггеры' },
+                },
+              ],
+            },
+            {
+              label: 'TypeScript',
+              translations: { ru: 'TypeScript' },
+              collapsed: true,
+              items: [
+                {
+                  label: 'Schema typing',
+                  slug: 'guide/typescript/schema-typing',
+                  translations: { ru: 'Типизация схемы' },
+                },
+                {
+                  label: 'Strict mode',
+                  slug: 'guide/typescript/strict-mode',
+                  translations: { ru: 'Strict mode (TypeScript)' },
+                },
+                {
+                  label: 'Validation (Standard Schema)',
+                  slug: 'guide/typescript/validation',
+                  translations: { ru: 'Валидация (Standard Schema)' },
+                },
+              ],
+            },
+            {
+              label: 'Testing',
+              translations: { ru: 'Тестирование' },
+              collapsed: true,
+              items: [
+                {
+                  label: 'Unit testing',
+                  slug: 'guide/testing/unit-testing',
+                  translations: { ru: 'Модульные тесты' },
+                },
+                {
+                  label: 'Fake scheduler',
+                  slug: 'guide/testing/fake-scheduler',
+                  translations: { ru: 'Тестовый планировщик' },
+                },
+                {
+                  label: 'Integration testing',
+                  slug: 'guide/testing/integration-testing',
+                  translations: { ru: 'Интеграционные тесты' },
+                },
+              ],
+            },
+            {
+              label: 'SSR & RSC',
+              translations: { ru: 'SSR и RSC' },
+              collapsed: true,
+              items: [
+                {
+                  label: 'Server-side rendering',
+                  slug: 'guide/ssr/server-side-rendering',
+                  translations: { ru: 'Server-side rendering' },
+                },
+                {
+                  label: 'React Server Components',
+                  slug: 'guide/ssr/react-server-components',
+                  translations: { ru: 'React Server Components' },
+                },
+                {
+                  label: 'StrictMode',
+                  slug: 'guide/ssr/strict-mode',
+                  translations: { ru: 'StrictMode (React)' },
+                },
+              ],
+            },
+          ],
+        },
+        {
+          label: 'Recipes',
+          translations: { ru: 'Рецепты' },
+          items: [
+            { label: 'Index', slug: 'recipes', translations: { ru: 'Обзор' } },
+            {
+              label: 'React',
+              translations: { ru: 'React' },
+              collapsed: false,
+              autogenerate: { directory: 'recipes/react' },
+            },
+            {
+              label: 'Solid',
+              translations: { ru: 'Solid' },
+              collapsed: true,
+              autogenerate: { directory: 'recipes/solid' },
+            },
+            {
+              label: 'Vue',
+              translations: { ru: 'Vue' },
+              collapsed: true,
+              autogenerate: { directory: 'recipes/vue' },
+            },
+          ],
+        },
+        {
+          label: 'Examples',
+          translations: { ru: 'Примеры' },
+          autogenerate: { directory: 'examples' },
+        },
+        {
+          label: 'API Reference',
+          translations: { ru: 'API' },
+          items: [
+            { label: 'Index', slug: 'api', translations: { ru: 'Обзор' } },
+            {
+              label: 'Core',
+              translations: { ru: 'Core' },
+              collapsed: false,
+              autogenerate: { directory: 'api/core' },
+            },
+            {
+              label: 'React',
+              translations: { ru: 'React' },
+              collapsed: true,
+              autogenerate: { directory: 'api/react' },
+            },
+            {
+              label: 'Solid',
+              translations: { ru: 'Solid' },
+              collapsed: true,
+              autogenerate: { directory: 'api/solid' },
+            },
+            {
+              label: 'Vue',
+              translations: { ru: 'Vue' },
+              collapsed: true,
+              autogenerate: { directory: 'api/vue' },
+            },
+            {
+              label: 'Testing',
+              translations: { ru: 'Тестирование' },
+              collapsed: true,
+              autogenerate: { directory: 'api/testing' },
+            },
+            {
+              label: 'Vite plugin',
+              translations: { ru: 'Vite-плагин' },
+              collapsed: true,
+              autogenerate: { directory: 'api/vite' },
+            },
+            {
+              label: 'ESLint plugin',
+              translations: { ru: 'ESLint-плагин' },
+              collapsed: true,
+              autogenerate: { directory: 'api/eslint-plugin' },
+            },
+            {
+              label: 'Codemod',
+              translations: { ru: 'Codemod-скрипты' },
+              collapsed: true,
+              autogenerate: { directory: 'api/codemod' },
+            },
+            {
+              label: 'CLI',
+              translations: { ru: 'CLI' },
+              collapsed: true,
+              autogenerate: { directory: 'api/cli' },
+            },
+          ],
+        },
+        {
+          label: 'Packages',
+          translations: { ru: 'Пакеты' },
+          autogenerate: { directory: 'packages' },
+        },
+        {
+          label: 'Migration',
+          translations: { ru: 'Миграция' },
+          autogenerate: { directory: 'migration' },
+        },
+        {
+          label: 'Ecosystem',
+          translations: { ru: 'Экосистема' },
+          autogenerate: { directory: 'ecosystem' },
+        },
+        {
+          label: 'Contributing',
+          translations: { ru: 'Участие в проекте' },
+          collapsed: true,
+          autogenerate: { directory: 'contributing' },
+        },
+      ],
+    }),
+  ],
+});

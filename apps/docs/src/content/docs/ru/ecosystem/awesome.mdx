@@ -1,0 +1,20 @@
+---
+title: "Awesome Triggery"
+description: "Статьи, доклады, видео и туториалы о Triggery — курируется сообществом."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Куируемый сообществом список статей, докладов, видео и туториалов про Triggery. Список намеренно пустой до релиза 1.0 — Triggery всё ещё pre-1.0, API может меняться между минорными версиями, и мы предпочитаем не отправлять читателей к материалам, которые устареют за релизный цикл.
+
+<Aside type="tip" title="Добавить свою ссылку">
+Если ты написал про Triggery, выступил с докладом или записал туториал — открой PR с добавлением сюда. Всё, что помогает следующему человеку освоить библиотеку, в зоне интересов. Заполни форму [`awesome-template.md`](https://github.com/triggeryjs/triggery/tree/main/.github/ISSUE_TEMPLATE) или открой PR прямо на эту страницу.
+</Aside>
+
+<CardGrid>
+  <LinkCard title="Отправить ссылку" description="Статья, доклад, туториал или видео — PR приветствуется." href="https://github.com/triggeryjs/triggery/issues/new?template=awesome.yml" />
+  <LinkCard title="Витрина" description="Продакшен-проекты на Triggery." href="/ru/ecosystem/showcase/" />
+  <LinkCard title="Обсуждения" description="Q&A, идеи, show-and-tell." href="https://github.com/triggeryjs/triggery/discussions" />
+</CardGrid>

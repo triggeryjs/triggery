@@ -1,0 +1,124 @@
+---
+title: useAction
+description: "Register an action handler for a trigger. Invoked when the handler calls actions.<name>()."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Registers an action handler — the function the runtime invokes when a trigger handler calls `actions.<name>(payload)`. Handlers can be sync or `async`; their return value is awaited inside the trigger handler's run.
+
+## Import
+
+```ts
+import { useAction } from '@triggery/react';
+```
+
+## Signature
+
+```ts
+function useAction<S extends TriggerSchema, K extends ActionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  handler: ActionMap<S>[K] extends void
+    ? () => void | Promise<void>
+    : (payload: ActionMap<S>[K]) => void | Promise<void>,
+): void;
+```
+
+The handler's payload parameter is typed from the action schema. Void-payload actions register a `() => void | Promise<void>` handler.
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `trigger` | `Trigger<S>` | The trigger returned by [`createTrigger`](/api/core/create-trigger/). |
+| `name` | `K extends ActionKey<S>` | An action declared in the trigger's schema. |
+| `handler` | Function | Sync or async handler. May return `void` or `Promise<void>`. |
+
+## Returns
+
+`void`. The handler is held in a ref and the registration is set up in `useEffect` / cleaned up on unmount.
+
+## Examples
+
+### Sync handler
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useAction } from '@triggery/react';
+
+const trigger = createTrigger<{
+  events:  { 'new-message': { author: string } };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'demo',
+  events: ['new-message'],
+  handler({ event, actions }) {
+    actions.showToast?.({ title: event.payload.author, body: 'hi' });
+  },
+});
+
+function NotificationLayer() {
+  useAction(trigger, 'showToast', ({ title, body }) => {
+    // ^^^^^ payload is typed from the schema
+    console.log('toast', title, body);
+  });
+  return null;
+}
+```
+
+### Async handler with AbortSignal
+
+The runtime drives the trigger handler — and therefore your async action — under the trigger's [concurrency strategy](/guide/async/concurrency/). For `take-latest` the AbortSignal in your trigger handler's `ctx` is the one to pass downstream; if your action also wants its own abort, plumb a controller in.
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useAction } from '@triggery/react';
+
+const trigger = createTrigger<{
+  events: { 'submit-form': { url: string; body: unknown } };
+  actions: { post: { url: string; body: unknown } };
+}>({
+  id: 'demo',
+  events: ['submit-form'],
+  async handler({ event, actions, signal }) {
+    await actions.post?.(event.payload);
+    signal.throwIfAborted();
+  },
+});
+
+function Network() {
+  useAction(trigger, 'post', async ({ url, body }) => {
+    await fetch(url, { method: 'POST', body: JSON.stringify(body) });
+  });
+  return null;
+}
+```
+
+### Multiple reactors
+
+If you mount two components both calling `useAction(trigger, 'showToast', …)`, the most recently mounted wins, and a DEV warn-once is logged. On unmount the previous handler is restored. See [Ownership](/guide/architecture/ownership/).
+
+## Notes
+
+<Aside type="tip">
+Calling `actions.<name>()` from the trigger handler never re-renders the reactor component. The handler runs in the runtime, not in React's commit phase.
+</Aside>
+
+<Aside>
+The trigger handler calls actions with optional chaining: `actions.showToast?.(payload)`. The `?.` is required because the action might not have a registered handler yet (e.g. the reactor hasn't mounted). Returning early when an action is missing is a valid pattern.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="useEvent" description="Fire events from producers." href="/api/react/use-event/" />
+  <LinkCard title="useCondition" description="Register a pull-only condition getter." href="/api/react/use-condition/" />
+  <LinkCard title="Actions guide" description="Narrative: debounce/throttle/queue/defer chains, ownership." href="/guide/essentials/actions/" />
+  <LinkCard title="Concurrency strategies" description="How async handlers interleave under take-latest etc." href="/guide/async/concurrency/" />
+</CardGrid>

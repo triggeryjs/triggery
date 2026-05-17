@@ -1,0 +1,300 @@
+---
+title: Debouncing and throttling
+description: "actions.debounce, throttle, defer and queue — per-action timing wrappers that the runtime owns end-to-end."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+The `actions` proxy ships with four chainable wrappers — `debounce`, `throttle`, `defer` and `queue` — that let you schedule a single side effect without leaving the handler. The runtime owns the timer, cleans it up on dispose, and the wrappers compose with concurrency strategies cleanly.
+
+```ts
+handler({ event, actions }) {
+  actions.debounce(800).playSound?.('beep');           // wait 800ms, then fire once
+  actions.throttle(2000).updateBadge?.(event.payload); // fire now, then ignore for 2s
+  actions.defer(50).flushBatch?.();                    // fire in 50ms unconditionally
+  actions.queue.saveDraft?.(event.payload);            // serialise this call against others
+}
+```
+
+`actions.debounce`, `.throttle`, `.defer` return a new proxy whose action calls are scheduled accordingly. The original `actions.showToast?.(...)` still fires immediately.
+
+## Debounce vs throttle vs defer
+
+| Wrapper | Edge | Replacement | Best for |
+|---|---|---|---|
+| `debounce(ms)` | Trailing | Each call **replaces** any pending call with the same key (action name + payload key). After `ms` of quiet, the last one fires. | Coalescing bursts: "play one beep for a flurry of messages", "search after typing stops". |
+| `throttle(ms)` | Leading | First call fires **immediately**. Subsequent calls within `ms` are **dropped** (not queued). | Rate-limiting: "max one analytics ping per 2 seconds", "max one resize handler per frame". |
+| `defer(ms)` | One-shot | Schedule one fire after exactly `ms`. New `defer` calls don't replace existing ones — each gets its own timer. | "Flush a batch in 50ms regardless of new fires", scheduled one-offs. |
+
+<Aside type="note">
+The throttle in V1 is **leading-edge only** — the first call fires immediately, then later calls within the window are silently dropped. A trailing-edge throttle (queue the last call within the window to fire at window end) is on the V1.1 roadmap as `actions.throttle(ms, { trailing: true })`.
+</Aside>
+
+The visual difference, for 5 events fired at `t = 0, 50, 100, 150, 200ms` with `ms = 150`:
+
+```text
+debounce(150):  ──────────────────────────────●       (one fire, ~350ms)
+throttle(150):  ●─────────────●                       (two fires: t=0 and t=150)
+defer(150):     ──────●●●●●                            (five fires, each 150ms after its call)
+```
+
+## `queue.foo(payload)` — serialised actions
+
+`actions.queue.foo(...)` is different: it doesn't take a `ms` argument. It serialises **action invocations**, not handler runs.
+
+```ts
+handler({ event, actions }) {
+  actions.queue.appendLog?.({ ts: Date.now(), msg: event.payload.msg });
+}
+```
+
+Compared to the trigger-level `concurrency: 'queue'`:
+
+| Mechanism | What gets serialised |
+|---|---|
+| `concurrency: 'queue'` | The **whole handler run**. Two events overlap → second handler waits for the first to resolve. |
+| `actions.queue.foo(p)` | The **action `foo`** across all callers. Two calls to `foo` overlap → second call waits for the first action's promise to resolve. |
+
+The action-level queue exists because one handler often dispatches several side effects, and only *some* of them need strict ordering. Putting the entire handler behind `concurrency: 'queue'` would block reads on writes; `actions.queue.foo` keeps reads concurrent while serialising writes.
+
+<Aside type="caution">
+`actions.queue` is intentionally lower-priority than `debounce/throttle/defer` and ships in V1 as a stable but minimal primitive: it serialises calls per action name. Per-key queuing (e.g. one queue per `noteId`) lands in V1.1 — until then, scope the trigger to a per-key `<TriggerScope>`.
+</Aside>
+
+## Per-action keying
+
+The runtime keys timers by **action name + `ms` value** for the timed wrappers. A debounced call to `playSound` doesn't interfere with a debounced call to `showToast` even at the same delay — they live in separate slots.
+
+```ts
+handler({ event, actions }) {
+  // Two debounce timers — one per action name. They never interact.
+  actions.debounce(800).playSound?.('beep');
+  actions.debounce(800).showToast?.({ title: event.payload.author, body: event.payload.text });
+}
+```
+
+Calling the same action with different `ms` values produces **separate** timers — the key includes `ms`. Mostly that's a non-issue (you don't usually swap delays mid-handler), but it's worth knowing if you build a settings-driven debounce:
+
+```ts
+handler({ event, conditions, actions }) {
+  const ms = conditions.userSettings?.debounceMs ?? 800;
+  // If `ms` changes between runs, the previous timer (with the old ms) is still pending.
+  actions.debounce(ms).playSound?.('beep');
+}
+```
+
+For payload-based keying ("debounce per channel id"), put each channel behind its own trigger instance using `<TriggerScope id={channelId}>`. Each scope has its own timer map.
+
+```tsx title="src/features/Chat.tsx"
+<TriggerScope id={`chat:${channelId}`}>
+  <ChatRoom channelId={channelId} />
+  <NotificationLayer />
+</TriggerScope>
+```
+
+The scenario then debounces per scope — exactly what "one beep per channel even when several channels are noisy" needs.
+
+## Choosing between the four
+
+A small decision tree for picking the right wrapper:
+
+```text
+do you want EVERY event to produce a side effect?
+├── yes → no wrapper. Just call actions.foo?.(...).
+└── no — only the last in a burst, or rate-limited
+    │
+    ├── only the LAST of a burst (collapse N events → 1)
+    │   └── actions.debounce(ms).foo
+    │
+    ├── the FIRST event, then ignore for ms
+    │   └── actions.throttle(ms).foo
+    │
+    ├── exactly one fire ms from now, ignoring future fires until it runs
+    │   └── actions.defer(ms).foo
+    │
+    └── every event lands, but in order one-at-a-time
+        └── actions.queue.foo
+```
+
+The wrappers compose with each other only via separate action names:
+
+```ts
+handler({ event, actions }) {
+  // Different actions, different timing strategies, no interference.
+  actions.throttle(2000).reportAnalytics?.(event.payload);
+  actions.debounce(80).renderResults?.(event.payload);
+  actions.defer(0).flushTelemetry?.();
+}
+```
+
+You **cannot** chain wrappers on the *same* call (`actions.debounce(100).throttle(200).foo` is not a valid construction). If you need that level of control, fire a follow-up event and put it on its own trigger with the appropriate `concurrency`.
+
+## Timers and cancellation
+
+Every pending debounce / defer timer the runtime holds is registered in the trigger's `timers` map. When any of the following happens, the runtime calls `cancelAllTimers(trigger)`:
+
+- The trigger is disposed (`trigger.dispose()` — usually never called by hand).
+- The runtime is disposed (`runtime.dispose()` — `unmount`, scope teardown, test cleanup).
+- The scope hosting the trigger unmounts.
+- Vite/Webpack HMR replaces the module that defined the trigger.
+
+This means: there is no "zombie debounced sound" lingering after navigation. The timer dies with the scope.
+
+You won't ever need to write `clearTimeout` yourself for these wrappers. If you find yourself doing that, prefer `defer(ms)` only when you'd previously have written `setTimeout(... , ms)` — there's no `cancelDefer` because the runtime cancels everything on dispose.
+
+<Aside type="tip">
+In tests, the runtime exposes `runtime.dispose()` which cancels every pending timer. Combine with the fake scheduler from `@triggery/testing` for fully deterministic timer assertions — see [Fake scheduler](/guide/testing/fake-scheduler/).
+</Aside>
+
+## Live example: debounced notification sound
+
+A chat scenario. A burst of incoming messages should produce **one** toast per message but only **one** beep for the whole burst.
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+type Message  = { author: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions:    {
+    showToast: { title: string; body: string };
+    playSound: 'beep';
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (!check.is('settings', (s) => s.notifications)) return;
+
+    // Immediate, per-message.
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+
+    // Coalesced: 800ms of quiet → one beep.
+    if (check.is('settings', (s) => s.sound)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+  },
+});
+```
+
+What you'll observe:
+
+- 6 messages in 200ms → 6 toasts, **one** beep at `t ≈ 1000ms` (200ms of input + 800ms of debounce silence).
+- After the beep fires, the timer slot is empty. The next message either fires immediately (no debounce active) or starts a new 800ms window.
+- Disable sound mid-burst → the `check.is(...)` guard skips the debounced call; any existing timer fires the queued action **only if `playSound` is still registered**. If the reactor unmounts the action handler, the late fire is a no-op.
+
+## Common pitfall: using debounce on a function intended to fire every event
+
+If your action is *the thing you want to call for each event* (a per-keystroke search, a per-tick metric, an audit log), debouncing it silently drops events.
+
+```ts
+// ✗ Looks reasonable, behaves wrong.
+handler({ event, actions }) {
+  actions.debounce(300).logAuditEvent?.({
+    userId: event.payload.userId,
+    action: event.payload.action,
+  });
+}
+```
+
+If two audit events arrive within 300ms, the second **replaces** the first. The first never fires. You lose audit data.
+
+The fix depends on what you actually want:
+
+- **Every event audited** → just call `actions.logAuditEvent?.(...)` without debounce.
+- **Bursts coalesced into batches** → accumulate in a closure, then `defer(300)` a single batch flush. Better: emit a `'batch-flush'` event and a separate trigger that calls the flush action with `concurrency: 'queue'`.
+- **Rate limited** → `actions.throttle(300).logAuditEvent?.(...)`. Now first call goes through, subsequent calls within 300ms are dropped — still lossy, but at the leading edge instead of the trailing edge. Usually wrong for audit.
+
+The rule: **debounce is for de-duplication**, not rate limiting. If you cannot afford to drop events, don't debounce.
+
+## Common pitfall: assuming `debounce(ms).foo` is idempotent across handler runs
+
+The debounce key is `(action name, ms)`, not `(handler run, action name, ms)`. Two consecutive runs of the same handler that both call `actions.debounce(800).playSound?.('beep')` produce **one** beep, 800ms after the second call.
+
+This is almost always what you want — debounce *is* coalescing across runs. But if you expected each run to have its own independent timer (e.g. for a defer-style one-shot per run), use `defer`:
+
+```ts
+handler({ event, actions }) {
+  // Five fires of the trigger → five separate 1000ms timers, five fires of flush.
+  actions.defer(1000).flushBatch?.();
+}
+```
+
+## Common pitfall: relying on debounce to "guarantee" the latest payload
+
+The debounce timer fires the **last call's** payload — but only the last call within the quiet window. If the handler runs again *after* the timer fires, that's a new call that schedules a new timer. There's no "lock the payload at the first call" behaviour.
+
+```ts
+handler({ event, actions }) {
+  // Every fire schedules a new 200ms timer with that fire's payload.
+  // Final fired payload = payload of the last call in the burst.
+  actions.debounce(200).updateSummary?.({ count: event.payload.itemCount });
+}
+```
+
+If you want the **first** call's payload to win, switch to `throttle`:
+
+```ts
+handler({ event, actions }) {
+  // First fire goes through immediately; subsequent fires within 200ms are dropped.
+  actions.throttle(200).updateSummary?.({ count: event.payload.itemCount });
+}
+```
+
+If you want to *coalesce* payloads (e.g. accumulate a list), do it explicitly with a closure-bound buffer plus `defer`:
+
+```ts
+const buffer: Item[] = [];
+
+handler({ event, actions }) {
+  buffer.push(event.payload.item);
+  actions.debounce(200).flushBatch?.([...buffer]);
+  // After the debounce fires, you'll want to clear the buffer in the reactor.
+}
+```
+
+(For most scenarios, the explicit batch pattern is better expressed as two triggers: one collects, one flushes.)
+
+## Common pitfall: combining throttle with `take-latest`
+
+A leading-edge throttle wrapped around an action inside a `take-latest` handler still fires the action *every time the handler runs without being aborted*. Throttle does not look at handler concurrency.
+
+```ts
+async handler({ event, signal, actions }) {
+  const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+  signal.throwIfAborted();
+  actions.throttle(1000).reportFetch?.({ url: event.payload.url, count: data.length });
+}
+```
+
+If `take-latest` aborts the previous run, the throttle counter is not reset — the in-flight throttle window is per-action, not per-run. You may end up calling `reportFetch` at most once per second across all runs, which is usually the right semantics for a throttle. If you specifically want "report only successful runs", check `!signal.aborted` before calling.
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Concurrency strategies"
+    description="How concurrency interacts with action-level timers (different granularities, no conflict)."
+    href="/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Async handlers"
+    description="async/await mechanics, signal propagation and error flow inside handlers."
+    href="/guide/async/async-handlers/"
+  />
+  <LinkCard
+    title="Cancellation"
+    description="The dispose lifecycle that clears every pending debounce / defer timer."
+    href="/guide/async/cancellation/"
+  />
+  <LinkCard
+    title="Actions"
+    description="The full actions proxy reference, including last-mount-wins ownership."
+    href="/guide/essentials/actions/"
+  />
+</CardGrid>

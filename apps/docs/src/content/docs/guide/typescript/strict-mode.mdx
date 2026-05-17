@@ -1,0 +1,292 @@
+---
+title: Strict mode (TypeScript)
+description: "Triggery is written under noUncheckedIndexedAccess and exactOptionalPropertyTypes. Reading the API through that lens — and avoiding `as any`."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery's public types are designed against the **strictest practical TypeScript configuration**. The package compiles with `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`, and `noImplicitOverride: true`. The reason isn't ideology — it's that these flags catch most of the bugs people would otherwise hit during a feature freeze. This page explains what the flags imply for your code, the patterns that read naturally, and a few `as any` alternatives.
+
+## The recommended tsconfig
+
+The minimum we recommend for an app that uses Triggery:
+
+```jsonc title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "useUnknownInCatchVariables": true,
+
+    "jsx": "react-jsx",
+    "skipLibCheck": false
+  }
+}
+```
+
+`skipLibCheck: false` is the one most teams turn off — we keep it on because Triggery's `.d.ts` files are intentionally cheap to type-check, and finding library mismatches early is worth the second of build time.
+
+## Why everything is optional
+
+When you read a Triggery type for the first time, two things look surprising:
+
+- `conditions.user` is `User | undefined`, even when `user` is listed in `required`.
+- `actions.foo` is `(payload: Foo) => void | undefined`, so every call site looks like `actions.foo?.(payload)`.
+
+Both are intentional. Both encode a runtime reality that strict mode then makes visible.
+
+### Conditions: `required` is a runtime gate, not a static guarantee
+
+`required: ['user']` doesn't promise the type system that `conditions.user` exists — it promises the runtime that the handler **won't run** unless `user` is registered. Different layers of the system have different views:
+
+- **The dispatcher** checks the required set and either calls the handler or records `'skipped'`.
+- **TypeScript** doesn't know which `<UserProvider>` has mounted. It can't predict whether `user` is present at handler-call-time from the static program alone.
+
+Hence the API picks safety: `conditions.user` is `User | undefined`, and the handler must narrow.
+
+```ts
+handler({ conditions, actions, check }) {
+  // ✓ Explicit narrow — TS knows conditions.user is User after this.
+  if (!conditions.user) return;
+  actions.greet?.({ name: conditions.user.name });
+
+  // ✓ check.is narrows internally (NonNullable in the predicate type).
+  if (check.is('user', u => u.isActive)) {
+    actions.notify?.({ userId: conditions.user.id });
+  }
+}
+```
+
+The builder API in V1.1 changes this — `createTrigger<S>().require(['user']).handle(ctx => ...)` types `ctx.conditions.user` as `User` without the guard. The runtime semantics don't change.
+
+### Actions: every action is optional because reactors may be absent
+
+A trigger doesn't *own* its reactors. Whether `showToast` actually has a registered handler depends on whether `<NotificationLayer>` is in the tree. Strict mode encodes that:
+
+```ts
+type ActionsCtx<A> = { readonly [K in keyof A]?: ActionFn<A[K]> } & { /* modifiers */ };
+```
+
+Every action key is optional. Call sites use optional chaining:
+
+```ts
+actions.showToast?.({ title: event.payload.author });
+actions.debounce(800).playSound?.();
+actions.throttle(2000).updateBadge?.(event.payload.channelId);
+```
+
+This is **not noise** — it's a useful runtime contract. The handler runs whether or not a reactor for `showToast` is mounted; nothing crashes when one isn't. You can read it as "fire this action *if* anyone is listening". Tests of trigger logic that don't render the UI take advantage of this: the handler runs fine with zero registered actions.
+
+The eslint rule `actions-optional-chaining` flags `actions.showToast(...)` without the `?.` so the pattern stays consistent.
+
+## `noUncheckedIndexedAccess` in practice
+
+When you turn this flag on, all array index lookups become `T | undefined`. Triggery's internal code is written for that — but your handler code can hit it too:
+
+```ts
+handler({ event }) {
+  const lines = event.payload.text.split('\n');
+  const first = lines[0];           // string | undefined under noUncheckedIndexedAccess
+  if (!first) return;
+  // …
+}
+```
+
+This is unrelated to Triggery — it's general TS hygiene — but it shows up often enough in handler code that it's worth mentioning. The fix is always a narrow, never a non-null assertion.
+
+## `exactOptionalPropertyTypes` and `void` events
+
+With `exactOptionalPropertyTypes: true`, the difference between `payload?: T` and `payload?: T | undefined` becomes visible. Triggery's `EventOf<S>` uses the first form:
+
+```ts
+type EventOf<S> = {
+  [K in EventKey<S>]: { readonly name: K; readonly payload: EventMap<S>[K] };
+}[EventKey<S>];
+```
+
+`payload` is **always** present on the discriminated-union member. For `void` events its value is `undefined` (the runtime stuffs `undefined` in there), but the property exists. This means:
+
+```ts
+events: { 'app:ready': void };
+
+handler({ event }) {
+  if (event.name === 'app:ready') {
+    // event.payload is `void` — i.e. you can't read fields off it.
+    // event.payload?.foo  → TS error: foo doesn't exist on void
+  }
+}
+```
+
+The right way to read a void event payload is to not read it. If your event has variants, model them as discriminated payloads, not as the absence of a payload.
+
+## `EmptyRecord` — the "no actions" case
+
+A trigger might have events and conditions but no actions — pure analytics, say. The TS shape of `actions` is then `{}` plus the modifier chain. There's a tiny gotcha with empty object types in TS that the library handles via an `EmptyRecord` alias:
+
+```ts title="From @triggery/core/types.ts"
+export type EmptyRecord = Record<string, never>;
+
+export type ActionMap<S> =
+  S['actions'] extends Record<string, unknown> ? S['actions'] : EmptyRecord;
+```
+
+`Record<string, never>` is the technically correct way to say "no keys allowed" — distinct from `{}` (which means "any non-null value"). Most users never type `EmptyRecord` directly; what matters is that the empty-actions case compiles and behaves as expected:
+
+```ts
+createTrigger<{
+  events: { 'analytics:event': { kind: string } };
+  // no conditions, no actions
+}>({
+  id: 'analytics',
+  events: ['analytics:event'],
+  handler({ event, actions }) {
+    // actions still has the modifier chain (debounce/throttle/defer)
+    // even though there are no action methods to chain into.
+    sendBeacon(event.payload);
+  },
+});
+```
+
+If you do need to name "schema with no actions" in a generic, `EmptyRecord` is the alias:
+
+```ts
+import type { EmptyRecord } from '@triggery/core';
+
+type AnalyticsSchema = {
+  events: { 'analytics:event': { kind: string } };
+  actions: EmptyRecord;
+};
+```
+
+## Alternatives to `as any`
+
+A few patterns where strict mode makes people reach for `as any`. Each has a safer alternative.
+
+### "Branding" without losing type safety
+
+Branded types (see [Schema typing → Branded ids](/guide/typescript/schema-typing/#branded-ids--protecting-cross-api-calls)) want a `string` to become a `ChannelId`. The natural urge is to write `as any`:
+
+```ts
+const id = stringFromSomewhere() as any as ChannelId;   // ✗
+```
+
+The right form goes through a constructor:
+
+```ts
+const channelId = (s: string): ChannelId => s as ChannelId;   // single `as`, single place
+
+const id = channelId(stringFromSomewhere());                  // ✓
+```
+
+Now the cast lives in one function. If validation ever shows up, that's where it goes.
+
+### Generic helper functions over schemas
+
+A test helper wants to accept "any trigger" and assert against its inspector. Don't reach for `as any`:
+
+```ts
+// ✗ Sledgehammer
+function expectFired(trigger: any, eventName: any) {
+  expect(trigger.inspect()?.eventName).toBe(eventName);
+}
+
+// ✓ Generic with the public types
+import type { EventKey, Trigger, TriggerSchema } from '@triggery/core';
+function expectFired<S extends TriggerSchema>(trigger: Trigger<S>, eventName: EventKey<S>) {
+  expect(trigger.inspect()?.eventName).toBe(eventName);
+}
+```
+
+The generic version preserves type info at the call site — `expectFired(messageTrigger, 'wrong-name')` is a TS error.
+
+### Narrowing on `event.name`
+
+When a trigger lists multiple events, you sometimes want to call a helper specific to one of them:
+
+```ts
+handler({ event }) {
+  // ✗ "I know this is the urgent variant"
+  showUrgent(event.payload as UrgentPayload);
+
+  // ✓ Discriminate
+  if (event.name === 'urgent-message') {
+    showUrgent(event.payload);  // event.payload is narrowed
+  }
+}
+```
+
+The discriminated union over `name` always narrows `payload` for you — that's the whole point of `EventOf<S>`.
+
+### "I just want the trigger to exist somewhere"
+
+If you ever feel the need to write `let trigger: Trigger<any>` because the schema is dynamic, you've stepped outside the typed surface and should reach for the **runtime internals** instead:
+
+```ts
+import type { Trigger, TriggerSchema } from '@triggery/core';
+
+function disable(trigger: Trigger<TriggerSchema>) {
+  trigger.disable();
+}
+```
+
+`Trigger<TriggerSchema>` is the maximally-generic type — it's what the runtime stores internally. It's not `any`; it's "any valid schema".
+
+## `useUnknownInCatchVariables` and async handlers
+
+The async handler pattern in Triggery interacts with `useUnknownInCatchVariables: true`:
+
+```ts
+async handler({ event, signal, actions }) {
+  try {
+    const res = await fetch(event.payload.url, { signal });
+    actions.show?.(await res.json());
+  } catch (err) {
+    // err is `unknown` under this flag
+    if (err instanceof DOMException && err.name === 'AbortError') return;
+    if (err instanceof Error) actions.reportError?.(err.message);
+    else actions.reportError?.(String(err));
+  }
+}
+```
+
+The runtime swallows handler errors and records `'errored'` in the inspector — you don't have to catch. But if you do, narrow on the variable; don't `as Error` it blindly.
+
+## When you actually do need to escape strictness
+
+Two cases. Both should be small.
+
+- **Wrapping a non-TS library that returns `any`.** Wrap once at the boundary; cast to a typed shape; everything downstream is strict.
+- **Test fixtures.** A `as unknown as User` for a deliberately incomplete fixture is fine — make sure it's in test code and not production.
+
+For everything else, the patterns above replace the cast.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Schema typing"
+    description="The TriggerSchema generic and the derived types this page assumes you know."
+    href="/guide/typescript/schema-typing/"
+  />
+  <LinkCard
+    title="Validation"
+    description="Pushing types one step further — runtime checks at producer boundaries."
+    href="/guide/typescript/validation/"
+  />
+  <LinkCard
+    title="Handlers"
+    description="The handler ctx — what each field's type is and how to read it under strict mode."
+    href="/guide/essentials/handlers/"
+  />
+  <LinkCard
+    title="Async handlers"
+    description="AbortSignal narrowing and the abort-aware pattern under useUnknownInCatchVariables."
+    href="/guide/async/async-handlers/"
+  />
+</CardGrid>

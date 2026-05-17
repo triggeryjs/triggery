@@ -1,0 +1,153 @@
+---
+title: createRuntime
+description: "Создание изолированного рантайма триггеров. Большинству приложений хватит одного; тестам, микрофронтендам и multi-tenant-приложениям нужно больше."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+`createRuntime` возвращает изолированный `Runtime` — контейнер, в котором живут триггеры, условия и действия для дерева компонентов. Большинство приложений создают один рантайм в `main.tsx` и пробрасывают его через `<TriggerRuntimeProvider>`. Если пропустить вызов полностью, Triggery использует лениво создаваемый рантайм по умолчанию через [`getDefaultRuntime`](/ru/api/core/get-default-runtime/).
+
+## Импорт
+
+```ts
+import { createRuntime } from '@triggery/core';
+```
+
+## Сигнатура
+
+```ts
+function createRuntime(options?: RuntimeOptions): Runtime;
+```
+
+## Опции
+
+| Параметр | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `inspector` | `boolean \| { dev?: boolean; prod?: boolean }` | DEV `true`, PROD `false` | Включить / выключить per-run инспектор. |
+| `inspectorBufferSize` | `number` | `50` | Размер кольцевого буфера инспектора. Игнорируется, если инспектор отключён. |
+| `middleware` | `readonly Middleware[]` | `[]` | Цепочка миддлвэров. |
+| `maxCascadeDepth` | `number` | `3` | Максимальная глубина каскада — `action → fireEvent → …`. Запуски глубже пропускаются со статусом `'overflow'`. |
+
+Полную форму смотри в [`RuntimeOptions`](/ru/api/core/types/runtime-options/).
+
+## Возвращает
+
+Объект [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts#L-Runtime). Методы, которыми пользуется большинство приложений:
+
+| Метод | Описание |
+|---|---|
+| `runtime.fire(event, payload)` | Диспатчит событие через планировщик. Возвращает void. |
+| `runtime.fireSync(event, payload)` | Диспатчит синхронно (минуя планировщик). Для тестов и бенчмарков. |
+| `runtime.subscribe(listener)` | Слушать каждый записанный запуск. Возвращает `RegistrationToken`. |
+| `runtime.getInspectorBuffer()` | Последние N снепшотов инспектора. |
+| `runtime.getTrigger(id)` | Найти зарегистрированный триггер. |
+| `runtime.graph()` | JSON-friendly снепшот реестра — используется CLI `triggery graph`. |
+| `runtime.dispose()` | Прервать все запуски в полёте и сбросить все регистрации. |
+
+Методы `register*` (`registerTrigger`, `registerCondition`, `registerAction`) тоже часть поверхности, но их за тебя вызывают биндинги.
+
+## Примеры
+
+### По умолчанию — один рантайм в корне
+
+```tsx
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import type { ComponentType } from 'react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+
+const runtime = createRuntime();
+
+declare const App: ComponentType;
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+### Изолированный рантайм на каждый тест
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+import { afterEach, beforeEach } from 'vitest';
+
+let runtime = createRuntime();
+
+beforeEach(() => {
+  runtime = createRuntime({ inspectorBufferSize: 100 });
+});
+afterEach(() => {
+  runtime.dispose();
+});
+```
+
+### Жёсткий лимит каскада
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  maxCascadeDepth: 1,   // refuse any indirect chain — action→event→trigger is enough
+});
+```
+
+### С миддлвэрами
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const logger: Middleware = {
+  name: 'logger',
+  onActionEnd({ triggerId, actionName, durationMs }) {
+    console.log(`[${triggerId}] ${actionName} ${durationMs.toFixed(2)}ms`);
+  },
+};
+
+const runtime = createRuntime({ middleware: [logger] });
+```
+
+### Инспектор явно выключен
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({ inspector: false });
+```
+
+Или по окружениям:
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  inspector: { dev: true, prod: false },
+});
+```
+
+## Замечания
+
+<Aside type="tip">
+Синглтон-рантайм по умолчанию подходит большинству приложений. Дополнительные рантаймы создавай только когда нужна реальная изоляция — параллельные тесты, микрофронтенды, разные тенанты в одной вкладке.
+</Aside>
+
+<Aside type="caution">
+Рантайм **не** безопасен для SSR в плане диспатчинга событий на сервере. `fire` — это no-op в SSR; биндинги детектят окружение и пропускают регистрации. Server-side диспатч — задача `@triggery/server` (V2).
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="getDefaultRuntime" description="Доступ (и ленивое создание) к глобальному синглтону." href="/ru/api/core/get-default-runtime/" />
+  <LinkCard title="setDefaultRuntime" description="Заменить синглтон — полезно в тестах." href="/ru/api/core/set-default-runtime/" />
+  <LinkCard title="Тип Runtime" description="Полная поверхность методов." href="https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts#L-Runtime" />
+  <LinkCard title="Руководство по рантайму" description="Нарративный разбор скоупов, изоляции, жизненного цикла." href="/ru/guide/essentials/runtime/" />
+</CardGrid>

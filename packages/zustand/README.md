@@ -60,6 +60,10 @@ useZustandCondition<T, S, K>(
 
 Works with both vanilla stores (`createStore`) and hook stores (`create`).
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/zustand/](https://triggeryjs.github.io/packages/zustand/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — exposes `Trigger<S>`.

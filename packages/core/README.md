@@ -186,6 +186,10 @@ The runtime is a plain object with a `Map`-based registry. It does not import Re
 
 The same `createTrigger({...})` declaration runs unchanged across all of those. Bindings only wire `useEvent` / `useCondition` / `useAction` to the host framework's lifecycle.
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/core/](https://triggeryjs.github.io/packages/core/).
+
 ## Related packages
 
 - [`@triggery/react`](https://www.npmjs.com/package/@triggery/react) — React bindings (`useEvent` / `useCondition` / `useAction`).

@@ -1,0 +1,41 @@
+---
+title: "Adapters"
+description: "State managers and event sources wrapped as Triggery conditions and events — official, framework-agnostic, ~30 lines each."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Adapters bridge your existing state manager or event source into Triggery without subscribing host components to updates. Each one is a thin hook that registers a condition or an event with the runtime.
+
+## State adapters
+
+| Package | Hook | Purpose |
+|---|---|---|
+| [`@triggery/zustand`](/packages/zustand/) ![npm](https://img.shields.io/npm/v/@triggery/zustand?label=&style=flat-square) | `useZustandCondition(trigger, name, store, selector)` | Expose a Zustand slice as a condition. |
+| [`@triggery/redux`](/packages/redux/) ![npm](https://img.shields.io/npm/v/@triggery/redux?label=&style=flat-square) | `useReduxCondition(trigger, name, store, selector)` | Expose a Redux selector as a condition. |
+| [`@triggery/jotai`](/packages/jotai/) ![npm](https://img.shields.io/npm/v/@triggery/jotai?label=&style=flat-square) | `useJotaiCondition(trigger, name, store, atom, selector?)` | Read a Jotai atom lazily. |
+| [`@triggery/mobx`](/packages/mobx/) ![npm](https://img.shields.io/npm/v/@triggery/mobx?label=&style=flat-square) | `useMobxCondition(trigger, name, () => observable)` | No dependency tracking on the host component. |
+| [`@triggery/reatom`](/packages/reatom/) ![npm](https://img.shields.io/npm/v/@triggery/reatom?label=&style=flat-square) | `useReatomCondition(trigger, name, atom, selector?)` | Reatom v3 (v1000+) atoms. |
+| [`@triggery/signals`](/packages/signals/) ![npm](https://img.shields.io/npm/v/@triggery/signals?label=&style=flat-square) | `useSignalCondition(trigger, name, signal, selector?)` | `@preact/signals-core`, `alien-signals`, any `peek()` / `.value` signal. |
+| [`@triggery/query`](/packages/query/) ![npm](https://img.shields.io/npm/v/@triggery/query?label=&style=flat-square) | `useQueryCondition(trigger, name, queryClient, queryKey, selector?)` | TanStack Query cache. |
+
+## Event-source adapters
+
+Pipe events from outside the React/Solid/Vue render tree into triggers.
+
+| Package | Hook | Purpose |
+|---|---|---|
+| [`@triggery/dom`](/packages/dom/) ![npm](https://img.shields.io/npm/v/@triggery/dom?label=&style=flat-square) | `useDomEvent`, `useResizeObserver`, `useIntersectionObserver` | Wire DOM events and observers to a `useEvent` emitter. |
+| [`@triggery/socket`](/packages/socket/) ![npm](https://img.shields.io/npm/v/@triggery/socket?label=&style=flat-square) | `useSocketIoEvent`, `useWebSocketEvent` | Wire `socket.io-client` or native WebSocket frames. |
+
+<Aside type="tip">
+Adapters are intentionally tiny — most are ~30 lines. If you want to support a state manager not on this list, copying one of the existing adapters (e.g. `@triggery/zustand`) is the fastest way to do it. PRs welcome.
+</Aside>
+
+<CardGrid>
+  <LinkCard title="Integrations" description="Build tools, ESLint, codemod, CLI, devtools." href="/ecosystem/integrations/" />
+  <LinkCard title="Showcase" description="Projects shipping Triggery in production." href="/ecosystem/showcase/" />
+  <LinkCard title="Conditions guide" description="The role adapters play in a scenario." href="/guide/essentials/conditions/" />
+</CardGrid>

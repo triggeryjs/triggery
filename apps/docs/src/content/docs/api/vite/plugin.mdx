@@ -1,0 +1,131 @@
+---
+title: "triggery (Vite plugin)"
+description: "Auto-discovers *.trigger.ts files and exposes them through `virtual:triggery-registry`."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+A Vite plugin that globs every `*.trigger.{ts,tsx,js,jsx}` file in the project at build time and generates a virtual module — `virtual:triggery-registry` — that imports all of them. Import the virtual module once at your app entry point and every trigger registers itself with the runtime automatically; no manual wiring, no per-file `import './foo.trigger'` lines.
+
+HMR-aware: editing an existing trigger file re-runs its `createTrigger(...)` call and the runtime's last-mount-wins replaces the old registration. Adding, removing, or renaming a trigger file invalidates the virtual module so the import list is rebuilt on the next request.
+
+## Import
+
+```ts
+import triggery from '@triggery/vite';
+// or
+import { triggery } from '@triggery/vite';
+```
+
+## Signature
+
+```ts
+function triggery(options?: TriggeryViteOptions): Plugin;
+
+type TriggeryViteOptions = {
+  readonly glob?: string | readonly string[];
+};
+```
+
+## Options
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `glob` | `string \| readonly string[]` | `'src/**/*.trigger.{ts,tsx,js,jsx}'` | Pattern(s) for trigger files. Resolved relative to the project root reported by Vite. |
+
+## Examples
+
+### Default — drop into vite.config
+
+```ts
+import { defineConfig } from 'vite';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [triggery()],
+});
+```
+
+Then in your app entry:
+
+```ts
+// src/main.tsx
+import 'virtual:triggery-registry';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+```
+
+### Custom glob
+
+```ts
+import { defineConfig } from 'vite';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [
+    triggery({
+      glob: 'src/features/**/*.trigger.ts',
+    }),
+  ],
+});
+```
+
+### Multiple globs
+
+```ts
+import { defineConfig } from 'vite';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [
+    triggery({
+      glob: ['src/**/*.trigger.ts', 'packages/*/src/**/*.trigger.ts'],
+    }),
+  ],
+});
+```
+
+### Typing the virtual module
+
+Add to a global `.d.ts` so TypeScript stops complaining about the bare-string import:
+
+```ts
+declare module 'virtual:triggery-registry' {
+  export {};
+}
+```
+
+## Notes
+
+<Aside type="tip">
+The virtual module is sorted alphabetically by file path — registration order is deterministic between builds and machines. The runtime's last-mount-wins is the tiebreaker if two triggers share an id (you should fix that, but it won't crash).
+</Aside>
+
+<Aside type="caution" title="Side-effect imports">
+Each glob match is imported for its **side effects**, not for any export. Make sure every `*.trigger.ts` file calls `createTrigger(...)` at module scope — lazy-init inside a function won't be picked up.
+</Aside>
+
+<Aside type="caution" title="Pre-bundle order">
+The plugin sets `enforce: 'pre'` so the virtual module resolves before user imports. If you stack plugins that also use `enforce: 'pre'`, the order is whatever Vite's dependency-graph resolves to — usually the order you list them in `plugins:` array.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="The constructor each `*.trigger.ts` file calls." href="/api/core/create-trigger/" />
+  <LinkCard title="createRuntime" description="Triggers register against the default runtime by default." href="/api/core/create-runtime/" />
+  <LinkCard title="Vite project layout guide" description="Conventions for organizing trigger files." href="/guide/getting-started/" />
+  <LinkCard title="CLI scaffold trigger" description="Generate a new `*.trigger.ts` from the terminal." href="/api/cli/create/" />
+</CardGrid>

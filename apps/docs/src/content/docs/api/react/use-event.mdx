@@ -1,0 +1,130 @@
+---
+title: useEvent
+description: "Return a stable, typed event emitter for a trigger. Identity stable across renders."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Returns a stable callback that fires a typed event on a trigger. Identity is preserved across renders, so passing it to `useEffect` dependency lists is safe.
+
+## Import
+
+```ts
+import { useEvent } from '@triggery/react';
+```
+
+## Signature
+
+```ts
+function useEvent<S extends TriggerSchema, K extends EventKey<S>>(
+  trigger: Trigger<S>,
+  eventName: K,
+): EventMap<S>[K] extends void
+  ? () => void
+  : (payload: EventMap<S>[K]) => void;
+```
+
+The return type is inferred from the trigger's schema. Void-payload events return a `() => void` emitter; otherwise the emitter takes the typed payload.
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `trigger` | `Trigger<S>` | The trigger returned by [`createTrigger`](/api/core/create-trigger/). |
+| `eventName` | `K extends EventKey<S>` | Must be one of the keys listed in `trigger`'s `events` schema and `events: [...]` array. |
+
+## Returns
+
+A stable emitter function:
+
+- `void` payload → `() => void`
+- Typed payload → `(payload: …) => void`
+
+The function is wrapped in `useCallback`, so its identity stays the same as long as `runtime` and `eventName` don't change.
+
+## Examples
+
+### Plain payload
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useEvent } from '@triggery/react';
+
+const chatTrigger = createTrigger<{
+  events: { 'new-message': { author: string; text: string } };
+}>({
+  id: 'chat',
+  events: ['new-message'],
+  handler() {},
+});
+
+function Chat() {
+  const fire = useEvent(chatTrigger, 'new-message');
+  return (
+    <button type="button" onClick={() => fire({ author: 'Alice', text: 'hi' })}>
+      simulate
+    </button>
+  );
+}
+```
+
+### Void payload
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useEvent } from '@triggery/react';
+
+const readyTrigger = createTrigger<{
+  events: { 'app:ready': void };
+}>({
+  id: 'app-ready',
+  events: ['app:ready'],
+  handler() {},
+});
+
+function Bootstrap() {
+  const ready = useEvent(readyTrigger, 'app:ready');
+  return <button onClick={() => ready()}>signal ready</button>;
+}
+```
+
+### Passing into another effect
+
+```tsx
+import { useEvent } from '@triggery/react';
+import { useEffect } from 'react';
+import { messageTrigger } from './triggers/message.trigger';
+
+function WebSocketAdapter({ socket }: { socket: WebSocket }) {
+  const fireMessage = useEvent(messageTrigger, 'new-message');
+
+  useEffect(() => {
+    socket.addEventListener('message', e => fireMessage(JSON.parse(e.data)));
+    return () => socket.removeEventListener('message', /* ... */ () => {});
+  }, [socket, fireMessage]); // ← stable identity means this effect re-binds rarely
+}
+```
+
+## Notes
+
+<Aside type="tip">
+Calling the emitter never re-renders the component. The runtime dispatches asynchronously via the configured scheduler (microtask by default).
+</Aside>
+
+<Aside>
+You can have multiple producers firing the same event from different components — Triggery doesn't care which one called. The handler sees `event.payload` typed identically.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="useCondition" description="Register a pull-only condition getter." href="/api/react/use-condition/" />
+  <LinkCard title="useAction" description="Register an action handler." href="/api/react/use-action/" />
+  <LinkCard title="Events guide" description="Narrative walkthrough — scheduling, batching, broadcast." href="/guide/essentials/events/" />
+  <LinkCard title="createNamedHooks" description="`useNewMessageEvent` shorthand." href="/api/react/create-named-hooks/" />
+</CardGrid>

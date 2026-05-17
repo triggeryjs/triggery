@@ -1,0 +1,265 @@
+---
+title: "Условия"
+description: "Pull-only снимки мира — что рантайм читает в момент отправки и никогда между ними."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+**Условие** — это кусочек состояния мира, в который обработчик может захотеть заглянуть, когда запускается. Компонент-провайдер регистрирует *геттер* под именем условия; когда триггер срабатывает, рантайм один раз вызывает геттер и фиксирует значение на оставшееся время прогона.
+
+Идея небольшая, но последствия у неё большие: **триггер пуллит состояние, провайдер его не пушит.** Никаких подписок, никаких перерендеров, никакого diff-трекинга. У Triggery нет реактивного графа — есть Map из функций `() => T`, которые вызываются ровно тогда, когда они нужны событию.
+
+## Объявляем условие
+
+Условия живут в карте `conditions` внутри схемы. Каждая запись отображает имя на тип значения, которое должен вернуть геттер:
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': { channelId: string; text: string } };
+  conditions: {
+    settings:        Settings;
+    activeChannelId: string | null;
+    currentUserId:   string;
+  };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    if (!conditions.settings) return;
+    if (event.payload.channelId === conditions.activeChannelId) return;
+
+    if (check.is('settings', (s) => s.notifications)) {
+      actions.showToast?.({ title: 'New message', body: event.payload.text });
+    }
+  },
+});
+```
+
+Три имени, три типа значения. Зарегистрированы ли они на момент отправки — отдельный вопрос; см. [шлюз `required`](#шлюз-required) ниже.
+
+## Регистрируем геттер
+
+Провайдеры регистрируют геттеры через хук биндинга. `useCondition` принимает триггер, имя условия, функцию-геттер и (в React) опциональный массив зависимостей с такой же семантикой, как у `useMemo`:
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/features/SettingsPanel.tsx"
+    import { useCondition } from '@triggery/react';
+    import { useState } from 'react';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function SettingsPanel() {
+      const [settings, setSettings] = useState({
+        sound: true, notifications: true, dnd: false,
+      });
+      // Рантайм вызовет `() => settings` только тогда, когда сработает 'new-message'.
+      useCondition(messageTrigger, 'settings', () => settings, [settings]);
+      // …UI для редактирования настроек
+    }
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/features/SettingsPanel.tsx"
+    import { useCondition } from '@triggery/solid';
+    import { createSignal } from 'solid-js';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function SettingsPanel() {
+      const [settings] = createSignal({ sound: true, notifications: true, dnd: false });
+      // Сигналы Solid сами по себе геттеры — передавай их напрямую.
+      useCondition(messageTrigger, 'settings', settings);
+    }
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```vue title="src/features/SettingsPanel.vue"
+    <script setup lang="ts">
+    import { useCondition } from '@triggery/vue';
+    import { ref } from 'vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    const settings = ref({ sound: true, notifications: true, dnd: false });
+    useCondition(messageTrigger, 'settings', () => settings.value);
+    </script>
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+Массив зависимостей работает ровно как у `useCallback` / `useMemo`: при изменении любой зависимости рантайм перечитает свежую замыкающую функцию. Сам геттер обёрнут в стабильный ref, поэтому перерендеры не перерегистрируют условие в рантайме.
+
+## Pull-only — что это значит на практике
+
+Геттер запускается **только в момент отправки события**. Конкретно:
+
+- Между состоянием провайдера и рантаймом не настраиваются никакие подписки.
+- Перерендеры провайдера *не* зовут геттер, *не* инвалидируют ничего, *не* уведомляют другие компоненты.
+- Триггер, который никогда не срабатывает, никогда не запросит значение. Дёшево.
+- Один и тот же обработчик, читающий `conditions.settings` дважды за прогон, увидит одно и то же значение. Прокси кеширует на прогон.
+
+Это и есть то свойство, которое отвязывает триггер от React-цикла рендеров. Слой тостов, панель настроек и список чатов могут жить рядом с триггером — и ни один из них не отрендерится, когда придёт сообщение.
+
+```text
+состояние провайдера меняется  →  работы у рантайма нет
+событие отправлено             →  для каждого подписанного триггера:
+                                    для каждого условия, которое читает обработчик:
+                                       вызвать getter() ровно один раз
+                                    запустить обработчик с зафиксированным снимком
+                                    задиспатчить действия
+```
+
+## Читаем условия внутри обработчика
+
+Каждое условие, к которому может обратиться обработчик, типизировано как `T | undefined`. Причина честная: пока не приехало builder API V1.1, TypeScript не умеет сузить тип на основе `required: [...]`. Поэтому есть три безопасных способа прочитать:
+
+```ts
+handler({ conditions, check }) {
+  // 1. Ручная проверка — нормально для одного-двух условий.
+  if (!conditions.settings) return;
+  if (!conditions.settings.notifications) return;
+  // conditions.settings теперь Settings (TS сузил).
+
+  // 2. `check.is` — типизированный предикат. Возвращает false, если условия нет.
+  if (!check.is('settings', (s) => s.notifications)) return;
+
+  // 3. `check.all` / `check.any` — мульти-условные предикаты (см. страницу Обработчики).
+  if (!check.all({ settings: (s) => s.notifications, currentUserId: () => true })) return;
+}
+```
+
+Используй [поле `required`](#шлюз-required) для случаев «обработчик бессмыслен без этого». Используй `check.is` для «обработчик должен пропуститься, если X не true». Они компонуются.
+
+## Шлюз `required`
+
+У условия, перечисленного в `required: [...]`, должен быть **хотя бы один зарегистрированный геттер** в момент отправки, иначе обработчик будет пропущен до запуска. Инспектор запишет запись `'skipped'` с reason `'missing-required-condition:<name>'`.
+
+```ts
+createTrigger<Schema>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],   // оба должны быть зарегистрированы
+  handler({ conditions }) {
+    // Мы знаем, что они есть в рантайме — но TS в V1 всё ещё видит `T | undefined`.
+  },
+});
+```
+
+Это и есть тот шлюз, который позволяет безопасно собирать сценарии. Если `<UserProvider>` ещё не смонтирован, события `'new-message'` приходят, получают записанный skip — и пользователь ничего не видит. Как только провайдер смонтируется, следующее событие отработает обработчик нормально. Провайдер может лежать в другой папке фичи, не в той, где триггер; триггер его не импортирует.
+
+В инспекторе это выглядит так:
+
+```text
+triggery/message-received/fire   status: 'skipped'   reason: 'missing-required-condition:currentUserId'
+```
+
+— точный сигнал, что что-то монтируется поздно или не монтируется вовсе.
+
+См. [Анатомия триггера → `required`](/ru/guide/essentials/trigger-anatomy/#required-optional) для полной механики.
+
+## Паттерн адаптера — обёртка над внешними сторами
+
+Значение из `useState` — это тривиальный геттер. Тот же паттерн работает для любого внешнего стора — Zustand, Redux, Jotai, MobX, Signals, TanStack Query. Пакеты-адаптеры делают это в ~30 строк: они синхронно читают из стора и отдают значение через `useCondition`.
+
+```tsx title="С @triggery/zustand"
+import { useStoreCondition } from '@triggery/zustand';
+import { useCurrentUserStore } from '../stores/user';
+import { messageTrigger } from '../triggers/message.trigger';
+
+function CurrentUserProvider() {
+  useStoreCondition(messageTrigger, 'currentUserId', useCurrentUserStore, (s) => s.id);
+  return null;
+}
+```
+
+Стор Zustand перерендеривает провайдер, когда его слайс меняется — но это уже дело провайдера, Triggery до этого нет дела. Рантайм всё равно вызовет `() => s.id` только в момент отправки, а закешированный селектор `useStore` отдаст последнее значение.
+
+Та же форма работает для [`@triggery/redux`](/ru/packages/redux/), [`@triggery/jotai`](/ru/packages/jotai/), [`@triggery/query`](/ru/packages/query/) и любого стора, который ты напишешь сам — см. [Адаптеры](/ru/packages/).
+
+## Владение по правилу last-mount-wins
+
+Что если два провайдера регистрируют одно и то же имя условия на одном и том же триггере? Рантайм держит обе регистрации на внутреннем стеке, причём **самая свежая** — наверху; именно её значение увидит обработчик.
+
+```tsx
+function ProviderA() {
+  useCondition(messageTrigger, 'currentUserId', () => 'alice');   // смонтирован первым
+  return null;
+}
+function ProviderB() {
+  useCondition(messageTrigger, 'currentUserId', () => 'bob');     // смонтирован вторым — побеждает
+  return null;
+}
+
+// Порядок монтирования: <ProviderA /> потом <ProviderB />.
+// Обработчик прочтёт conditions.currentUserId → 'bob'.
+// Когда <ProviderB /> размонтируется, на верх стека всплывёт 'alice' (pop).
+```
+
+Два намеренных следствия:
+
+1. **Тесты и оверрайды просты.** Тест монтирует провайдер с тестовым значением вторым — оно побеждает. Фиче-флаг переопределяет глобальный провайдер, монтируясь глубже в дереве.
+2. **StrictMode безопасен.** React 18 StrictMode в dev монтирует → размонтирует → монтирует. Стековая модель проглатывает это без ложных коллизий, потому что каждая регистрация стабильна.
+
+В DEV рантайм выдаёт один `console.warn` на пару `(triggerId, conditionName)`, когда приходит вторая живая регистрация:
+
+```text
+[triggery] multiple condition registrations for "currentUserId" on trigger "message-received" —
+last-mount-wins. To compose values from several sources, register through a single hook.
+```
+
+Это сигнал, что *возможно* что-то не так. Если last-mount-wins тебе нужен по делу (оверрайды, тесты) — игнорируй смело. См. [Владение](/ru/guide/architecture/ownership/) для полного обсуждения и паттернов композиции значений из нескольких источников.
+
+## Условия в скоупах
+
+По умолчанию условия регистрируются глобально. Оберни поддерево в `<TriggerScope id="...">`, и условия, зарегистрированные внутри, станут видны только тем триггерам, у которых `scope` совпадает:
+
+```tsx
+<TriggerScope id="chat">
+  <SettingsPanel />          {/* условие settings — видно только триггерам со scope='chat' */}
+  <ChatRoom />
+</TriggerScope>
+
+<TriggerScope id="settings-screen">
+  <SettingsPanel />          {/* тот же компонент, отдельная регистрация, изолировано */}
+</TriggerScope>
+```
+
+Два `<ChatRoom>` в двух скоупах работают с двумя независимыми условиями `settings`. Ключ скоупа — строка; матчить можно по тенанту, по роуту, по фиче-флагу. См. [Скоупы](/ru/guide/architecture/scopes/).
+
+## Общие паттерны
+
+**Условия — это существительные, а не действия.** `settings`, `currentUserId`, `cartTotal` — не `getSettings` или `loadCart`. Глагол неявно подразумевается в «прочитай это в момент отправки».
+
+**Одно условие на одно понятие.** Не упаковывай несвязанные значения в одно условие `appState` только потому, что они лежат в одном Zustand-сторе. Рантайму важно, зарегистрировано ли значение; смешение понятий делает список `required` нечестным.
+
+**Геттеры держи дешёвыми.** Они запускаются в момент отправки, и плохо ведущий себя геттер кинет исключение прямо в диспатч-петле. Не делай `fetch` из геттера. Не разжимай синхронно 3 МБ блоб. Если значение дорогое — мемоизуй его на уровне провайдера, а геттер пусть возвращает закешированный результат.
+
+**Используй `check.is` вместо вложенных `if`.** Короче, сам обрабатывает undefined-случай, а инспектор пишет запись в `snapshotKeys` только если условие реально читалось. Чище трейсы.
+
+<CardGrid>
+  <LinkCard
+    title="Действия"
+    description="Противоположный порт — каналы побочных эффектов, регистрируемые реакторами."
+    href="/ru/guide/essentials/actions/"
+  />
+  <LinkCard
+    title="Владение"
+    description="Last-mount-wins, несколько провайдеров, DEV warn-once, композиция источников."
+    href="/ru/guide/architecture/ownership/"
+  />
+  <LinkCard
+    title="Анатомия триггера"
+    description="Полная справка по createTrigger — включая шлюз required."
+    href="/ru/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Обработчики"
+    description="Разбор ctx — включая паттерны check.is / check.all / check.any."
+    href="/ru/guide/essentials/handlers/"
+  />
+</CardGrid>

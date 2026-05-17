@@ -1,0 +1,113 @@
+---
+title: "createCheck"
+description: "Build the check DSL bound to a conditions snapshot. Internal helper exported for advanced use."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Builds the `check` helper that handlers receive via `ctx.check`. The runtime wires this for you on every run — `createCheck` is exported only for the rare cases where you need the same predicate DSL outside the handler context (custom middleware, condition-based testing, devtools panels).
+
+`is`, `all` and `any` accept predicates over `NonNullable<C[K]>`. When a condition value is `undefined` or `null`, the predicate is never called and the result is `false` for that key.
+
+## Import
+
+```ts
+import { createCheck } from '@triggery/core';
+```
+
+## Signature
+
+```ts
+function createCheck<C extends Record<string, unknown>>(
+  conditions: C,
+): CheckCtx<C>;
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `conditions` | `Record<string, unknown>` | Snapshot map of condition values. Pass the same shape the runtime gives to handlers. |
+
+## Returns
+
+A [`CheckCtx`](/api/core/types/) object:
+
+| Method | Signature | Result |
+|---|---|---|
+| `is(key, predicate)` | `(key, value => boolean) => boolean` | `true` when the condition exists (non-null) and the predicate returns truthy. |
+| `all(map)` | `({ key: predicate, … }) => boolean` | Every listed condition must exist and pass its predicate. |
+| `any(map)` | `({ key: predicate, … }) => boolean` | At least one listed condition must exist and pass its predicate. |
+
+## Examples
+
+### Inside a handler (the common case)
+
+You normally use `ctx.check` instead of constructing your own:
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { ping: void };
+  conditions: { user: { active: boolean } | null; tenant: string | null };
+}>({
+  id: 'demo',
+  events: ['ping'],
+  handler({ check }) {
+    if (check.all({ user: u => u.active, tenant: t => t.length > 0 })) {
+      console.log('go');
+    }
+  },
+});
+```
+
+### Standalone (advanced — outside a handler)
+
+```ts twoslash
+import { createCheck } from '@triggery/core';
+
+const check = createCheck({
+  user:   { active: true,  name: 'Alice' } as { active: boolean; name: string } | null,
+  tenant: 'acme-corp'                       as string | null,
+});
+
+check.is('user', u => u.active);                 // true
+check.all({ user: u => u.active, tenant: t => t.length > 0 }); // true
+check.any({ user: u => !u.active });             // false
+```
+
+### Null safety
+
+```ts twoslash
+import { createCheck } from '@triggery/core';
+
+const check = createCheck({ user: null as { active: boolean } | null });
+
+// Predicate is never invoked when the value is null — no NPE risk.
+check.is('user', u => u.active); // false
+```
+
+## Notes
+
+<Aside type="tip">
+`check.is/all/any` carry a `NonNullable<C[K]>` narrowing in the predicate's parameter type — this is the workaround for V1's limitation that `required: [...]` does not narrow the `conditions` object inside the handler. Prefer `check` over manual null guards when readability allows it.
+</Aside>
+
+<Aside type="caution">
+`createCheck` builds a fresh DSL object on every call. The runtime already does this once per run; calling it again inside a hot loop adds avoidable allocation. For predicates evaluated outside handlers (e.g. middleware tests), reuse the returned object.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="The handler receives a `check` instance automatically." href="/api/core/create-trigger/" />
+  <LinkCard title="TriggerCtx" description="Full handler context type, including `check`." href="/api/core/types/trigger-ctx/" />
+  <LinkCard title="Conditions guide" description="When to read conditions directly vs through `check`." href="/guide/essentials/conditions/" />
+  <LinkCard title="Required limitation" description="Why `check` exists at all — V1 narrowing notes." href="/guide/essentials/trigger-anatomy/" />
+</CardGrid>

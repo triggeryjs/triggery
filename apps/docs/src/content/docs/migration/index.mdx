@@ -1,0 +1,16 @@
+---
+title: Migration
+description: "Move existing side-effect code to Triggery — from useEffect, Redux Saga, RTK listenerMiddleware and more."
+---
+
+Most Triggery adopters arrive carrying baggage: a `useEffect` everywhere, a saga or two, a few `listenerMiddleware` registrations. These pages explain how each source paradigm maps to `event → conditions → actions`, and where the codemod can do the boring part for you.
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard title="From useEffect" description="The basic mechanical mapping plus when not to migrate." href="/migration/from-useeffect/" />
+  <LinkCard title="From RTK listenerMiddleware" description="Codemod-assisted: one listener → one trigger." href="/migration/from-rtk-listener/" />
+  <LinkCard title="From Redux Saga" description="Map watcher sagas, takeLatest/takeEvery, race/all. Codemod stub coming in 1.0." href="/migration/from-redux-saga/" />
+  <LinkCard title="From redux-observable" description="Epics → triggers. Manual but mechanical." href="/migration/from-redux-observable/" />
+  <LinkCard title="vs xstate / saga / rxjs / effector / mobx" description="When to pick Triggery vs alternatives." href="/migration/comparison/" />
+</CardGrid>

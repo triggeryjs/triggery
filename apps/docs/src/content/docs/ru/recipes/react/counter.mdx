@@ -1,0 +1,66 @@
+---
+title: Счётчик
+description: "Самый простой возможный рецепт Triggery — одно событие, одно действие, по одному компоненту на каждое."
+sidebar:
+  order: 1
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+«Hello world» для Triggery. Две кнопки запускают события `increment`/`decrement`; компонент-счётчик реагирует через `useAction` и ререндерит сам себя. Больше ничего.
+
+<StackBlitzButton path="examples/vite-react-counter" label="Открыть в StackBlitz" />
+
+## Триггер
+
+```ts title="src/triggers/counter.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const counterTrigger = createTrigger<{
+  events:  { increment: void; decrement: void };
+  actions: { adjust: number };
+}>({
+  id: 'counter',
+  events: ['increment', 'decrement'],
+  handler({ event, actions }) {
+    actions.adjust?.(event.name === 'increment' ? 1 : -1);
+  },
+});
+```
+
+## Компоненты
+
+```tsx title="src/Counter.tsx"
+import { useAction, useEvent } from '@triggery/react';
+import { useState } from 'react';
+import { counterTrigger } from './triggers/counter.trigger';
+
+export function Counter() {
+  const [count, setCount] = useState(0);
+
+  const inc = useEvent(counterTrigger, 'increment');
+  const dec = useEvent(counterTrigger, 'decrement');
+
+  useAction(counterTrigger, 'adjust', delta => setCount(c => c + delta));
+
+  return (
+    <div>
+      <button onClick={() => dec()}>−</button>
+      <output>{count}</output>
+      <button onClick={() => inc()}>+</button>
+    </div>
+  );
+}
+```
+
+И это всё. Продьюсер и реактор тут просто живут в одном компоненте — но их можно и разнести, проводка останется той же. Смотри [Пайплайн уведомлений](/ru/recipes/react/notification-pipeline/), где их действительно приходится разделить.
+
+## Похожее
+
+<CardGrid>
+  <LinkCard title="Пайплайн уведомлений" description="Та же форма, но с тремя реакторами в трёх компонентах." href="/ru/recipes/react/notification-pipeline/" />
+  <LinkCard title="Тот же рецепт — Solid" href="/ru/recipes/solid/counter/" description="С createSignal от Solid." />
+  <LinkCard title="Тот же рецепт — Vue" href="/ru/recipes/vue/counter/" description="Версия на Composition API." />
+  <LinkCard title="Анатомия триггера" href="/ru/guide/essentials/trigger-anatomy/" description="Полный разбор конфига createTrigger." />
+</CardGrid>

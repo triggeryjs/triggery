@@ -1,0 +1,15 @@
+# Astro build output
+.astro/
+dist/
+
+# Local dev
+.cache/
+.netlify/
+.vercel/
+.env
+.env.production
+*.local
+
+# Node
+node_modules/
+*.log

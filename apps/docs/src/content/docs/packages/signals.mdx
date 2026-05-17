@@ -1,0 +1,98 @@
+---
+title: "@triggery/signals"
+description: "Signals adapter for Triggery — read a signal's value from a trigger condition without engaging signal-tracking on the host."
+sidebar:
+  order: 12
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Read a signal from a Triggery condition without engaging signal-tracking on the host component. Compatible with [`@preact/signals-core`](https://github.com/preactjs/signals), [`alien-signals`](https://github.com/stackblitz/alien-signals), and any structurally-similar signal exposing `peek()` or `.value`.
+
+[![npm](https://img.shields.io/npm/v/@triggery/signals?style=flat-square)](https://www.npmjs.com/package/@triggery/signals)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/signals?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/signals)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/signals @preact/signals-core" />
+
+Peer deps: `react >= 18.0.0`. The signals library is your choice — `@preact/signals-core` and `alien-signals` both work.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `useSignalCondition(trigger, name, signal, selector?)` | Register a signal-backed condition. Prefers `peek()`, falls back to `.value`. |
+
+## Quick example
+
+```tsx
+import { signal } from '@preact/signals-core';
+import { createTrigger } from '@triggery/core';
+import { useSignalCondition } from '@triggery/signals';
+
+const settings = signal({ sound: true, notifications: true });
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string } };
+  conditions: { settings: { sound: boolean; notifications: boolean } };
+  actions: { showToast: { body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({ body: event.payload.text });
+  },
+});
+
+function SettingsBridge() {
+  useSignalCondition(messageTrigger, 'settings', settings);
+  return null;
+}
+```
+
+With a projection selector:
+
+```ts
+useSignalCondition(messageTrigger, 'settings', profile, (p) => p.settings);
+```
+
+## How it works
+
+Pull-only: the signal is read **only** when a trigger fires. The adapter prefers `peek()` (no dependency tracking) and falls back to `.value` if `peek` is missing. Either way, no subscriber is registered against the signal, so the host component never re-renders on signal updates.
+
+If a component also needs to render the signal, use `useSignal()` from `@preact/signals-react` or the equivalent in your signal library — the two paths are orthogonal.
+
+## API
+
+```ts
+useSignalCondition<V, S, K>(
+  trigger: Trigger<S>,
+  name: K,
+  signal: { peek?(): V; readonly value?: V },
+  selector?: (value: V) => ConditionMap<S>[K],
+): void
+```
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Exposes Trigger<S>." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="useSignalCondition is a React hook." href="/packages/react/" />
+  <LinkCard title="@triggery/reatom" description="Alternative adapter for Reatom atoms." href="/packages/reatom/" />
+  <LinkCard title="@triggery/jotai" description="Alternative adapter for Jotai atoms." href="/packages/jotai/" />
+  <LinkCard title="@triggery/mobx" description="Alternative adapter for MobX observables." href="/packages/mobx/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/signals)
+- [npm](https://www.npmjs.com/package/@triggery/signals)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/signals/CHANGELOG.md)

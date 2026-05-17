@@ -1,0 +1,98 @@
+---
+title: "@triggery/reatom"
+description: "Reatom adapter for Triggery — read an atom's value from a trigger condition without subscribing the host component."
+sidebar:
+  order: 11
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Read a [Reatom](https://www.reatom.dev) atom or computed from a Triggery condition. Pull-only: the atom is called only when a trigger fires, no subscriber is registered against it.
+
+[![npm](https://img.shields.io/npm/v/@triggery/reatom?style=flat-square)](https://www.npmjs.com/package/@triggery/reatom)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/reatom?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/reatom)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/reatom @reatom/core" />
+
+Peer deps: `react >= 18.0.0`, `@reatom/core ^1000 || ^1001`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `useReatomCondition(trigger, name, atom, selector?)` | Register a Reatom-backed condition. Works with any callable Reatom primitive — atoms, computeds, derived values. |
+
+## Quick example
+
+```tsx
+import { atom } from '@reatom/core';
+import { createTrigger } from '@triggery/core';
+import { useReatomCondition } from '@triggery/reatom';
+
+type Settings = { sound: boolean; notifications: boolean };
+
+const $settings = atom<Settings>({ sound: true, notifications: true });
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({ body: event.payload.text });
+  },
+});
+
+function SettingsBridge() {
+  useReatomCondition(messageTrigger, 'settings', $settings);
+  return null;
+}
+```
+
+With a projection selector:
+
+```ts
+useReatomCondition(messageTrigger, 'settings', $profile, (p) => p.settings);
+```
+
+## How it works
+
+Pull-only: the atom is called (`atom()`) **only** when a trigger fires. No subscriber is registered, so the host component never re-renders on atom updates. Use Reatom's own React bindings (`reatomComponent`, `useAtom`) in components that need to render the value.
+
+## API
+
+```ts
+useReatomCondition<V, S, K>(
+  trigger: Trigger<S>,
+  name: K,
+  atom: () => V,
+  selector?: (value: V) => ConditionMap<S>[K],
+): void
+```
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Exposes Trigger<S>." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="useReatomCondition is a React hook." href="/packages/react/" />
+  <LinkCard title="@triggery/jotai" description="Alternative adapter for atom-shaped state." href="/packages/jotai/" />
+  <LinkCard title="@triggery/signals" description="Alternative adapter for signal-shaped state." href="/packages/signals/" />
+  <LinkCard title="@triggery/zustand" description="Adapter for store-shaped state." href="/packages/zustand/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/reatom)
+- [npm](https://www.npmjs.com/package/@triggery/reatom)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/reatom/CHANGELOG.md)

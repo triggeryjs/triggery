@@ -1,0 +1,91 @@
+---
+title: "@triggery/socket"
+description: "Сокет-адаптеры для Triggery — направляй события socket.io или сообщения нативного WebSocket в триггеры."
+sidebar:
+  order: 15
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Направляй события socket.io или сообщения нативного WebSocket в события Triggery. Два хука одной формы, оба безопасны для StrictMode — подключение и отключение через `useEffect`.
+
+[![npm](https://img.shields.io/npm/v/@triggery/socket?style=flat-square)](https://www.npmjs.com/package/@triggery/socket)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/socket?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/socket)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/socket" />
+
+Peer-зависимости: `react >= 18.0.0`. Нативный конструктор `WebSocket` используется напрямую, когда нужно, — никаких дополнительных зависимостей.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `useSocketIoEvent(trigger, eventName, socket, socketEventName, options?)` | Пробрасывает событие [`socket.io-client`](https://socket.io) в событие триггера. Поддерживает variadic-аргументы. |
+| `useWebSocketEvent(trigger, eventName, ws, wsEvent, options?)` | Пробрасывает событие нативного `WebSocket` (`'message'`, `'open'`, `'close'`, `'error'`, кастомное). |
+
+## Быстрый пример
+
+### socket.io
+
+```tsx
+import { io } from 'socket.io-client';
+import { useSocketIoEvent } from '@triggery/socket';
+
+const socket = io('https://example.com');
+
+function MessageBridge() {
+  useSocketIoEvent(messageTrigger, 'new-message', socket, 'message');
+  return null;
+}
+```
+
+С variadic-аргументами:
+
+```ts
+useSocketIoEvent(messageTrigger, 'new-message', socket, 'msg', {
+  mapPayload: (from, text) => ({ from, text }),
+});
+```
+
+### Нативный WebSocket
+
+```ts
+import { useWebSocketEvent } from '@triggery/socket';
+
+const ws = new WebSocket('wss://example.com');
+
+function MessageBridge() {
+  useWebSocketEvent(messageTrigger, 'new-message', ws, 'message', {
+    mapPayload: (e) => JSON.parse((e as MessageEvent).data),
+  });
+  return null;
+}
+```
+
+`wsEvent` принимает любую строку — типизирован как `'message' | 'open' | 'close' | 'error'`, но расширяем.
+
+## Как это работает
+
+Оба хука подключаются в `useEffect` (commit-фаза, безопасно для StrictMode) и отключаются при unmount или изменении входных параметров. Если `socket` / `ws` равны `null` или `undefined`, хук — no-op, пока ты не передашь соединение; удобно, когда сокет создаётся асинхронно.
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Экспортирует Trigger<S>." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="Это React-хуки." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/dom" description="Альтернативный источник событий: DOM-события, ResizeObserver, IntersectionObserver." href="/ru/packages/dom/" />
+  <LinkCard title="@triggery/query" description="Сочетай события сокета с чтением кеша TanStack Query." href="/ru/packages/query/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/socket)
+- [npm](https://www.npmjs.com/package/@triggery/socket)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/socket/CHANGELOG.md)

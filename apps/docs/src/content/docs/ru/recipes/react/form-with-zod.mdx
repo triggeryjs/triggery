@@ -1,0 +1,248 @@
+---
+title: "Валидация на границе продьюсера через Zod"
+description: "Валидируй payload событий там, где они входят в триггер — один раз, на границе продьюсера — через zod (или любой валидатор Standard Schema)."
+sidebar:
+  order: 10
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Payload события у триггера типизирован на этапе компиляции, но runtime-данные — отправки форм, URL-параметры, фреймы WebSocket — приходят неструктурированными. Рекомендуемый паттерн Triggery: валидируй **на границе продьюсера** и запускай только то, что прошло проверку. Обработчик триггера тогда видит полностью типизированный, проверенный в рантайме payload. Этот рецепт показывает идиому и упаковывает её в маленький хелпер `useValidatedEvent`, чтобы каждый продьюсер в приложении был однострочником.
+
+<StackBlitzButton path="examples/vite-react-form-zod" label="Открыть в StackBlitz" />
+
+## Сценарий
+
+Форма «создать счёт» отправляет произвольные данные формы. Мы хотим:
+
+1. **Определить одну zod-схему** под payload события.
+2. **Валидировать до вызова** — если не прошло, показать ошибки в форме, до триггера дело не дойдёт.
+3. **Запустить типизированное событие** с распарсенным (и, возможно, преобразованным) payload'ом.
+4. **Обработчик триггера** видит полностью типизированное значение — без `as`, без `??`, без защитных проверок.
+
+## Структура файлов
+
+<FileTree>
+- src/
+  - lib/
+    - **useValidatedEvent.ts** хелпер
+  - triggers/
+    - invoice.trigger.ts
+  - features/
+    - invoice/
+      - InvoiceForm.tsx продьюсер и схема
+      - InvoiceReactor.tsx пишет в API при успехе
+</FileTree>
+
+## 1. Хелпер
+
+Маленькая обёртка над `useEvent`. Принимает валидатор [Standard Schema](https://standardschema.dev/) — zod, valibot, arktype, любой реализующий спецификацию — и возвращает `(input) => Result`, где `Result` — либо `{ ok: true; data }`, либо `{ ok: false; issues }`. При успехе запускает событие с распарсенным значением.
+
+```ts title="src/lib/useValidatedEvent.ts"
+import type { EventKey, EventMap, Trigger, TriggerSchema } from '@triggery/core';
+import { useEvent } from '@triggery/react';
+import { useCallback } from 'react';
+
+// Tiny subset of the Standard Schema interface — enough for our purposes.
+type StandardSchema<Out> = {
+  readonly '~standard': {
+    readonly validate: (input: unknown) =>
+      | { value: Out; issues?: undefined }
+      | { issues: readonly { message: string; path?: readonly (PropertyKey | { key: PropertyKey })[] }[] }
+      | Promise<unknown>;
+  };
+};
+
+export type ValidationResult<T> =
+  | { ok: true;  data: T }
+  | { ok: false; issues: readonly { message: string; path?: readonly (PropertyKey | { key: PropertyKey })[] }[] };
+
+export function useValidatedEvent<
+  S extends TriggerSchema,
+  K extends EventKey<S>,
+>(trigger: Trigger<S>, eventName: K, schema: StandardSchema<EventMap<S>[K]>) {
+  const fire = useEvent(trigger, eventName);
+
+  return useCallback(
+    (input: unknown): ValidationResult<EventMap<S>[K]> => {
+      const out = schema['~standard'].validate(input);
+
+      if (out instanceof Promise) {
+        // For brevity: keep the helper synchronous. Most schemas (zod/valibot)
+        // run sync unless you opt into async refinements.
+        throw new Error('useValidatedEvent: async schemas are not supported');
+      }
+
+      if ('issues' in out && out.issues) {
+        return { ok: false, issues: out.issues };
+      }
+      const data = (out as { value: EventMap<S>[K] }).value;
+      // Strong assertion: zod's output is the trigger's event payload type.
+      (fire as (payload: EventMap<S>[K]) => void)(data);
+      return { ok: true, data };
+    },
+    [fire, schema],
+  );
+}
+```
+
+Всё — меньше 30 строк, типобезопасно от и до. Продьюсер вызывает один раз, триггер видит только проверенные payload'ы.
+
+<Aside type="tip">
+Хелпер принимает *любой* валидатор Standard Schema — один и тот же вызов работает для zod, valibot, arktype или твоего собственного. Если в проекте принят один — просто заинлайнь тип.
+</Aside>
+
+## 2. Триггер
+
+Обработчик считает `event.payload` полностью типизированным и чистым — без догадок.
+
+```ts title="src/triggers/invoice.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type Invoice = {
+  customer:    string;
+  amountCents: number;
+  dueDate:     string;       // ISO date
+  note?:       string;
+};
+
+export const invoiceTrigger = createTrigger<{
+  events: {
+    'invoice:submit': Invoice;
+  };
+  actions: {
+    saveInvoice: Invoice;
+  };
+}>({
+  id: 'invoice-submit',
+  events: ['invoice:submit'],
+  concurrency: 'queue',
+  handler({ event, actions }) {
+    actions.saveInvoice?.(event.payload);
+  },
+});
+```
+
+`concurrency: 'queue'` гарантирует, что если пользователь зажмёт submit, сохранения пойдут по очереди, по одному.
+
+## 3. Продьюсер (форма и схема)
+
+Схема лежит *рядом с формой*, где и проходит граница. Форма вызывает `submit(formData)`, получает `{ ok, data | issues }` и рендерит результат.
+
+```tsx title="src/features/invoice/InvoiceForm.tsx"
+import { useState, type FormEvent } from 'react';
+import { z } from 'zod';
+import { invoiceTrigger } from '../../triggers/invoice.trigger';
+import { useValidatedEvent } from '../../lib/useValidatedEvent';
+
+const InvoiceSchema = z.object({
+  customer:    z.string().min(1, 'Customer required'),
+  amountCents: z.coerce.number().int().positive('Amount must be > 0'),
+  dueDate:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
+  note:        z.string().max(280).optional(),
+});
+
+export function InvoiceForm() {
+  const submit = useValidatedEvent(invoiceTrigger, 'invoice:submit', InvoiceSchema);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const result = submit({
+      customer:    fd.get('customer'),
+      amountCents: fd.get('amountCents'),
+      dueDate:     fd.get('dueDate'),
+      note:        fd.get('note') || undefined,
+    });
+
+    if (result.ok) {
+      setErrors({});
+      e.currentTarget.reset();
+      return;
+    }
+
+    setErrors(
+      Object.fromEntries(
+        result.issues.map(i => {
+          const key = i.path?.[0];
+          const field = typeof key === 'object' && key !== null && 'key' in key ? String(key.key) : String(key ?? '_');
+          return [field, i.message];
+        }),
+      ),
+    );
+  }
+
+  return (
+    <form onSubmit={onSubmit}>
+      <label>
+        Customer
+        <input name="customer" />
+        {errors.customer && <em role="alert">{errors.customer}</em>}
+      </label>
+      <label>
+        Amount (cents)
+        <input name="amountCents" inputMode="numeric" />
+        {errors.amountCents && <em role="alert">{errors.amountCents}</em>}
+      </label>
+      <label>
+        Due date
+        <input name="dueDate" placeholder="YYYY-MM-DD" />
+        {errors.dueDate && <em role="alert">{errors.dueDate}</em>}
+      </label>
+      <label>
+        Note
+        <textarea name="note" maxLength={280} />
+      </label>
+      <button type="submit">Create invoice</button>
+    </form>
+  );
+}
+```
+
+Обработчик триггера никогда не увидит невалидный `amountCents`, отсутствующий `customer` или кривой `dueDate`. Меняя схему, ты меняешь ровно один файл.
+
+## 4. Реактор
+
+```tsx title="src/features/invoice/InvoiceReactor.tsx"
+import { useAction } from '@triggery/react';
+import { invoiceTrigger, type Invoice } from '../../triggers/invoice.trigger';
+
+async function postInvoice(invoice: Invoice) {
+  const res = await fetch('/api/invoices', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(invoice),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export function InvoiceReactor() {
+  useAction(invoiceTrigger, 'saveInvoice', async invoice => {
+    await postInvoice(invoice);
+  });
+
+  return null;
+}
+```
+
+## Почему валидировать на продьюсере
+
+Есть три места, где *можно* валидировать: продьюсер (до вызова), внутри обработчика триггера или внутри action.
+
+**Валидация на границе продьюсера — правильный дефолт**:
+
+- Схема лежит *рядом* с формой — единственным местом, где вход неструктурирован.
+- Ошибки остаются UI-формой (вернуть issues в форму) вместо runtime-исключений.
+- Тип payload'а у события *честный* — обработчикам не нужно защищаться от мусора, и discriminated union на `event.name` сохраняет смысл.
+- Добавление новых продьюсеров под то же событие (другая форма, CLI, deep link) означает написать — и переиспользовать — ровно одну схему на событие.
+
+Валидация *внутри* триггера смешивает «корректные ли это данные?» (зона продьюсера) с «что с этим делать?» (доменная зона). Так делать не надо.
+
+## Варианты и см. также
+
+<CardGrid>
+  <LinkCard title="Границы владения" href="/ru/guide/architecture/ownership/" description="Почему валидация принадлежит продьюсеру, а не обработчику." />
+  <LinkCard title="useEvent" href="/ru/api/react/use-event/" description="Хук, который оборачивает этот рецепт." />
+</CardGrid>

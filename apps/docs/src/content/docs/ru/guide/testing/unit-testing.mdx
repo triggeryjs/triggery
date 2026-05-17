@@ -1,0 +1,470 @@
+---
+title: "Модульные тесты"
+description: "Тестируй триггер в изоляции — без React-дерева, без DOM, без jsdom. Только изолированный рантайм, подменённые условия, подменённые действия и проверка побочных эффектов."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Обработчик триггера — почти чистая функция от payload события, снимка условий и набора обработчиков действий. Именно поэтому Triggery существует — и именно поэтому тесты на триггеры короткие, быстрые и фреймворк-агностические. Ты ничего не рендеришь. Не ждёшь коммита эффекта. Не подделываешь `<Provider>`. Ты собираешь крошечный рантайм, подменяешь порты, отправляешь событие, проверяешь, что было вызвано.
+
+Эта страница покрывает поверхность модульного тестирования в [`@triggery/testing`](/ru/packages/testing/): `createTestRuntime`, `mockCondition`, `mockAction`, `fireSync` против `fire` + `flushMicrotasks` и инспектор как цель проверок.
+
+## Установка
+
+```sh title="Add the testing kit as a dev dependency"
+pnpm add -D @triggery/testing
+```
+
+У пакета нет runtime-зависимостей кроме `@triggery/core` (он у тебя уже есть). Работает одинаково в Vitest, Jest с ESM, `node:test` и `bun:test` — никакие глобалы тест-раннеров не трогаются.
+
+## Форма теста триггера
+
+```ts title="src/triggers/__tests__/message.test.ts"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, test, vi } from 'vitest';
+
+test('shows a toast when notifications are on', () => {
+  // 1. Isolated runtime — no global state.
+  const rt = createTestRuntime();
+
+  // 2. Define the trigger against that runtime (note the second arg).
+  const trigger = createTrigger<{
+    events:     { 'new-message': { author: string; text: string } };
+    conditions: { settings: { notifications: boolean } };
+    actions:    { showToast: { title: string; body: string } };
+  }>(
+    {
+      id: 'message-received',
+      events: ['new-message'],
+      required: ['settings'],
+      handler({ event, conditions, actions }) {
+        if (!conditions.settings?.notifications) return;
+        actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+      },
+    },
+    rt,
+  );
+
+  // 3. Mock the ports.
+  rt.mockCondition(trigger, 'settings', { notifications: true });
+  const showToast = vi.fn();
+  rt.mockAction(trigger, 'showToast', showToast);
+
+  // 4. Fire and assert.
+  rt.fireSync('new-message', { author: 'Alice', text: 'hi' });
+  expect(showToast).toHaveBeenCalledExactlyOnceWith({ title: 'Alice', body: 'hi' });
+});
+```
+
+Четыре строки настройки, одна строка действия, две строки проверок. Это вся форма. Всё ниже — вариации.
+
+## `createTestRuntime` — изолированный рантайм на тест
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+```
+
+`createTestRuntime(options?)` оборачивает `createRuntime` из `@triggery/core` и добавляет три тестовых метода: `mockCondition`, `mockAction`, `flushMicrotasks`. Всё остальное из публичного API `Runtime` доступно — `fire`, `fireSync`, `subscribe`, `getInspectorBuffer`, `graph`, `dispose`.
+
+Ключевое здесь — **изоляция**. Два тестовых рантайма не делят ничего: ни триггеров, ни индекса событий, ни буфера инспектора. Объяви триггер против `rtA`, отправь событие в `rtB` — триггер не запустится:
+
+```ts title="Triggers do not leak across test runtimes"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, test, vi } from 'vitest';
+
+test('isolated', () => {
+  const rtA = createTestRuntime();
+  const rtB = createTestRuntime();
+  const log = vi.fn();
+
+  createTrigger<{ events: { tick: number }; actions: { log: number } }>(
+    {
+      id: 'iso',
+      events: ['tick'],
+      handler: ({ event, actions }) => actions.log?.(event.payload),
+    },
+    rtA,
+  );
+  rtA.registerAction('iso', 'log', log);
+
+  rtB.fireSync('tick', 1);
+  expect(log).not.toHaveBeenCalled();
+
+  rtA.fireSync('tick', 7);
+  expect(log).toHaveBeenCalledExactlyOnceWith(7);
+});
+```
+
+Поэтому в тестах всегда передавай рантайм вторым аргументом в `createTrigger`. Вызов `createTrigger(config)` без него уходит в `getDefaultRuntime()`, который **является** глобальным синглтоном — и течёт между тестами.
+
+<Aside type="caution">
+Опция `triggers` в `createTestRuntime({ triggers: [...] })` зарезервирована для V1.1 (сокращение пред-регистрации). В V1 передавай рантайм в `createTrigger` вторым аргументом — это единственный поддерживаемый способ.
+</Aside>
+
+### Опции
+
+`createTestRuntime` принимает те же `RuntimeOptions`, что и `createRuntime`:
+
+```ts
+const rt = createTestRuntime({
+  middleware: [tracingMiddleware],
+  maxCascadeDepth: 5,
+  inspectorBufferSize: 200,
+  inspector: true, // force on; default already on in DEV
+});
+```
+
+Для большинства тестов дефолтов хватит. Увеличь `inspectorBufferSize`, если проверяешь длинные последовательности. Принудительно поставь `inspector: true`, если твой тест-раннер по какой-то причине ставит `NODE_ENV=production` — без этого `getInspectorBuffer()` вернёт пустой массив.
+
+## `mockCondition` — подложи снимок
+
+```ts
+rt.mockCondition(trigger, 'name', valueOrGetter);
+```
+
+Используй там, где обычно работал бы `useCondition`. Две формы:
+
+```ts title="Plain value — the runtime wraps it as a getter"
+rt.mockCondition(trigger, 'settings', { notifications: true, sound: false });
+```
+
+```ts title="Zero-argument getter — useful for dynamic values"
+let counter = 0;
+rt.mockCondition(trigger, 'threshold', () => ++counter);
+
+rt.fireSync('tick', 0);
+rt.fireSync('tick', 0);
+// counter incremented on each fire — handler sees 1, then 2.
+```
+
+Правило обёртки: если передаёшь функцию с `arity === 0`, она трактуется как геттер напрямую. Если передаёшь что-то ещё — включая функцию с параметрами — она трактуется как значение и оборачивается в `() => valueOrGetter`. Запасной выход для случая «значение условия само — функция без аргументов»: передай явный геттер `() => myFn`.
+
+`mockCondition` возвращает `RegistrationToken` с методом `unregister()`, ровно как `registerCondition`. Используй его, чтобы тестировать замену в середине запуска:
+
+```ts title="Replace a condition mid-test"
+const tok = rt.mockCondition(trigger, 'settings', { notifications: true });
+rt.fireSync('msg', payload);
+expect(showToast).toHaveBeenCalledOnce();
+
+tok.unregister();
+rt.mockCondition(trigger, 'settings', { notifications: false });
+rt.fireSync('msg', payload);
+expect(showToast).toHaveBeenCalledOnce(); // still one
+```
+
+## `mockAction` — зарегистрируй обработчик побочного эффекта
+
+```ts
+rt.mockAction(trigger, 'name', handler);
+```
+
+`handler` — обычно `vi.fn()` (или `jest.fn()` / голое замыкание с побочными эффектами, которые потом проверишь). Вызовы `actions.name?.(payload)` триггера попадают прямо в твой обработчик.
+
+```ts title="Vitest"
+import { vi } from 'vitest';
+
+const playSound = vi.fn();
+rt.mockAction(trigger, 'playSound', playSound);
+
+rt.fireSync('new-message', { /* ... */ });
+
+expect(playSound).toHaveBeenCalledWith('beep');
+expect(playSound).toHaveBeenCalledTimes(1);
+```
+
+```ts title="Plain closures — no spy library"
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+test('plays a beep', () => {
+  const calls: string[] = [];
+  rt.mockAction(trigger, 'playSound', (sound) => { calls.push(sound); });
+
+  rt.fireSync('new-message', { /* ... */ });
+  assert.deepEqual(calls, ['beep']);
+});
+```
+
+Как и `mockCondition`, возвращает токен. Рантайм держит стек регистраций по имени, побеждает самая свежая — поэтому регистрация второй подмены для того же действия прозрачно заменяет первую (а её снятие возвращает к предыдущей).
+
+## Отправка событий: `fireSync` против `fire`
+
+У рантайма два режима срабатывания, и твой тест выбирает тот, что соответствует продакшен-режиму триггера.
+
+### `fireSync` — в обход планировщика
+
+```ts
+rt.fireSync('new-message', payload);
+expect(showToast).toHaveBeenCalled(); // already true
+```
+
+`fireSync` диспатчит обработчики в том же кадре вызова, до возврата `fireSync`. Никакой микротаски, никаких `await`. Используй для:
+
+- Синхронных обработчиков (по умолчанию).
+- Тестов горячего пути, где нужен детерминизм стека вызовов.
+- Воспроизведения «срабатывания изнутри действия» — каскада в одном тике.
+
+### `fire` + `flushMicrotasks` — через планировщик
+
+```ts
+rt.fire('new-message', payload);
+expect(showToast).not.toHaveBeenCalled(); // still queued
+
+await rt.flushMicrotasks();
+expect(showToast).toHaveBeenCalled();
+```
+
+`fire` ставит диспатч в планировщик микротасок — тот же путь, что и в продакшен-коде. Два вызова `fire` в одном тике батчатся в один сток микротасок. Используй для тестов:
+
+- Батчинга микротасок (два быстрых `fire` должны оба отработать до следующей макротаски).
+- Чего-то, что реально зависит от планировщика — порядок, батчинг, опция расписания `'sync'`.
+
+`flushMicrotasks` — это `await Promise.resolve()` дважды; даёт запланированным обработчикам отработать, включая последующие микротаски. После его резолва проверки безопасны.
+
+<Aside type="tip">
+Смесь `fire` и `await rt.flushMicrotasks()` ближе к продакшену — но `fireSync` короче, надёжнее, и его обычно и хотят модульные тесты. Тянись за `fire`, когда специально тестируешь поведение планировщика.
+</Aside>
+
+## Async-проверки
+
+Для async-обработчика — возвращающего `Promise` — нужно дать ему отстояться. Тот же паттерн `flushMicrotasks` работает, с дополнительными раундами, если обработчик сам что-то awaits:
+
+```ts title="Async handler"
+const trigger = createTrigger<{
+  events: { fetch: { url: string } };
+  actions: { onData: unknown };
+}>(
+  {
+    id: 'fetcher',
+    events: ['fetch'],
+    async handler({ event, actions, signal }) {
+      const res = await fetch(event.payload.url, { signal });
+      if (signal.aborted) return;
+      actions.onData?.(await res.json());
+    },
+  },
+  rt,
+);
+
+rt.mockAction(trigger, 'onData', onData);
+rt.fire('fetch', { url: '/api/x' });
+
+// Wait for the handler's internal awaits — one for fetch, one for res.json().
+await new Promise((r) => setTimeout(r, 0));
+expect(onData).toHaveBeenCalled();
+```
+
+Для детерминированного тайминга подменяй `fetch` (MSW, `vi.fn()`, замыкание), чтобы резолв пришёлся на известную микротаску. Тогда `await rt.flushMicrotasks()` обычно достаточно.
+
+## Проверка причин skip через инспектор
+
+Когда триггер не запускается, инспектор записывает почему. Это самая чистая цель проверки «пропустил из-за отсутствия required-условия» — гораздо лучше, чем проверять, что действие *не* было вызвано: это ничего не доказывает о пройденном пути.
+
+```ts title="Assert that 'missing-required' was the reason"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, test } from 'vitest';
+
+test('skips without settings', () => {
+  const rt = createTestRuntime();
+  createTrigger<{
+    events: { 'new-message': void };
+    conditions: { settings: { notifications: boolean } };
+    actions: { showToast: void };
+  }>(
+    {
+      id: 'message-received',
+      events: ['new-message'],
+      required: ['settings'],
+      handler({ actions }) { actions.showToast?.(); },
+    },
+    rt,
+  );
+
+  // Note: no `mockCondition` for 'settings' — `required` is missing.
+  rt.fireSync('new-message');
+
+  const [snapshot] = rt.getInspectorBuffer();
+  expect(snapshot?.status).toBe('skipped');
+  expect(snapshot?.reason).toMatch(/missing-required/);
+});
+```
+
+Другие причины skip, на которые можно матчиться:
+
+| Фрагмент reason | Значение |
+|---|---|
+| `'missing-required: <name>'` | `required`-условие не было зарегистрировано. |
+| `'disabled'` | Был вызван `trigger.disable()`. |
+| `'cancelled-by-middleware: <name>'` | `onFire` middleware вернул `{ cancel: true }`. |
+
+Инспектор также записывает `executedActions: readonly string[]` пер-запуск — удобно для проверки, какие действия реально сработали (привет, debounce/throttle):
+
+```ts
+rt.fireSync('msg', a);
+rt.fireSync('msg', b); // debounced, should suppress the first
+// ...flush timers via fake scheduler...
+const [snapshot] = rt.getInspectorBuffer();
+expect(snapshot?.executedActions).toEqual(['showToast']); // only one
+```
+
+См. [Инспектор](/ru/guide/advanced/inspector/) — там полная форма снимка.
+
+## Паттерны инспекции снимков
+
+Три полезных паттерна, когда отлаживаешь флейк-триггер или строишь contract-тест.
+
+### Последний запуск
+
+```ts
+const last = trigger.inspect();
+expect(last).toMatchObject({ status: 'fired', eventName: 'new-message' });
+```
+
+`trigger.inspect()` возвращает самый свежий снимок триггера или `undefined`, если он не запускался. Эквивалентно `runtime.getInspectorBuffer().find(s => s.triggerId === trigger.id)`, но O(1).
+
+### Полная последовательность (newest first)
+
+```ts
+rt.fireSync('msg', a);
+rt.fireSync('msg', b);
+rt.fireSync('msg', c);
+
+const buffer = rt.getInspectorBuffer();
+expect(buffer.map((s) => s.status)).toEqual(['fired', 'fired', 'fired']);
+```
+
+Буфер — кольцо; размер по умолчанию 50. Если проверяешь длинные последовательности, увеличь `inspectorBufferSize`.
+
+### Подписанный слушатель
+
+```ts
+const seen: string[] = [];
+const token = rt.subscribe((s) => { seen.push(s.status); });
+rt.fireSync('msg', a);
+rt.fireSync('msg', b);
+token.unregister();
+expect(seen).toEqual(['fired', 'fired']);
+```
+
+Полезно, когда нужно проверить порядок между несколькими триггерами в одном рантайме.
+
+## Конфигурация Vitest
+
+Минимальный конфиг Vitest, подбирающий тесты триггеров где угодно в `src/`:
+
+```ts title="vitest.config.ts"
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    include: ['src/**/*.{test,spec}.ts', 'src/**/__tests__/**/*.ts'],
+    environment: 'node', // no DOM needed for unit tests
+    globals: false,      // import { test, expect } from 'vitest' explicitly
+    clearMocks: true,    // mock fns reset between tests
+  },
+});
+```
+
+`environment: 'node'` намеренный — модульные тесты не рендерят React, поэтому jsdom ничего не даёт и тормозит сьют. Используй `environment: 'jsdom'` (или `happy-dom`) только для [интеграционных тестов](/ru/guide/testing/integration-testing/).
+
+Небольшой глобальный хелпер, чтобы тесты были опрятными:
+
+```ts title="src/test-utils/runtime.ts"
+import { createTestRuntime, type TestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach } from 'vitest';
+
+let rt: TestRuntime;
+export const getRuntime = (): TestRuntime => rt;
+
+beforeEach(() => { rt = createTestRuntime(); });
+afterEach(() => { rt.dispose(); });
+```
+
+Тогда каждый тест начинает со свежим рантаймом, а `dispose()` чистит выполняющиеся таймеры от отменённых async-обработчиков — никаких утечек между тестами.
+
+## Заметки по interop с Jest
+
+Пакеты Triggery — ESM-only. Дефолтный конфиг Jest всё ещё трактует файлы как CommonJS, из-за чего `import { createTrigger } from '@triggery/core'` падает с `SyntaxError: Cannot use import statement outside a module`. Два пути:
+
+### Запусти Jest с ESM VM-флагом (рекомендуется)
+
+```json title="package.json"
+{
+  "scripts": {
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+  },
+  "jest": {
+    "extensionsToTreatAsEsm": [".ts"],
+    "transform": {},
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    }
+  }
+}
+```
+
+Работает для Jest 28+, и это официальный ESM-путь. Если ты на более старом Jest — обновись; ESM-история до 28 слишком хрупка для повседневной работы.
+
+### Перейди на Vitest
+
+Если можешь выбирать: Vitest запускает Jest-формы тестов без transform-конфига, нативный ESM и ~10× быстрее холодный старт. Миграция — это `import { test, expect, vi } from 'vitest'` и однопаговый `vitest.config.ts`. Тесты триггеров — чистая логика; нет Jest-API, которого тебе будет не хватать.
+
+## `bun:test` и `node:test`
+
+Оба работают из коробки. Кит не зависит от Vitest-специфичных глобалов; единственная адаптация на тест-раннер — какая библиотека для подмен.
+
+```ts title="node:test — built into Node 20+"
+import { mock, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+test('plays sound', () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{ events: { msg: void }; actions: { playSound: 'beep' } }>(
+    { id: 'msg', events: ['msg'], handler: ({ actions }) => actions.playSound?.('beep') },
+    rt,
+  );
+  const playSound = mock.fn();
+  rt.mockAction(t, 'playSound', playSound);
+
+  rt.fireSync('msg');
+  assert.equal(playSound.mock.callCount(), 1);
+  assert.deepEqual(playSound.mock.calls[0]?.arguments, ['beep']);
+});
+```
+
+```ts title="bun:test"
+import { test, expect, mock } from 'bun:test';
+// …same shape as Vitest
+```
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Тестовый планировщик"
+    description="Детерминированный виртуальный таймер для тестов debounce / throttle / defer."
+    href="/ru/guide/testing/fake-scheduler/"
+  />
+  <LinkCard
+    title="Интеграционные тесты"
+    description="Рендер реального дерева провайдеров с тестовыми библиотеками React / Solid / Vue."
+    href="/ru/guide/testing/integration-testing/"
+  />
+  <LinkCard
+    title="Инспектор"
+    description="Форма снимка — durationMs, executedActions, snapshotKeys, status."
+    href="/ru/guide/advanced/inspector/"
+  />
+  <LinkCard
+    title="@triggery/testing"
+    description="API-справочник createTestRuntime, mockCondition, mockAction, fakeScheduler."
+    href="/ru/packages/testing/"
+  />
+</CardGrid>

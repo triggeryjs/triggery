@@ -1,0 +1,300 @@
+---
+title: "Debounce и throttle"
+description: "actions.debounce, throttle, defer и queue — per-action тайминг-обёртки, которые рантайм держит end-to-end."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Прокси `actions` поставляется с четырьмя композируемыми обёртками — `debounce`, `throttle`, `defer` и `queue` — которые позволяют запланировать один побочный эффект, не выходя из обработчика. Рантайм владеет таймером, чистит его на dispose, а обёртки чисто компонуются со стратегиями concurrency.
+
+```ts
+handler({ event, actions }) {
+  actions.debounce(800).playSound?.('beep');           // подожди 800 мс, потом вызов один раз
+  actions.throttle(2000).updateBadge?.(event.payload); // вызов сейчас, потом игнор 2 с
+  actions.defer(50).flushBatch?.();                    // вызов через 50 мс безусловно
+  actions.queue.saveDraft?.(event.payload);            // сериализуй этот вызов с другими
+}
+```
+
+`actions.debounce`, `.throttle`, `.defer` возвращают новый прокси, чьи вызовы действий планируются соответствующим образом. Изначальный `actions.showToast?.(...)` всё ещё происходит мгновенно.
+
+## Debounce vs throttle vs defer
+
+| Обёртка | Edge | Замена | Лучше всего подходит для |
+|---|---|---|---|
+| `debounce(ms)` | Trailing | Каждый вызов **заменяет** любой ожидающий с тем же ключом (имя действия + payload key). После `ms` тишины — последний происходит. | Коалессинг пачек: "один beep на флешмоб сообщений", "поиск после остановки печати". |
+| `throttle(ms)` | Leading | Первый вызов происходит **сразу**. Последующие вызовы в течение `ms` **сбрасываются** (не очередь). | Rate-limiting: "максимум один пинг аналитики в 2 с", "максимум один resize-хендлер на кадр". |
+| `defer(ms)` | One-shot | Запланируй один вызов ровно через `ms`. Новые `defer`-вызовы не заменяют существующие — у каждого свой таймер. | "Сбрось батч через 50 мс независимо от новых вызовов", запланированные one-off'ы. |
+
+<Aside type="note">
+В V1 throttle — **только leading-edge**: первый вызов происходит сразу, потом последующие в окне молча сбрасываются. Trailing-edge throttle (очередь последнего вызова в окне на вызов в конце окна) на роадмапе V1.1 как `actions.throttle(ms, { trailing: true })`.
+</Aside>
+
+Визуальная разница для 5 событий, выпущенных в `t = 0, 50, 100, 150, 200мс` с `ms = 150`:
+
+```text
+debounce(150):  ──────────────────────────────●       (один вызов, ~350мс)
+throttle(150):  ●─────────────●                       (два вызова: t=0 и t=150)
+defer(150):     ──────●●●●●                            (пять вызовов, каждый через 150мс после вызова)
+```
+
+## `queue.foo(payload)` — сериализованные действия
+
+`actions.queue.foo(...)` отличается: не принимает аргумент `ms`. Он сериализует **вызовы действия**, не прогоны обработчика.
+
+```ts
+handler({ event, actions }) {
+  actions.queue.appendLog?.({ ts: Date.now(), msg: event.payload.msg });
+}
+```
+
+Сравнительно с trigger-level `concurrency: 'queue'`:
+
+| Механизм | Что сериализуется |
+|---|---|
+| `concurrency: 'queue'` | **Весь прогон обработчика**. Два события пересекаются → второй обработчик ждёт резолва первого. |
+| `actions.queue.foo(p)` | **Действие `foo`** во всех вызовах. Два вызова `foo` пересекаются → второй ждёт резолва промиса первого. |
+
+Очередь уровня действия существует, потому что один обработчик часто диспатчит несколько побочных эффектов, и только *часть* из них требует строгого порядка. Засунуть весь обработчик за `concurrency: 'queue'` блокировало бы чтения на записях; `actions.queue.foo` оставляет чтения параллельными, сериализуя записи.
+
+<Aside type="caution">
+`actions.queue` намеренно имеет более низкий приоритет, чем `debounce/throttle/defer`, и в V1 поставляется как стабильный, но минимальный примитив: он сериализует вызовы по имени действия. Per-key очередь (например, одна очередь на `noteId`) приедет в V1.1 — до того скоупируй триггер per-key через `<TriggerScope>`.
+</Aside>
+
+## Per-action keying
+
+Рантайм ключует таймеры по **имени действия + значению `ms`** для timed-обёрток. Debounced-вызов `playSound` не пересекается с debounced-вызовом `showToast` даже на той же задержке — они живут в разных слотах.
+
+```ts
+handler({ event, actions }) {
+  // Два debounce-таймера — по одному на имя действия. Они не взаимодействуют.
+  actions.debounce(800).playSound?.('beep');
+  actions.debounce(800).showToast?.({ title: event.payload.author, body: event.payload.text });
+}
+```
+
+Вызов того же действия с разными значениями `ms` производит **отдельные** таймеры — ключ включает `ms`. В большинстве случаев это не проблема (обычно ты не меняешь задержку посреди обработчика), но это стоит знать, если ты строишь settings-driven debounce:
+
+```ts
+handler({ event, conditions, actions }) {
+  const ms = conditions.userSettings?.debounceMs ?? 800;
+  // Если `ms` меняется между прогонами, предыдущий таймер (со старым ms) всё ещё ожидает.
+  actions.debounce(ms).playSound?.('beep');
+}
+```
+
+Для payload-based keying ("дебаунси per channel id") положи каждый канал за свой экземпляр триггера через `<TriggerScope id={channelId}>`. У каждого скоупа своя карта таймеров.
+
+```tsx title="src/features/Chat.tsx"
+<TriggerScope id={`chat:${channelId}`}>
+  <ChatRoom channelId={channelId} />
+  <NotificationLayer />
+</TriggerScope>
+```
+
+Тогда сценарий дебаунсит per scope — ровно то, что нужно для "один beep на канал, даже если шумят несколько каналов".
+
+## Выбор между четырьмя
+
+Маленькое дерево решений для выбора правильной обёртки:
+
+```text
+ты хочешь, чтобы КАЖДОЕ событие давало побочный эффект?
+├── да → никакой обёртки. Просто зови actions.foo?.(...).
+└── нет — только последний в пачке, или с rate-limit
+    │
+    ├── только ПОСЛЕДНИЙ в пачке (схлопнуть N событий → 1)
+    │   └── actions.debounce(ms).foo
+    │
+    ├── ПЕРВОЕ событие, потом игнор ms
+    │   └── actions.throttle(ms).foo
+    │
+    ├── ровно один вызов через ms, игнор будущих вызовов до его срабатывания
+    │   └── actions.defer(ms).foo
+    │
+    └── каждое событие попадает, но по одному в порядке
+        └── actions.queue.foo
+```
+
+Обёртки компонуются друг с другом только через разные имена действий:
+
+```ts
+handler({ event, actions }) {
+  // Разные действия, разные стратегии тайминга, без интерференции.
+  actions.throttle(2000).reportAnalytics?.(event.payload);
+  actions.debounce(80).renderResults?.(event.payload);
+  actions.defer(0).flushTelemetry?.();
+}
+```
+
+**Нельзя** цеплять обёртки на *одном и том же* вызове (`actions.debounce(100).throttle(200).foo` — невалидная конструкция). Если нужен такой уровень контроля — запусти follow-up событие и положи его на собственный триггер с подходящим `concurrency`.
+
+## Таймеры и отмена
+
+Каждый ожидающий debounce / defer таймер, который держит рантайм, регистрируется в карте `timers` триггера. Когда происходит любое из следующего, рантайм вызывает `cancelAllTimers(trigger)`:
+
+- Триггер диспозится (`trigger.dispose()` — обычно вручную не вызывается).
+- Рантайм диспозится (`runtime.dispose()` — `unmount`, teardown скоупа, очистка теста).
+- Скоуп, в котором живёт триггер, размонтируется.
+- Vite/Webpack HMR заменяет модуль, который определил триггер.
+
+Это значит: никакого "зомби-дебаунсенного-звука", висящего после навигации. Таймер умирает вместе со скоупом.
+
+Тебе никогда не понадобится писать `clearTimeout` самому для этих обёрток. Если ловишь себя на этом — предпочитай `defer(ms)` только тогда, когда раньше написал бы `setTimeout(... , ms)`; никакого `cancelDefer` нет, потому что рантайм отменяет всё на dispose.
+
+<Aside type="tip">
+В тестах рантайм даёт `runtime.dispose()`, который отменяет каждый ожидающий таймер. Сочетай с фейковым планировщиком из `@triggery/testing` для полностью детерминированных ассертов по таймерам — см. [Fake scheduler](/ru/guide/testing/fake-scheduler/).
+</Aside>
+
+## Живой пример: debounced звук уведомления
+
+Сценарий чата. Пачка входящих сообщений должна выдавать **один** тост на сообщение, но **один** beep на всю пачку.
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+type Message  = { author: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions:    {
+    showToast: { title: string; body: string };
+    playSound: 'beep';
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (!check.is('settings', (s) => s.notifications)) return;
+
+    // Мгновенно, на каждое сообщение.
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+
+    // Коалессится: 800 мс тишины → один beep.
+    if (check.is('settings', (s) => s.sound)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+  },
+});
+```
+
+Что ты увидишь:
+
+- 6 сообщений за 200 мс → 6 тостов, **один** beep в `t ≈ 1000мс` (200 мс ввода + 800 мс debounce-тишины).
+- После того как beep отработал, слот таймера пуст. Следующее сообщение либо происходит сразу (debounce не активен), либо стартует новое окно 800 мс.
+- Выключи звук посреди пачки → guard `check.is(...)` пропускает debounced-вызов; любой существующий таймер довыполнит свой запланированный экшен **только если `playSound` всё ещё зарегистрирован**. Если реактор размонтирует хендлер действия, поздний вызов — no-op.
+
+## Распространённая ловушка: дебаунс на функцию, которая должна срабатывать на каждое событие
+
+Если твоё действие — *именно то, что ты хочешь звать на каждое событие* (поиск per-keystroke, метрика per-tick, audit-лог), дебаунс молча дропает события.
+
+```ts
+// ✗ Выглядит разумно, ведёт себя неверно.
+handler({ event, actions }) {
+  actions.debounce(300).logAuditEvent?.({
+    userId: event.payload.userId,
+    action: event.payload.action,
+  });
+}
+```
+
+Если два audit-события приходят в 300 мс, второе **заменяет** первое. Первое не происходит. Ты теряешь audit-данные.
+
+Фикс зависит от того, чего ты на самом деле хочешь:
+
+- **Каждое событие в audit** → просто зови `actions.logAuditEvent?.(...)` без debounce.
+- **Пачки схлопнуть в батчи** → накапливай в замыкании, потом `defer(300)` на единичный батч-flush. Лучше: эмить событие `'batch-flush'` и отдельный триггер, который зовёт flush с `concurrency: 'queue'`.
+- **Rate limited** → `actions.throttle(300).logAuditEvent?.(...)`. Теперь первый вызов проходит, последующие в 300 мс сбрасываются — всё ещё с потерями, но на leading edge, а не trailing. Для audit обычно неверно.
+
+Правило: **debounce для де-дупликации**, не для rate-limiting. Если ты не можешь позволить себе терять события — не дебаунси.
+
+## Распространённая ловушка: считать, что `debounce(ms).foo` идемпотентен между прогонами обработчика
+
+Ключ debounce — `(имя действия, ms)`, не `(прогон обработчика, имя действия, ms)`. Два последовательных прогона того же обработчика, оба зовущие `actions.debounce(800).playSound?.('beep')`, производят **один** beep через 800 мс после второго вызова.
+
+Почти всегда это именно то, что ты хочешь — debounce *и есть* коалессинг между прогонами. Но если ты ожидал, что у каждого прогона будет свой независимый таймер (например, для defer-style one-shot per run), используй `defer`:
+
+```ts
+handler({ event, actions }) {
+  // Пять вызовов триггера → пять отдельных таймеров 1000 мс, пять вызовов flush.
+  actions.defer(1000).flushBatch?.();
+}
+```
+
+## Распространённая ловушка: полагаться, что debounce "гарантирует" последний payload
+
+Таймер debounce запускает payload **последнего вызова** — но только последнего вызова внутри окна тишины. Если обработчик прогонится снова *после* того, как таймер сработал, это новый вызов, который планирует новый таймер. Нет поведения "залочить payload на первом вызове".
+
+```ts
+handler({ event, actions }) {
+  // Каждый вызов планирует новый таймер 200 мс с payload этого вызова.
+  // Финальный payload = payload последнего вызова в пачке.
+  actions.debounce(200).updateSummary?.({ count: event.payload.itemCount });
+}
+```
+
+Если хочешь, чтобы выиграл payload **первого** вызова — переключайся на `throttle`:
+
+```ts
+handler({ event, actions }) {
+  // Первый вызов сразу проходит; последующие в 200 мс сбрасываются.
+  actions.throttle(200).updateSummary?.({ count: event.payload.itemCount });
+}
+```
+
+Если нужно *коалессить* payload'ы (например, копить список) — делай это явно через буфер в замыкании плюс `defer`:
+
+```ts
+const buffer: Item[] = [];
+
+handler({ event, actions }) {
+  buffer.push(event.payload.item);
+  actions.debounce(200).flushBatch?.([...buffer]);
+  // После того как debounce сработал, тебе захочется чистить буфер в реакторе.
+}
+```
+
+(Для большинства сценариев явный batch-паттерн лучше выражается двумя триггерами: один копит, второй сбрасывает.)
+
+## Распространённая ловушка: комбинация throttle с `take-latest`
+
+Leading-edge throttle, обёрнутый вокруг действия внутри `take-latest` обработчика, всё ещё запускает действие *каждый раз, когда обработчик пробежал без abort'а*. Throttle не смотрит на concurrency обработчика.
+
+```ts
+async handler({ event, signal, actions }) {
+  const data = await fetch(event.payload.url, { signal }).then((r) => r.json());
+  signal.throwIfAborted();
+  actions.throttle(1000).reportFetch?.({ url: event.payload.url, count: data.length });
+}
+```
+
+Если `take-latest` прерывает предыдущий прогон, счётчик throttle не сбрасывается — окно throttle в полёте per-action, не per-run. Ты можешь в итоге звать `reportFetch` максимум раз в секунду по всем прогонам, что обычно и есть правильная семантика throttle. Если конкретно нужно "report только успешных прогонов", проверяй `!signal.aborted` перед вызовом.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Стратегии параллелизма"
+    description="Как concurrency взаимодействует с action-level таймерами (разные гранулярности, без конфликта)."
+    href="/ru/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Асинхронные обработчики"
+    description="Механика async/await, прокидка signal и поток ошибок внутри обработчиков."
+    href="/ru/guide/async/async-handlers/"
+  />
+  <LinkCard
+    title="Отмена"
+    description="Жизненный цикл dispose, который чистит каждый ожидающий debounce / defer таймер."
+    href="/ru/guide/async/cancellation/"
+  />
+  <LinkCard
+    title="Действия"
+    description="Полный справочник actions-прокси, включая владение last-mount-wins."
+    href="/ru/guide/essentials/actions/"
+  />
+</CardGrid>

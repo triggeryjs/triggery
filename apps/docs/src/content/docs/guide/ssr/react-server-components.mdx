@@ -1,0 +1,302 @@
+---
+title: React Server Components
+description: "Triggery is a client-only orchestration layer. Here's where the 'use client' boundaries go in RSC apps, how to bridge server actions to triggers, and the hybrid patterns that work."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+React Server Components (RSC) split the React tree into two halves — code that runs on the server and never ships to the browser, and code that hydrates and runs in the browser. Triggery is firmly in the second half: every hook (`useEvent`, `useCondition`, `useAction`, `useInspect`, `useInspectHistory`) needs `useEffect` and a real DOM, both of which only exist on the client.
+
+This page is the operational manual: where the `'use client'` boundary lives, how trigger files compose with server components, and how to bridge a server action to a client-side trigger so a database write can light up a notification three components away.
+
+## The core rule
+
+**Anything that calls a Triggery hook must live in a `'use client'` file.** Trigger module files (`*.trigger.ts`) are pure modules — they import `createTrigger`, define configuration, export the trigger object — but they're shaped to be consumed *by* client components. In practice you'll mark them `'use client'` too, so the bundler stops trying to evaluate them on the server.
+
+```ts title="src/triggers/message.trigger.ts"
+'use client';
+
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings?.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+The `'use client'` directive at the top is a hint to the bundler that this module belongs in the client bundle. The trigger itself is pure data plus a handler closure — neither cares about the directive — but marking it explicitly avoids the common mistake of a server component trying to *call* `createTrigger` on the server (which works, but is wasted CPU and creates a server-side runtime nobody ever uses).
+
+## Where the runtime provider goes
+
+The `TriggerRuntimeProvider` is a client component. Wrap it in your own component file and mount it just below the root layout:
+
+```tsx title="src/components/triggery-root.tsx"
+'use client';
+
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { useState, type ReactNode } from 'react';
+
+export function TriggeryRoot({ children }: { children: ReactNode }) {
+  const [runtime] = useState(() => createRuntime());
+  return <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>;
+}
+```
+
+```tsx title="src/app/layout.tsx (server component — no directive)"
+import { TriggeryRoot } from '../components/triggery-root';
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <TriggeryRoot>{children}</TriggeryRoot>
+      </body>
+    </html>
+  );
+}
+```
+
+The layout itself is a server component. Inside, the `TriggeryRoot` boundary marks "everything below this is client". The `children` prop, however, can still be a tree of server components — and *those* server components can include their own `'use client'` islands further down. RSC composes that way; Triggery doesn't change the shape.
+
+```text title="What ends up where"
+RootLayout                 ← server component
+└── TriggeryRoot           ← 'use client' boundary
+    ├── ServerComponent    ← still a server component (rendered into the boundary)
+    │   ├── ClientLeaf     ← 'use client'; uses useEvent / useCondition / useAction
+    │   └── ServerLeaf     ← server, no Triggery hooks here
+    └── ClientHeader       ← 'use client'
+```
+
+## Components that use the hooks
+
+Any component that calls `useEvent`, `useCondition`, `useAction`, `useInspect`, or `useInspectHistory` must be `'use client'`:
+
+```tsx title="src/features/Chat.tsx"
+'use client';
+
+import { useEvent, useCondition } from '@triggery/react';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function Chat({ channelId }: { channelId: string }) {
+  const fire = useEvent(messageTrigger, 'new-message');
+  useCondition(messageTrigger, 'activeChannelId', () => channelId, [channelId]);
+
+  return (
+    <button onClick={() => fire({ author: 'Alice', text: 'hi' })}>
+      send a fake message
+    </button>
+  );
+}
+```
+
+```tsx title="src/features/NotificationLayer.tsx"
+'use client';
+
+import { useAction } from '@triggery/react';
+import { toast } from 'sonner';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function NotificationLayer() {
+  useAction(messageTrigger, 'showToast', (payload) => {
+    toast.success(payload.title, { description: payload.body });
+  });
+  return null;
+}
+```
+
+A server component that *renders* one of these is fine — server components can compose client components as children. What you can't do is **call** a hook from a server component.
+
+## Server components dispatching to triggers
+
+Server components don't have access to the runtime. They can't import `useEvent` (it would error during the server pass) and they can't reach into the client-side runtime instance. The bridge is **a regular HTTP fetch from the client into a Route Handler / server action**, and a *client* event listener that fires the trigger when the fetch returns.
+
+```ts title="src/app/api/messages/route.ts (server route)"
+import { NextResponse } from 'next/server';
+
+export async function POST(req: Request) {
+  const body = await req.json();
+  await db.insertMessage(body); // your real persistence
+  return NextResponse.json({ ok: true, id: body.id });
+}
+```
+
+```tsx title="src/features/Compose.tsx (client)"
+'use client';
+
+import { useEvent } from '@triggery/react';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function Compose() {
+  const fire = useEvent(messageTrigger, 'new-message');
+
+  async function send(text: string) {
+    const res = await fetch('/api/messages', {
+      method: 'POST',
+      body: JSON.stringify({ author: 'Alice', text }),
+    });
+    const { id } = await res.json();
+    fire({ author: 'Alice', text, channelId: id });
+  }
+
+  return <button onClick={() => send('hi')}>send</button>;
+}
+```
+
+The trigger fires **on the client, after the server confirms**. The handler reads conditions registered by other client components, calls actions registered by other client reactors. The server has zero awareness of the trigger.
+
+This is the V1 boundary: **the server can ask the client to do something; it cannot reach into the client runtime directly**. The client is in charge of its own orchestration.
+
+## Server actions (Next.js / React 19)
+
+The same shape works with server actions instead of route handlers:
+
+```ts title="src/app/actions.ts"
+'use server';
+
+import { db } from '@/db';
+
+export async function postMessage(payload: { author: string; text: string }) {
+  await db.insertMessage(payload);
+  return { ok: true as const, id: payload.author + '-' + Date.now() };
+}
+```
+
+```tsx title="src/features/Compose.tsx"
+'use client';
+
+import { useEvent } from '@triggery/react';
+import { useTransition } from 'react';
+import { postMessage } from '../app/actions';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function Compose() {
+  const fire = useEvent(messageTrigger, 'new-message');
+  const [pending, startTransition] = useTransition();
+
+  function send() {
+    startTransition(async () => {
+      const result = await postMessage({ author: 'Alice', text: 'hi' });
+      if (result.ok) fire({ author: 'Alice', text: 'hi', channelId: result.id });
+    });
+  }
+
+  return <button onClick={send} disabled={pending}>send</button>;
+}
+```
+
+The shape is the same — invoke the server, await its result, then `fire`. The server action is just a fetch with a nicer ergonomic.
+
+<Aside type="caution">
+**V1: triggers cannot bridge to server actions automatically.** The runtime has no concept of "an action that runs server-side". If you want a server side-effect, *call* the server action explicitly from your handler (or from the calling component) and let it return a payload the client trigger fires on. The V2 `@triggery/server` package introduces a real transport that closes this gap — until then, the manual fetch / server-action call is the pattern.
+</Aside>
+
+## Hybrid pages: data on the server, orchestration on the client
+
+A typical hybrid page does data fetching in a server component and renders interactive bits as client islands. Triggery slots in cleanly because the runtime is hoisted above the islands:
+
+```tsx title="src/app/messages/[channelId]/page.tsx (server component)"
+import { db } from '@/db';
+import { MessageList } from './message-list';
+import { Compose } from '@/features/Compose';
+import { NotificationLayer } from '@/features/NotificationLayer';
+
+export default async function Page({ params }: { params: { channelId: string } }) {
+  const messages = await db.messages.findMany({ where: { channelId: params.channelId } });
+  return (
+    <main>
+      <MessageList initial={messages} channelId={params.channelId} />
+      <Compose />
+      <NotificationLayer />
+    </main>
+  );
+}
+```
+
+The page is fully server-rendered: HTML for `MessageList`, `Compose`, `NotificationLayer` ships down. On hydration, each `'use client'` island wires into the `TriggeryRoot` provider that was mounted in the layout. They discover each other through the trigger — `Compose` fires, `NotificationLayer` reacts, `MessageList` updates via its own React state. The server doesn't see any of that.
+
+## The pattern in one diagram
+
+```text
+Browser                               Server
+─────────                             ───────
+                                      RootLayout (server)
+                                      └── <TriggeryRoot>      ← 'use client' boundary
+                                          └── <Outlet />
+                                              └── Page (server, async)
+                                                   ├── <MessageList initial={…}>  'use client'
+                                                   ├── <Compose />                'use client'
+                                                   └── <NotificationLayer />      'use client'
+
+(rendered HTML ships down, hydrates)
+
+Browser side:
+  Compose fires 'new-message' ──microtask──▶ messageTrigger handler
+  handler reads conditions (settings, activeChannelId)
+  handler calls actions.showToast?(…)
+  NotificationLayer's useAction handler renders the toast.
+
+  All of this happens entirely client-side. The server has no visibility.
+```
+
+## Streaming and Suspense
+
+Streaming SSR with React 19 / Next App Router renders server components as a stream of HTML chunks; client islands hydrate as their JS arrives. From Triggery's perspective:
+
+- The provider mounts when its chunk arrives. Until then, hooks in nested islands haven't run.
+- Once mounted, islands register conditions/actions in their `useEffect`. Until they do, fires either skip (`required` not satisfied) or have no reactor.
+- If you fire from a client component that mounts before its reactor, the inspector records a fired-but-unhandled run. This is fine — the trigger logic is "do nothing if no reactor". The next fire after both have mounted runs the actions normally.
+
+In practice this means: **mount the `<NotificationLayer />` reactor inside the layout**, not inside a page route that may suspend. Reactors are cheap; they don't render anything visible until an action fires. Putting them in the layout guarantees they're alive for every page transition.
+
+## Caveats
+
+### Server-only modules
+
+A `'use server'` file cannot import a `*.trigger.ts` module that has `'use client'` at the top — the bundler errors. If you need shared types between server and client (e.g. the `Message` interface used in event payloads), put them in a `types.ts` file with no directive, and import that file from both sides.
+
+### `getDefaultRuntime()` on the server
+
+`getDefaultRuntime()` lazily creates a global runtime on first call. In an RSC environment this means **the server process also has a default runtime** — and it's *shared* across requests. Don't register triggers against the default runtime in code that runs server-side; you'd leak across requests. The cure is the same as in tests: pass an explicit runtime to `createTrigger(config, runtime)`, or only call `createTrigger` from a `'use client'` module.
+
+### Hydration mismatches
+
+`useInspect` and `useInspectHistory` return `undefined` / `[]` on the server and on the first client render — same value on both sides, no mismatch. If you build a debug panel that displays "no runs yet" while the list is empty and renders the table when it isn't, the server HTML and the first hydration HTML are identical. Updates start flowing after the first effect commit; they're a client-side update, not a hydration mismatch.
+
+### Action handlers that touch server-only APIs
+
+Don't. An action handler is a closure registered via `useAction` — it lives in a client component, runs in the browser. If you need to write to the database from a handler, the handler calls a server action (or `fetch`), waits for the result, and feeds the result into the next step. The server action is the place where server-only APIs live.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Server-side rendering"
+    description="The general SSR contract: what hooks do on the server, hydration safety, framework-by-framework recipes."
+    href="/guide/ssr/server-side-rendering/"
+  />
+  <LinkCard
+    title="StrictMode (React)"
+    description="React StrictMode double-invokes effects — Triggery's refcount + cleanup pattern is safe by construction."
+    href="/guide/ssr/strict-mode/"
+  />
+  <LinkCard
+    title="Provider"
+    description="TriggerRuntimeProvider — what it does, how scopes nest, where it mounts in an RSC app."
+    href="/api/react/trigger-runtime-provider/"
+  />
+  <LinkCard
+    title="Roadmap"
+    description="@triggery/server (V2) — the planned transport that closes the server-to-client trigger gap."
+    href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md"
+  />
+</CardGrid>

@@ -1,0 +1,124 @@
+---
+title: useCondition
+description: "Регистрирует pull-only геттер для условия триггера. Компоненты не ререндерятся, когда рантайм его читает."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Регистрирует pull-only геттер условия на триггере. Рантайм вызывает `getter()` **только в момент зажигания** — никаких подписок нет, и компонент не ререндерится, когда триггер срабатывает.
+
+`deps` работает как у `useMemo`: при изменении любого элемента рантайм видит обновлённое замыкание.
+
+## Импорт
+
+```ts
+import { useCondition } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function useCondition<S extends TriggerSchema, K extends ConditionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  getter: () => ConditionMap<S>[K],
+  deps?: readonly unknown[],
+): void;
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `trigger` | `Trigger<S>` | Триггер, возвращённый из [`createTrigger`](/ru/api/core/create-trigger/). |
+| `name` | `K extends ConditionKey<S>` | Условие, объявленное в схеме триггера. |
+| `getter` | `() => ConditionMap<S>[K]` | Синхронная функция, возвращающая текущее значение. |
+| `deps` | `readonly unknown[]` (по умолчанию `[]`) | Та же семантика, что и у `useMemo` — при изменении любого элемента захваченное замыкание обновляется. |
+
+## Возвращает
+
+`void`. Регистрация выполняется в `useEffect` и зачищается на размонтировании.
+
+## Примеры
+
+### Базовый провайдер
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useCondition } from '@triggery/react';
+import { useState } from 'react';
+
+const trigger = createTrigger<{
+  events: { ping: void };
+  conditions: { user: { id: string; name: string } | null };
+}>({
+  id: 'demo',
+  events: ['ping'],
+  required: ['user'],
+  handler({ conditions }) {
+    if (!conditions.user) return;
+    console.log('user', conditions.user.name);
+  },
+});
+
+function UserProvider() {
+  const [user, setUser] = useState<{ id: string; name: string } | null>(null);
+  useCondition(trigger, 'user', () => user, [user]);
+  return null;
+}
+```
+
+### Без deps (стабильный геттер)
+
+Если твой геттер читает из ref или модульной переменной, `deps` не нужен:
+
+```tsx
+import { useCondition } from '@triggery/react';
+import { trigger } from './x.trigger';
+
+const settingsRef = { current: { sound: true } };
+
+function StableProvider() {
+  useCondition(trigger, 'settings', () => settingsRef.current);
+}
+```
+
+### Из внешнего стора (пример с Zustand)
+
+```tsx
+import { useCondition } from '@triggery/react';
+import { useStore } from 'zustand';
+import { settingsStore } from './stores/settings';
+import { trigger } from './x.trigger';
+
+function Provider() {
+  const settings = useStore(settingsStore);
+  useCondition(trigger, 'settings', () => settings, [settings]);
+}
+```
+
+Для zero-rerender-адаптера, обходящего путь через React state, используй [`@triggery/zustand`](/ru/packages/zustand/).
+
+## Замечания
+
+<Aside type="caution" title="Pull-only">
+Рантайм вызывает геттер один раз на запуск — не на каждый keystroke, скролл или несвязанный ререндер. Если значение тяжело вычислять, мемоизуй его внутри геттера. Если нужны push-обновления — правильный примитив `useEvent`, а не `useCondition`.
+</Aside>
+
+<Aside type="tip" title="Last-mount-wins">
+Монтировать два провайдера одного условия можно — побеждает последний смонтированный, при этом в DEV выводится warn-once. На размонтировании предыдущая регистрация восстанавливается. См. [Владение](/ru/guide/architecture/ownership/).
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="useEvent" description="Зажигать события из продюсеров." href="/ru/api/react/use-event/" />
+  <LinkCard title="useAction" description="Зарегистрировать обработчик действия." href="/ru/api/react/use-action/" />
+  <LinkCard title="Руководство по условиям" description="Полный нарратив о pull-only, снепшотах и владении." href="/ru/guide/essentials/conditions/" />
+  <LinkCard title="@triggery/zustand" description="Использовать Zustand-стор как условие без ререндеров." href="/ru/packages/zustand/" />
+</CardGrid>

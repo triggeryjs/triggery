@@ -1,0 +1,318 @@
+---
+title: "Реакции на авторизацию"
+description: "Когда сессия истекла или роль отозвана — реагируй на это во всём приложении: сохрани грязную форму, закрой фичу, сделай редирект — из одного триггера."
+sidebar:
+  order: 7
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+События авторизации — архитектурный кошмар в любом приложении: access-токен истёк *в момент, когда пользователь дозаполнял форму*, или у него отозвали права *прямо когда открыт привилегированный экран*. Без координатора каждая форма и каждый экран должны подписываться на «события авторизации» и решать сами. С Triggery решает *триггер*, а фичи лишь регистрируют своё состояние и обработчики.
+
+<StackBlitzButton path="examples/vite-react-auth-reactions" label="Открыть в StackBlitz" />
+
+## Сценарий
+
+Реакцию приложения на изменения авторизации формируют два события.
+
+**`auth:session-expired`** — access-токен больше не валиден.
+
+1. **Если у пользователя есть грязная форма** → открыть модалку «Сохранить изменения перед входом?».
+2. **Иначе** → сразу редирект на `/login`.
+
+**`auth:role-revoked`** — ранее выданная роль была отозвана.
+
+1. **Если пользователь сейчас в фиче, которой нужна отозванная роль** → закрыть фичу.
+2. **В любом случае** → показать тост с объяснением.
+
+## Структура файлов
+
+<FileTree>
+- src/
+  - triggers/
+    - **auth.trigger.ts** правило маршрутизации
+  - features/
+    - auth/
+      - AuthBridge.tsx продьюсер (сетевые ошибки → события)
+      - AuthReactor.tsx реактор (редирект, тост, закрытие фичи)
+    - forms/
+      - DirtyFormProvider.tsx провайдер (`isDirty`)
+    - permissions/
+      - PermissionProvider.tsx провайдер (`roles`, `currentFeature`)
+</FileTree>
+
+## 1. Триггер
+
+```ts title="src/triggers/auth.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const authTrigger = createTrigger<{
+  events: {
+    'auth:session-expired': void;
+    'auth:role-revoked':    { role: string };
+  };
+  conditions: {
+    isDirty:         boolean;
+    roles:           ReadonlySet<string>;
+    currentFeature:  { id: string; requiredRole: string | null } | null;
+  };
+  actions: {
+    openSaveBeforeLeavingModal: void;
+    redirectToLogin:            void;
+    closeFeature:               string;            // feature id
+    showToast:                  { kind: 'error' | 'info'; body: string };
+  };
+}>({
+  id: 'auth-reactions',
+  events: ['auth:session-expired', 'auth:role-revoked'],
+  required: ['roles'],
+  handler({ event, conditions, actions, check }) {
+    if (event.name === 'auth:session-expired') {
+      // Dirty form? Give the user a chance to save first.
+      if (check.is('isDirty', dirty => dirty)) {
+        actions.openSaveBeforeLeavingModal?.();
+        return;
+      }
+
+      // Nothing to lose — straight to login.
+      actions.redirectToLogin?.();
+      return;
+    }
+
+    if (event.name === 'auth:role-revoked') {
+      const { role } = event.payload;
+
+      actions.showToast?.({
+        kind: 'info',
+        body: `You no longer have the "${role}" role.`,
+      });
+
+      // If the user is *currently* inside a feature that required the revoked
+      // role, close it. Other features are unaffected.
+      const feature = conditions.currentFeature;
+      if (feature && feature.requiredRole === role) {
+        actions.closeFeature?.(feature.id);
+      }
+    }
+  },
+});
+```
+
+Правило читается сверху вниз как документ политики безопасности. Ревьюер может его подписать, не залезая в React.
+
+## 2. Продьюсер
+
+Маленький мостик слушает сетевые ответы и запускает нужные события. Остальному приложению знать, откуда берётся состояние авторизации, не нужно.
+
+```tsx title="src/features/auth/AuthBridge.tsx"
+import { useEvent } from '@triggery/react';
+import { useEffect } from 'react';
+import { authTrigger } from '../../triggers/auth.trigger';
+import { onAuthEvent } from '../../lib/http-client';
+
+export function AuthBridge() {
+  const fireExpired = useEvent(authTrigger, 'auth:session-expired');
+  const fireRevoked = useEvent(authTrigger, 'auth:role-revoked');
+
+  useEffect(() => {
+    return onAuthEvent(e => {
+      if (e.kind === 'expired')      fireExpired();
+      else if (e.kind === 'revoked') fireRevoked({ role: e.role });
+    });
+  }, [fireExpired, fireRevoked]);
+
+  return null;
+}
+```
+
+`onAuthEvent` — это твой существующий хук HTTP-клиента, который ловит 401 и пуши изменения ролей — что бы у тебя ни было в стеке. Мостик — единственное место, где живут эти форматы.
+
+## 3. Провайдеры
+
+```tsx title="src/features/forms/DirtyFormProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { authTrigger } from '../../triggers/auth.trigger';
+
+export function DirtyFormProvider({
+  isDirty,
+  children,
+}: {
+  isDirty: boolean;
+  children: React.ReactNode;
+}) {
+  useCondition(authTrigger, 'isDirty', () => isDirty, [isDirty]);
+  return <>{children}</>;
+}
+```
+
+```tsx title="src/features/permissions/PermissionProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { useMemo } from 'react';
+import { authTrigger } from '../../triggers/auth.trigger';
+
+export function PermissionProvider({
+  roles,
+  feature,
+  children,
+}: {
+  roles: readonly string[];
+  feature: { id: string; requiredRole: string | null } | null;
+  children: React.ReactNode;
+}) {
+  const set = useMemo(() => new Set(roles), [roles]);
+
+  useCondition(authTrigger, 'roles',          () => set,     [set]);
+  useCondition(authTrigger, 'currentFeature', () => feature, [feature]);
+
+  return <>{children}</>;
+}
+```
+
+Условия работают по pull-модели. Даже если пользователь печатает в глубоко вложенной форме, триггер ничего не пересчитывает, пока что-нибудь не сработает — флаг `isDirty` просто *доступен* при запросе.
+
+## 4. Реактор
+
+Один компонент владеет побочными эффектами. Модалки, редиректы, тосты — три вызова `useAction`.
+
+```tsx title="src/features/auth/AuthReactor.tsx"
+import { useAction } from '@triggery/react';
+import { useNavigate } from 'react-router';
+import { toast } from 'sonner';
+import { authTrigger } from '../../triggers/auth.trigger';
+import { useModalEvent } from '../modal/useModalEvent';
+import { useFeatureStack } from '../../stores/feature-stack';
+
+export function AuthReactor() {
+  const navigate    = useNavigate();
+  const openModal   = useModalEvent();
+  const closeFeature = useFeatureStack(s => s.close);
+
+  useAction(authTrigger, 'openSaveBeforeLeavingModal', () => {
+    openModal({
+      kind: 'confirm',
+      title: 'Save changes before signing in again?',
+      body:  'Your session expired. We can save the form to a draft before you re-authenticate.',
+      okEvent: 'forms:save-draft',
+    });
+  });
+
+  useAction(authTrigger, 'redirectToLogin', () => {
+    navigate('/login', { replace: true });
+  });
+
+  useAction(authTrigger, 'closeFeature', id => {
+    closeFeature(id);
+  });
+
+  useAction(authTrigger, 'showToast', ({ kind, body }) => {
+    if (kind === 'error') toast.error(body);
+    else                  toast.info(body);
+  });
+
+  return null;
+}
+```
+
+`useModalEvent` — тонкая обёртка над `useEvent(modalTrigger, 'modal:open')`, см. рецепт [Стек модалок](/ru/recipes/react/modal-stack/).
+
+## 5. Собираем вместе
+
+```tsx title="src/App.tsx"
+import { AuthBridge } from './features/auth/AuthBridge';
+import { AuthReactor } from './features/auth/AuthReactor';
+import { DirtyFormProvider } from './features/forms/DirtyFormProvider';
+import { PermissionProvider } from './features/permissions/PermissionProvider';
+
+export function App({
+  roles,
+  currentFeature,
+  isDirty,
+}: {
+  roles: readonly string[];
+  currentFeature: { id: string; requiredRole: string | null } | null;
+  isDirty: boolean;
+}) {
+  return (
+    <PermissionProvider roles={roles} feature={currentFeature}>
+      <DirtyFormProvider isDirty={isDirty}>
+        <AuthBridge />
+        <AuthReactor />
+        {/* …routes… */}
+      </DirtyFormProvider>
+    </PermissionProvider>
+  );
+}
+```
+
+## Тест
+
+```ts title="src/triggers/auth.trigger.test.ts"
+import { createTestRuntime, mockAction, mockCondition } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { authTrigger } from './auth.trigger';
+
+describe('auth-reactions', () => {
+  it('redirects immediately when the session expires and no form is dirty', async () => {
+    const rt = createTestRuntime({ triggers: [authTrigger] });
+    const redirectToLogin = vi.fn();
+    const openSaveBeforeLeavingModal = vi.fn();
+    mockCondition(rt, authTrigger, 'isDirty', false);
+    mockCondition(rt, authTrigger, 'roles', new Set<string>());
+    mockCondition(rt, authTrigger, 'currentFeature', null);
+    mockAction(rt, authTrigger, 'redirectToLogin', redirectToLogin);
+    mockAction(rt, authTrigger, 'openSaveBeforeLeavingModal', openSaveBeforeLeavingModal);
+
+    await rt.fire('auth:session-expired');
+
+    expect(openSaveBeforeLeavingModal).not.toHaveBeenCalled();
+    expect(redirectToLogin).toHaveBeenCalledOnce();
+  });
+
+  it('opens the save-changes modal when a form is dirty', async () => {
+    const rt = createTestRuntime({ triggers: [authTrigger] });
+    const redirectToLogin = vi.fn();
+    const openSaveBeforeLeavingModal = vi.fn();
+    mockCondition(rt, authTrigger, 'isDirty', true);
+    mockCondition(rt, authTrigger, 'roles', new Set<string>());
+    mockCondition(rt, authTrigger, 'currentFeature', null);
+    mockAction(rt, authTrigger, 'redirectToLogin', redirectToLogin);
+    mockAction(rt, authTrigger, 'openSaveBeforeLeavingModal', openSaveBeforeLeavingModal);
+
+    await rt.fire('auth:session-expired');
+
+    expect(redirectToLogin).not.toHaveBeenCalled();
+    expect(openSaveBeforeLeavingModal).toHaveBeenCalledOnce();
+  });
+
+  it('closes a feature when its required role is revoked', async () => {
+    const rt = createTestRuntime({ triggers: [authTrigger] });
+    const closeFeature = vi.fn();
+    mockCondition(rt, authTrigger, 'isDirty', false);
+    mockCondition(rt, authTrigger, 'roles', new Set(['user']));
+    mockCondition(rt, authTrigger, 'currentFeature', { id: 'admin-panel', requiredRole: 'admin' });
+    mockAction(rt, authTrigger, 'closeFeature', closeFeature);
+    mockAction(rt, authTrigger, 'showToast', () => {});
+
+    await rt.fire('auth:role-revoked', { role: 'admin' });
+
+    expect(closeFeature).toHaveBeenCalledWith('admin-panel');
+  });
+});
+```
+
+## Что это даёт
+
+| | Раньше (auth-контекст с подписчиками) | С Triggery |
+|---|---|---|
+| **Каждая форма подписана на события авторизации** | Да — иначе никак | Нет, триггер сам спросит, есть ли грязные |
+| **Добавить правило «при revoke закрой фичу»** | Трогать каждый экран | Один `case` в триггере |
+| **Тест «expired + грязная форма → модалка»** | Рендерить всё дерево | Два вызова `mockCondition` |
+| **Гонка session-expired и role-revoked** | Две цепочки слушателей могут столкнуться | Один последовательный обработчик |
+
+## Варианты и см. также
+
+<CardGrid>
+  <LinkCard title="Стек модалок" href="/ru/recipes/react/modal-stack/" description="Подсистема модалок, в которую открывается этот реактор." />
+  <LinkCard title="useAction" href="/ru/api/react/use-action/" description="Справочник по хуку." />
+</CardGrid>

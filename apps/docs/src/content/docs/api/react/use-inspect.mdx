@@ -1,0 +1,123 @@
+---
+title: "useInspect"
+description: "Return the latest run snapshot for a trigger. For in-app debug panels."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Returns the most recent [`TriggerInspectSnapshot`](/api/core/types/) for a single trigger, or `undefined` if the trigger has not run yet. Useful for inline debug overlays, "last run at" timestamps, or quick "did it actually fire" assertions in dev panels.
+
+`useInspect` does not subscribe to new runs — it reads the latest snapshot every render and returns it as-is. Pair it with [`useInspectHistory`](/api/react/use-inspect-history/) for a live feed of recent runs.
+
+## Import
+
+```ts
+import { useInspect } from '@triggery/react';
+```
+
+## Signature
+
+```ts
+function useInspect<S extends TriggerSchema>(
+  trigger: Trigger<S>,
+): TriggerInspectSnapshot | undefined;
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `trigger` | `Trigger<S>` | The trigger returned by [`createTrigger`](/api/core/create-trigger/). |
+
+## Returns
+
+The latest `TriggerInspectSnapshot` or `undefined` if the trigger has not run yet (or if the runtime has the inspector disabled).
+
+| Snapshot field | Type | Description |
+|---|---|---|
+| `triggerId` | `string` | Same as `trigger.id`. |
+| `runId` | `string` | Unique per-run id. |
+| `eventName` | `string` | The event that matched. |
+| `status` | `'fired' \| 'skipped' \| 'errored' \| 'aborted'` | Run outcome. |
+| `reason?` | `string` | Set when `status` is `'skipped'`, `'errored'`, or `'aborted'`. |
+| `durationMs` | `number` | Handler wall time. |
+| `executedActions` | `readonly string[]` | Names of actions invoked during the run. |
+| `snapshotKeys` | `readonly string[]` | Condition keys read by the handler. |
+
+## Examples
+
+### Inline debug overlay
+
+```tsx
+import { useInspect } from '@triggery/react';
+import { messageTrigger } from './triggers/message.trigger';
+
+function DebugBadge() {
+  const snap = useInspect(messageTrigger);
+  if (!snap) return null;
+  return (
+    <span style={{ color: snap.status === 'fired' ? 'green' : 'orange' }}>
+      {snap.status} ({snap.durationMs.toFixed(1)}ms)
+    </span>
+  );
+}
+```
+
+### Quick "did it fire" assertion in dev tools
+
+```tsx
+import { useInspect } from '@triggery/react';
+import { fetchUserTrigger } from './triggers/fetch-user.trigger';
+
+function FetchUserDebug() {
+  const snap = useInspect(fetchUserTrigger);
+  return (
+    <pre>
+      {snap
+        ? JSON.stringify(
+            { id: snap.runId, status: snap.status, actions: snap.executedActions },
+            null,
+            2,
+          )
+        : '(no runs yet)'}
+    </pre>
+  );
+}
+```
+
+### Last successful run timestamp
+
+```tsx
+import { useInspect } from '@triggery/react';
+import { syncTrigger } from './triggers/sync.trigger';
+
+function LastSync() {
+  const snap = useInspect(syncTrigger);
+  if (!snap || snap.status !== 'fired') return <span>never</span>;
+  return <span>last sync: {snap.runId}</span>;
+}
+```
+
+## Notes
+
+<Aside type="caution" title="Doesn't subscribe">
+`useInspect` returns the latest snapshot at render time but doesn't re-render when a new run is recorded. For a live feed, use [`useInspectHistory`](/api/react/use-inspect-history/), or `useState` + `runtime.subscribe` directly.
+</Aside>
+
+<Aside type="tip">
+When the runtime has the inspector disabled (`inspector: false` or production auto), this hook always returns `undefined`. The same applies to `trigger.inspect()` from `@triggery/core`. Devtools panels should check `runtime.inspectorEnabled` and show a "inspector is off" hint instead of an empty list.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="useInspectHistory" description="Live list of recent runs across all triggers." href="/api/react/use-inspect-history/" />
+  <LinkCard title="createInspector" description="The ring-buffer behind every snapshot." href="/api/core/create-inspector/" />
+  <LinkCard title="RuntimeOptions" description="`inspector` and `inspectorBufferSize` flags." href="/api/core/types/runtime-options/" />
+  <LinkCard title="Devtools guide" description="When to build inline panels vs use @triggery/devtools-panel." href="/guide/advanced/inspector/" />
+</CardGrid>

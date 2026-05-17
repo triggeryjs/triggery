@@ -1,0 +1,53 @@
+---
+/**
+ * Lazy-loaded StackBlitz iframe. Use sparingly — iframes are heavy and hurt
+ * Lighthouse if there are several per page. Prefer the CTA button.
+ */
+interface Props {
+  /** Path inside the monorepo. */
+  path: string;
+  /** File to open by default. */
+  file?: string;
+  /** Editor view: split (default), preview, editor. */
+  view?: 'preview' | 'editor' | 'default';
+  /** iframe title for a11y. */
+  title?: string;
+  /** Pixel height of the iframe. */
+  height?: number;
+  ref?: string;
+}
+
+const {
+  path,
+  file = 'README.md',
+  view = 'default',
+  title = 'StackBlitz preview',
+  height = 540,
+  ref = 'main',
+} = Astro.props;
+
+const url =
+  `https://stackblitz.com/github/triggeryjs/triggery/tree/${ref}/${path}` +
+  `?embed=1&file=${encodeURIComponent(file)}` +
+  (view !== 'default' ? `&view=${view}` : '') +
+  '&theme=dark';
+---
+
+<iframe
+  src={url}
+  title={title}
+  height={height}
+  loading="lazy"
+  allow="clipboard-write; clipboard-read; cross-origin-isolated"
+  sandbox="allow-forms allow-modals allow-popups allow-presentation allow-scripts allow-same-origin"
+></iframe>
+
+<style>
+  iframe {
+    width: 100%;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background: #0a0a0a;
+  }
+</style>

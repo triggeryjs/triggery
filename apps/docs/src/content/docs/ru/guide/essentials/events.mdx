@@ -1,0 +1,274 @@
+---
+title: "События"
+description: "Записи в типизированной шине сообщений — что это, как отправляются, как доходят до обработчиков."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+Событие в Triggery — это самое лёгкое, что вообще можно придумать: **типизированное имя + опциональный payload**. Продьюсер его отправляет, рантайм индексирует, а доставляется оно каждому триггеру, который указал это имя в своём массиве `events`. Продьюсеры не знают, кто слушает; триггеры не знают, кто отправляет.
+
+Это и есть вся абстракция. Всё остальное на этой странице — её следствие.
+
+## Объявляем событие
+
+События живут внутри схемы триггера. Карта `events` — это `Record<EventName, Payload>`:
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Message = { author: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events: {
+    'new-message':    Message;        // payload: Message
+    'message-edited': Message;        // same payload type, different event
+    'app:ready':      void;           // no payload
+  };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message', 'message-edited', 'app:ready'],
+  handler({ event, actions }) {
+    if (event.name === 'app:ready') return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+Два момента:
+
+1. **Схема отображает имя события → тип payload.** Этого достаточно, чтобы рантайм мог проверить продьюсеров, обработчиков и кросс-связи между ними.
+2. **Массив `events` должен перечислить каждое имя, на которое реагирует триггер.** Он избыточен относительно схемы, но именно его рантайм использует для индексации диспатча — и его же кросс-проверяет правило `exhaustive-events` из `@triggery/eslint-plugin`.
+
+Пустой payload (`void`) объявляет событие без данных. Эмиттер — это `() => void`, без аргумента.
+
+## Отправка события
+
+В приложении события отправляются через хук биндинга. Идентичность эмиттера стабильна между рендерами — его можно положить в массив зависимостей `useEffect`, и эффект не перезапустится.
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/features/Chat.tsx"
+    import { useEvent } from '@triggery/react';
+    import { useEffect } from 'react';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function Chat() {
+      const fireNewMessage = useEvent(messageTrigger, 'new-message');
+      const fireReady      = useEvent(messageTrigger, 'app:ready');
+
+      useEffect(() => {
+        fireReady();
+        const off = socket.on('msg', fireNewMessage);
+        return off;
+      }, [fireNewMessage, fireReady]);
+
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/features/Chat.tsx"
+    import { useEvent } from '@triggery/solid';
+    import { onMount, onCleanup } from 'solid-js';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function Chat() {
+      const fireNewMessage = useEvent(messageTrigger, 'new-message');
+      const fireReady      = useEvent(messageTrigger, 'app:ready');
+
+      onMount(() => {
+        fireReady();
+        const off = socket.on('msg', fireNewMessage);
+        onCleanup(off);
+      });
+    }
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```vue title="src/features/Chat.vue"
+    <script setup lang="ts">
+    import { useEvent } from '@triggery/vue';
+    import { onMounted, onUnmounted } from 'vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    const fireNewMessage = useEvent(messageTrigger, 'new-message');
+    const fireReady      = useEvent(messageTrigger, 'app:ready');
+
+    onMounted(() => {
+      fireReady();
+      onUnmounted(socket.on('msg', fireNewMessage));
+    });
+    </script>
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+Отправлять события можно и без React/Solid/Vue — вне дерева компонентов, из обработчика `socket.on`, из перехода роутера, из CLI. Дотянись до рантайма напрямую:
+
+```ts title="src/socket.ts"
+import { getDefaultRuntime } from '@triggery/core';
+
+socket.on('msg', (msg) => {
+  getDefaultRuntime().fire('new-message', msg);
+});
+```
+
+Если ты создал свой рантайм, используй его экземпляр — `runtime.fire('new-message', msg)`. Та же форма, без хука.
+
+## Что происходит после `fire(...)`
+
+Рантайм берёт имя события, ищет его в индексе (`Map<eventName, Set<RegisteredTrigger>>`) и ставит диспатч в очередь для каждого подходящего триггера. Продьюсер возвращается сразу. Отправка события **никогда** не перерендеривает продьюсера.
+
+Диспатч идёт через планировщик. По умолчанию — `'microtask'`: события, отправленные в одной синхронной задаче, батчатся и доставляются в следующем microtask. Это правильное умолчание почти для всего — оно хорошо сочетается с батчингом React и не даёт всему задёргаться, когда приходит всплеск событий.
+
+Планировщик объявляется в триггере:
+
+```ts
+createTrigger<Schema>({
+  id: 'message-received',
+  events: ['new-message'],
+  schedule: 'microtask',   // default
+  // or 'sync' — dispatch before fire() returns; useful in tests and hot paths
+  handler({ event }) {},
+});
+```
+
+Для тестов, где надо проверить побочный эффект в том же кадре вызова, используй `runtime.fireSync(...)`. Он обходит выбор планировщика на уровне триггера и запускает обработчик до возврата. См. [`@triggery/testing`](/ru/packages/testing/).
+
+## Типизированный `event` внутри обработчика
+
+`event` в обработчике — это discriminated union по всем именам в `events`. Switch по `event.name` сужает `event.payload`:
+
+```ts
+handler({ event }) {
+  switch (event.name) {
+    case 'new-message':
+      // event.payload is Message
+      console.log(event.payload.author);
+      break;
+    case 'message-edited':
+      // event.payload is Message — same type, different branch
+      console.log('edited:', event.payload.text);
+      break;
+    case 'app:ready':
+      // event.payload is void
+      break;
+  }
+},
+```
+
+Для триггеров с одним событием switch не нужен — `event.payload` уже сужен до типа payload этого события.
+
+## Несколько триггеров, одно событие (бродкаст)
+
+Нет ограничения на то, сколько триггеров указывают одно и то же имя события. Рантайм доставит отправленное событие во все из них независимо:
+
+```ts title="src/triggers/analytics.trigger.ts"
+export const analyticsTrigger = createTrigger<{
+  events: { 'new-message': Message };
+  actions: { track: { kind: string; payload: unknown } };
+}>({
+  id: 'analytics:new-message',
+  events: ['new-message'],
+  handler({ event, actions }) {
+    actions.track?.({ kind: 'msg.received', payload: event.payload });
+  },
+});
+```
+
+`messageTrigger` (UI-уведомления) и `analyticsTrigger` (телеметрия) оба реагируют на одно и то же событие `'new-message'`. Они не знают друг о друге. Добавить третий — `audit.trigger.ts`, пишущий в серверный лог, — это один файл и ноль изменений в других местах.
+
+В этом основная выгода абстракции событий: **правило для сценария добавляется или удаляется добавлением или удалением файла триггера**.
+
+## Несколько продьюсеров, одно событие
+
+Обратная история работает так же. Два компонента могут оба отправлять `'new-message'` — один из WebSocket, другой из формы локального составления — и каждый подписанный триггер реагирует на оба. Рантайм не отслеживает идентичность продьюсера; событие — это событие.
+
+```tsx
+function ComposeBox() {
+  const fire = useEvent(messageTrigger, 'new-message');
+  return <input onKeyDown={(e) => e.key === 'Enter' && fire({ /* … */ })} />;
+}
+```
+
+## Cross-trigger fanout
+
+Иногда одно событие должно вызывать другое. Обработчик может отправить следующее событие, дотянувшись до рантайма — или, в биндинге, через паттерн с эмиттером. Самая частая форма — небольшой триггер «fanout»:
+
+```ts title="src/triggers/fanout.trigger.ts"
+import { createTrigger, getDefaultRuntime } from '@triggery/core';
+
+export const fanoutTrigger = createTrigger<{
+  events: { 'user:signed-in': { userId: string } };
+}>({
+  id: 'on-sign-in-fanout',
+  events: ['user:signed-in'],
+  handler({ event }) {
+    const rt = getDefaultRuntime();
+    rt.fire('preload-inbox',      { userId: event.payload.userId });
+    rt.fire('preload-settings',   { userId: event.payload.userId });
+    rt.fire('analytics:identify', { userId: event.payload.userId });
+  },
+});
+```
+
+Когда срабатывает `'user:signed-in'`, три нижестоящих события разлетаются — каждое подхватывается своим триггером. Рантайм отслеживает это как **каскад**: дочерние события несут `cascadeDepth` и `parentRunId` в `meta`, и инспектор связывает цепочку визуально. Лимит глубины каскада по умолчанию — 3 (настраивается на рантайме); циклы детектируются автоматически и обрываются.
+
+См. [Каскад](/ru/guide/architecture/cascade/) — полная история.
+
+## Соглашения об именах событий
+
+Рантайм принимает любую непустую строку. Соглашение оправдывает себя, когда у инспектора десятки событий на отрисовку:
+
+- **Используй kebab-case-глаголы для событий**: `new-message`, `cart-checked-out`, `auth-token-refreshed`. События — это *то, что произошло*, а не команды.
+- **Префиксуй доменом**, когда он есть: `chat:new-message`, `cart:checked-out`, `auth:token-refreshed`. Двоеточия, слеши, точки — всё это допустимо в имени.
+- **Не мешай времена**. Выбери прошедшее время для фактовых событий (`message-received`) или императив для намерений (`send-message`) — и держись этого внутри домена.
+- **Глаголы, которые нельзя отменить, оставь для действий**, а не для событий. `delete-user` как событие — это факт; `delete-user` как действие — это команда; они не должны иметь одинаковое имя.
+
+Прагматичный приём: прочти имя события как «**когда** `<имя>` …». «Когда chat:new-message» читается естественно; «когда sendMessage» — нет.
+
+## Вид в инспекторе
+
+Каждый вызов производит одну запись в инспекторе на каждый подходящий триггер. DEV-инспектор подписывает каждую запись как `triggery/<trigger-id>/fire`, имя события, payload, выполненные действия и ключи снимка, прочитанные обработчиком. Подключённый к Redux DevTools через `@triggery/devtools-redux`, твой таймлайн выглядит так:
+
+```text
+triggery/message-received/fire     { eventName: 'new-message',    payload: { author: 'Alice' … }, status: 'fired' }
+triggery/analytics:new-message/fire{ eventName: 'new-message',    payload: { … },                 status: 'fired' }
+triggery/on-sign-in-fanout/fire    { eventName: 'user:signed-in', cascadeDepth: 0,                status: 'fired' }
+triggery/preload-inbox/fire        { eventName: 'preload-inbox',  cascadeDepth: 1,                status: 'fired' }
+```
+
+Можно отрендерить это прямо в приложении через `useInspectHistory()` из `@triggery/react` — см. [Инспектор](/ru/guide/advanced/inspector/).
+
+## Частые паттерны
+
+**Событие = факт в прошедшем времени.** Не думай «я хочу проиграть звук». Думай «пришло новое сообщение» — а потом напиши триггер, который проигрывает звук, когда это случается. Триггер компонуется; место отправки остаётся независимым от выбора презентации.
+
+**Один эмиттер на продьюсера.** Закешируй эмиттер в переменной, передай его в зависимости `useEffect`, зарегистрируй через `socket.on`. Не пересоздавай эмиттер инлайн на каждом рендере — благодаря стабильной идентичности это будет тот же вызов, но читаемость лучше.
+
+**Не отправляй из тела рендера.** То же правило, что и для `setState`: побочным эффектам место в эффектах, обратных вызовах или обработчиках событий. Библиотека это не обеспечивает принудительно, но отправка в рендере приведёт к рендер-циклам, которые ты будешь диагностировать час.
+
+<CardGrid>
+  <LinkCard
+    title="Условия"
+    description="Другая сторона ctx обработчика — pull-only снимки, читаемые в момент отправки."
+    href="/ru/guide/essentials/conditions/"
+  />
+  <LinkCard
+    title="Обработчики"
+    description="Контекст обработчика (event, conditions, actions, check, signal, meta) в деталях."
+    href="/ru/guide/essentials/handlers/"
+  />
+  <LinkCard
+    title="Каскад"
+    description="Cross-trigger fanout, parentRunId, лимиты глубины, обнаружение циклов."
+    href="/ru/guide/architecture/cascade/"
+  />
+  <LinkCard
+    title="Инспектор"
+    description="Кольцевой буфер по прогонам, на котором стоят devtools и useInspectHistory."
+    href="/ru/guide/advanced/inspector/"
+  />
+</CardGrid>

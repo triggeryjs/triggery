@@ -1,0 +1,250 @@
+---
+title: Каскады
+description: "Когда действие одного триггера запускает ещё одно событие — лимиты глубины, детект циклов и когда каскад — это запах."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+**Каскад** — это вызов, происходящий внутри работающего обработчика. Тело `useAction` зовёт `runtime.fire('next-event')`; это событие, в свою очередь, матчится с другим триггером; обработчик того триггера запускается; и так далее. Каскады позволяют сценариям распространяться поперёк фичей так, что продьюсеру второго события не нужно знать о продьюсере первого.
+
+Они также позволяют построить бесконечный цикл в три строки, так что рантайм поставляется с двумя ремнями безопасности по умолчанию — лимит глубины и per-fire проверка циклов — плюс хук middleware, чтобы наблюдать всё, что проходит.
+
+## Анатомия каскада
+
+Ниже — цепочка, которую Triggery реально трекает. `A` запускает top-level событие; его обработчик зовёт действие; это действие — или сам обработчик — зовёт `runtime.fire`, эмитя новое событие; триггер `B` подписан на это событие и запускается; и так далее.
+
+```text
+                     +-- depth 0 (top-level fire) --+
+fire('user:signed-in')                              |
+        |                                           |
+        v                                           |
+  trigger A (id: 'session-bootstrap')               |
+        |                                           |
+        | actions.welcomeToast?.()  --- depth 1 ----+
+        |        \                                  |
+        |         runtime.fire('toast:shown')       |
+        |                |                          |
+        |                v                          |
+        |          trigger B (id: 'toast-analytics')|
+        |                |                          |
+        |                | runtime.fire(...)  --- depth 2 --- ...
+        |                                           |
+        v                                           |
+   (handler returns)                                |
+                     +-------------------------------+
+```
+
+Бухгалтерия рантайма — в `meta`:
+
+```ts
+handler({ event, meta }) {
+  meta.cascadeDepth;     // 0 для top-level, 1 для "выпущенного изнутри родительского обработчика", …
+  meta.parentRunId;      // run id родительского триггера (undefined на глубине 0)
+  meta.parentTriggerId;  // trigger id родителя (undefined на глубине 0)
+}
+```
+
+Те же поля попадают в снепшоте инспектора — это и питает каскадное дерево в DevTools.
+
+## Дефолтная безопасность: `maxCascadeDepth`
+
+`createRuntime` дефолтит `maxCascadeDepth` в **3**. Всё, что за этим — пропускается; рантайм эмитит `onCascade` с `kind: 'overflow'`, и диспатч этой цепочки останавливается. По умолчанию исключение не кидается.
+
+```ts title="src/main.ts"
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  maxCascadeDepth: 3, // дефолт — намеренно маленький
+});
+```
+
+Число маленькое намеренно. Три шага — этого достаточно для легитимных кейсов ("событие → обработчик → каскад-событие → обработчик → каскад-событие → обработчик"). Четыре и больше обычно значит, что кто-то прикрутил мелкий пайплайн к реестру триггеров вместо того, чтобы написать функцию. Поднимать лимит — запах, если у тебя нет письменной причины.
+
+### Как выглядит overflow
+
+Middleware `onCascade` происходит с полным контекстом. Без установленного middleware overflow тихий на рантайме, но всё ещё аннотирован в буфере инспектора (status `'skipped'`, reason `cascade-overflow`).
+
+```ts title="src/cascade-logger.ts"
+import type { Middleware } from '@triggery/core';
+
+export const cascadeLogger: Middleware = {
+  name: 'cascade-logger',
+  onCascade({ parentTriggerId, parentRunId, newEventName, cascadeDepth, kind }) {
+    if (kind === 'overflow') {
+      console.warn(
+        `[cascade] depth ${cascadeDepth} exceeded — '${newEventName}' from ${parentTriggerId}/${parentRunId} dropped`,
+      );
+    }
+  },
+};
+```
+
+## Детект циклов
+
+Независимо от глубины, рантайм детектит **циклы** per top-level вызов. Пока обработчик идёт, диспетчер держит ссылку на parent-цепочку; перед повторным входом в триггер он идёт по этой цепочке, ища id триггера. Хит значит "этот триггер уже работает выше в цепочке" — второй вход пропускается с `kind: 'cycle'`.
+
+```text
+  fire('a')          ┐
+       v             │
+   trigger X         │
+       v             │  идём по цепочке: X уже здесь → cycle
+   actions.foo()     │
+       v             │
+   runtime.fire('b') │
+       v             │
+   trigger Y         │
+       v             │
+   actions.bar()     │
+       v             │
+   runtime.fire('a') ┘  → onCascade({ kind: 'cycle' }), trigger X пропущен
+```
+
+Детект циклов **per-top-level-fire** — независимые top-level вызовы не делят цепочку. Проверка O(depth), а не O(триггеров-в-рантайме), так что ремень безопасности не стоит ничего на горячем пути, даже с тысячами зарегистрированных триггеров.
+
+<Aside type="tip">
+Цикл в продакшене — почти всегда регрессия. Подпишись на `onCascade` и логай `kind: 'cycle'` в Sentry / твой error-монитор; parent ids точно скажут, какие два триггера накормили друг друга.
+</Aside>
+
+## Конфигурация поведения каскадов
+
+Сегодня одна ручка — `maxCascadeDepth` — плюс хук middleware `onCascade`. Будущие opt-in режимы (`'forbid'`, `'throw'`) в роадмапе.
+
+```ts title="src/main.ts"
+const runtime = createRuntime({
+  maxCascadeDepth: 5,           // подними, если намеренно более глубокая цепочка
+  middleware: [cascadeLogger],  // наблюдай overflow + cycle события
+});
+```
+
+Если хочешь строгого поведения сегодня — пиши middleware:
+
+```ts title="src/strict-cascade.ts"
+import type { Middleware } from '@triggery/core';
+
+export const strictCascade: Middleware = {
+  name: 'strict-cascade',
+  onCascade({ kind, newEventName, parentTriggerId }) {
+    throw new Error(
+      `[cascade] ${kind} — '${newEventName}' from ${parentTriggerId} (cascade strict-mode on)`,
+    );
+  },
+};
+```
+
+Throw приземлится в `try/catch` родительского обработчика (по [Error handling](/ru/guide/essentials/handlers/)) — он *не* пробрасывается в `runtime.fire`, который by design fire-and-forget.
+
+## DEV: запретить каскады вообще
+
+В редакторе предпочитай **статическую** проверку из ESLint-плагина. Лимит каскадов рантайма ловит то, что просочилось в рантайм; lint-правило держит каскады вне кодовой базы.
+
+```js title="eslint.config.js"
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  {
+    plugins: { '@triggery': triggery },
+    rules: {
+      // запрещает вызовы `useEvent(...)` внутри обработчика `useAction(...)`
+      '@triggery/no-event-cascade': 'error',
+    },
+  },
+];
+```
+
+Это ловит самый частый каскад по статической структуре — реактор, запускающий другое событие. Рантайм держит лимит глубины сверху, потому что некоторые легитимные каскады не имеют формы `useEvent` (например, обработчик, зовущий `runtime.fire` напрямую).
+
+## Когда каскад в порядке
+
+Каскады отрабатывают свой вес, когда каждый шаг **независим и осмыслен сам по себе**:
+
+- **Закрытие модалки → событие аналитики.** Сценарий модалки не знает, что что-то это трекает. Сценарий аналитики не знает, какая модалка закрылась.
+- **Auth-refresh успешен → перевзведи watchers.** Watcher'ы знают про "сессия изменилась", не про "триггер refresh сделал изменение".
+- **Документ открыт → обновление списка недавно просмотренных.** Два сценария — открытие документа и учёт недавних — делят границу события.
+
+В каждом кейсе родитель короткий, ребёнок короткий, и ни одному не нужно читать или звать другого.
+
+```ts title="OK — modal-close → analytics"
+export const closeModalTrigger = createTrigger<{
+  events:  { 'modal:close-requested': { modalId: string } };
+  actions: { closeModal: { modalId: string } };
+}>({
+  id: 'close-modal',
+  events: ['modal:close-requested'],
+  required: [],
+  handler({ event, actions }) {
+    actions.closeModal?.(event.payload);
+    runtime.fire('modal:closed', event.payload);
+  },
+});
+
+export const trackModalCloseTrigger = createTrigger<{
+  events:  { 'modal:closed': { modalId: string } };
+  actions: { trackEvent: AnalyticsEvent };
+}>({
+  id: 'track-modal-close',
+  events: ['modal:closed'],
+  required: [],
+  handler({ event, actions }) {
+    actions.trackEvent?.({ name: 'modal:closed', modalId: event.payload.modalId });
+  },
+});
+```
+
+## Когда каскад — это запах
+
+Цепочка перестаёт быть оркестрацией и начинает быть закодированной функцией в тот момент, когда **один шаг существует только чтобы включить следующий**.
+
+- **Три триггера, один исход.** `validate → save → toast` — это функция с обманчивым следом в реестре. Консолидируй (см. [Борьба со спагетти](/ru/guide/architecture/anti-spaghetti/)).
+- **Каскад, кормящий назад.** Триггер A производит событие B; триггер B производит событие A; ты обнаруживаешь это через cycle-warning. Останови, найди третий триггер, владеющий правдой, и пусть оба зависят от него.
+- **Каскад через `setTimeout` или `await`.** Каскад-трекинг следует только за **синхронной** частью async-обработчика — после первого `await` следующий `runtime.fire` — это свежий top-level эмит. Если твой "каскад" работает только потому, что родитель sync, ты полагаешься на implementation detail; вытяни это в явный продьюсер.
+
+<Aside type="caution" title="Async cascade caveat">
+После первого `await` в async-обработчике контекст диспатча восстанавливается на фрейм вызывающего. Последующий `runtime.fire` трактуется как абсолютно новый top-level эмит: `cascadeDepth` сбрасывается в 0, `parentRunId` undefined, детект циклов больше не видит цепочку. Если нужна трассируемая оркестрация через `await`, захвати `meta.runId` до await'а и пробрось через payload события, или раздели post-await работу в собственный триггер, который *достигается* синхронно.
+</Aside>
+
+## Каскадное дерево в инспекторе
+
+Когда инспектор включён (DEV по умолчанию, opt-in для PROD), каждый прогон несёт `parentRunId` / `parentTriggerId` в снепшоте. `@triggery/devtools-redux` и `@triggery/devtools-bridge` рендерят это как дерево:
+
+```text
+run_3k  session-bootstrap     fire    new-user
+ └─ run_3l  welcome-toast     fire    toast:shown
+     └─ run_3m  toast-analytics fire   (no actions)
+```
+
+Тот же вид можно собрать из `runtime.getInspectorBuffer()` за 30 строк в кастомной панели — см. [Инспектор](/ru/guide/advanced/inspector/).
+
+## Чит-шит
+
+| Хочешь… | Тянись к |
+|---|---|
+| Жёсткий потолок длины цепочки | `createRuntime({ maxCascadeDepth })` |
+| Наблюдать overflow'ы и циклы | `Middleware.onCascade` |
+| Запретить каскады в редакторе | `@triggery/no-event-cascade` |
+| Throw на каждое каскад-событие | Кастомный `onCascade` middleware, который re-throw'ит |
+| Исследовать конкретную цепочку | `meta.parentRunId` + `runtime.getInspectorBuffer()` |
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Борьба со спагетти"
+    description="Когда НЕ делать триггер, и как разбить жирный, пока он не начал ронять каскады."
+    href="/ru/guide/architecture/anti-spaghetti/"
+  />
+  <LinkCard
+    title="Скоупы"
+    description="Запускай ту же триггер-логику в изолированных панелях без кросс-опыления."
+    href="/ru/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Middleware"
+    description="Полная поверхность хуков жизненного цикла — onFire, onCascade, onSkip, onActionStart, onActionEnd, onError."
+    href="/ru/guide/advanced/middleware/"
+  />
+  <LinkCard
+    title="Инспектор"
+    description="Кольцевой буфер, useInspect, каскадное дерево в DevTools."
+    href="/ru/guide/advanced/inspector/"
+  />
+</CardGrid>

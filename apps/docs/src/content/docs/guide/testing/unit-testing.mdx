@@ -1,0 +1,470 @@
+---
+title: Unit testing
+description: "Test a trigger in isolation — no React tree, no DOM, no jsdom. Just an isolated runtime, mocked conditions, mocked actions and asserted side effects."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+A trigger handler is a near-pure function of an event payload, a snapshot of conditions, and a set of action handlers. That shape is the whole reason Triggery exists — and it's also the reason trigger tests are short, fast and framework-agnostic. You don't render anything. You don't await an effect commit. You don't fake a `<Provider>`. You build a tiny runtime, mock the ports, fire the event, assert what was called.
+
+This page covers the unit-testing surface in [`@triggery/testing`](/packages/testing/): `createTestRuntime`, `mockCondition`, `mockAction`, `fireSync` versus `fire` + `flushMicrotasks`, and the inspector as an assertion target.
+
+## Install
+
+```sh title="Add the testing kit as a dev dependency"
+pnpm add -D @triggery/testing
+```
+
+The package has no runtime dependencies beyond `@triggery/core` (which you already have). It works the same in Vitest, Jest with ESM, `node:test` and `bun:test` — no test-runner globals are touched.
+
+## The shape of a trigger test
+
+```ts title="src/triggers/__tests__/message.test.ts"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, test, vi } from 'vitest';
+
+test('shows a toast when notifications are on', () => {
+  // 1. Isolated runtime — no global state.
+  const rt = createTestRuntime();
+
+  // 2. Define the trigger against that runtime (note the second arg).
+  const trigger = createTrigger<{
+    events:     { 'new-message': { author: string; text: string } };
+    conditions: { settings: { notifications: boolean } };
+    actions:    { showToast: { title: string; body: string } };
+  }>(
+    {
+      id: 'message-received',
+      events: ['new-message'],
+      required: ['settings'],
+      handler({ event, conditions, actions }) {
+        if (!conditions.settings?.notifications) return;
+        actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+      },
+    },
+    rt,
+  );
+
+  // 3. Mock the ports.
+  rt.mockCondition(trigger, 'settings', { notifications: true });
+  const showToast = vi.fn();
+  rt.mockAction(trigger, 'showToast', showToast);
+
+  // 4. Fire and assert.
+  rt.fireSync('new-message', { author: 'Alice', text: 'hi' });
+  expect(showToast).toHaveBeenCalledExactlyOnceWith({ title: 'Alice', body: 'hi' });
+});
+```
+
+Four lines of setup, one line of action, two lines of assertion. That's the whole shape. Everything below is a variation.
+
+## `createTestRuntime` — an isolated runtime per test
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+```
+
+`createTestRuntime(options?)` wraps `createRuntime` from `@triggery/core` and adds three test-only methods: `mockCondition`, `mockAction`, `flushMicrotasks`. Everything else from the public `Runtime` API is available — `fire`, `fireSync`, `subscribe`, `getInspectorBuffer`, `graph`, `dispose`.
+
+The crucial bit is **isolation**. Two test runtimes share nothing — no triggers, no event index, no inspector buffer. Define a trigger against `rtA`, fire on `rtB`, and the trigger doesn't run:
+
+```ts title="Triggers do not leak across test runtimes"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, test, vi } from 'vitest';
+
+test('isolated', () => {
+  const rtA = createTestRuntime();
+  const rtB = createTestRuntime();
+  const log = vi.fn();
+
+  createTrigger<{ events: { tick: number }; actions: { log: number } }>(
+    {
+      id: 'iso',
+      events: ['tick'],
+      handler: ({ event, actions }) => actions.log?.(event.payload),
+    },
+    rtA,
+  );
+  rtA.registerAction('iso', 'log', log);
+
+  rtB.fireSync('tick', 1);
+  expect(log).not.toHaveBeenCalled();
+
+  rtA.fireSync('tick', 7);
+  expect(log).toHaveBeenCalledExactlyOnceWith(7);
+});
+```
+
+This is why you should always pass the runtime as the second argument to `createTrigger` in tests. Calling `createTrigger(config)` without one falls back to `getDefaultRuntime()`, which **is** a global singleton — and leaks across tests.
+
+<Aside type="caution">
+The `triggers` option in `createTestRuntime({ triggers: [...] })` is reserved for V1.1 (pre-registration shorthand). In V1, pass the runtime to `createTrigger` as the second argument — that's the only supported wiring.
+</Aside>
+
+### Options
+
+`createTestRuntime` accepts the same `RuntimeOptions` as `createRuntime`:
+
+```ts
+const rt = createTestRuntime({
+  middleware: [tracingMiddleware],
+  maxCascadeDepth: 5,
+  inspectorBufferSize: 200,
+  inspector: true, // force on; default already on in DEV
+});
+```
+
+For most tests the defaults are fine. Bump `inspectorBufferSize` if you assert on long sequences. Force `inspector: true` if your test runner sets `NODE_ENV=production` for some reason — without it, `getInspectorBuffer()` would return an empty array.
+
+## `mockCondition` — supply a snapshot
+
+```ts
+rt.mockCondition(trigger, 'name', valueOrGetter);
+```
+
+Use it where a `useCondition` would normally run. Two forms:
+
+```ts title="Plain value — the runtime wraps it as a getter"
+rt.mockCondition(trigger, 'settings', { notifications: true, sound: false });
+```
+
+```ts title="Zero-argument getter — useful for dynamic values"
+let counter = 0;
+rt.mockCondition(trigger, 'threshold', () => ++counter);
+
+rt.fireSync('tick', 0);
+rt.fireSync('tick', 0);
+// counter incremented on each fire — handler sees 1, then 2.
+```
+
+The wrapping rule: if you pass a function with `arity === 0`, it's treated as the getter directly. If you pass anything else — including a function with parameters — it's treated as the value and wrapped in `() => valueOrGetter`. The escape hatch for "my condition value is itself a zero-arg function" is to pass an explicit getter: `() => myFn`.
+
+`mockCondition` returns a `RegistrationToken` with an `unregister()` method, exactly like `registerCondition`. Use it to test mid-run replacement:
+
+```ts title="Replace a condition mid-test"
+const tok = rt.mockCondition(trigger, 'settings', { notifications: true });
+rt.fireSync('msg', payload);
+expect(showToast).toHaveBeenCalledOnce();
+
+tok.unregister();
+rt.mockCondition(trigger, 'settings', { notifications: false });
+rt.fireSync('msg', payload);
+expect(showToast).toHaveBeenCalledOnce(); // still one
+```
+
+## `mockAction` — register a side-effect handler
+
+```ts
+rt.mockAction(trigger, 'name', handler);
+```
+
+`handler` is typically `vi.fn()` (or `jest.fn()` / a bare closure with side effects you can assert later). The trigger's `actions.name?.(payload)` calls go straight to your handler.
+
+```ts title="Vitest"
+import { vi } from 'vitest';
+
+const playSound = vi.fn();
+rt.mockAction(trigger, 'playSound', playSound);
+
+rt.fireSync('new-message', { /* ... */ });
+
+expect(playSound).toHaveBeenCalledWith('beep');
+expect(playSound).toHaveBeenCalledTimes(1);
+```
+
+```ts title="Plain closures — no spy library"
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+test('plays a beep', () => {
+  const calls: string[] = [];
+  rt.mockAction(trigger, 'playSound', (sound) => { calls.push(sound); });
+
+  rt.fireSync('new-message', { /* ... */ });
+  assert.deepEqual(calls, ['beep']);
+});
+```
+
+Like `mockCondition`, this returns a token. The runtime keeps a stack of registrations per name and the most recent one wins — so registering a second mock for the same action transparently replaces the first (and unregistering pops back to the previous one).
+
+## Firing events: `fireSync` versus `fire`
+
+The runtime has two firing modes and your test picks the one that matches how the trigger will run in production.
+
+### `fireSync` — bypass the scheduler
+
+```ts
+rt.fireSync('new-message', payload);
+expect(showToast).toHaveBeenCalled(); // already true
+```
+
+`fireSync` dispatches handlers in the same call frame, before `fireSync` returns. No microtask, no `await`. Use it for:
+
+- Synchronous handlers (the default).
+- Hot-path tests where you want call-stack determinism.
+- Reproducing a "fire from inside an action" cascade in a single tick.
+
+### `fire` + `flushMicrotasks` — through the scheduler
+
+```ts
+rt.fire('new-message', payload);
+expect(showToast).not.toHaveBeenCalled(); // still queued
+
+await rt.flushMicrotasks();
+expect(showToast).toHaveBeenCalled();
+```
+
+`fire` queues dispatch on the microtask scheduler — the same path your production code takes. Two `fire` calls in the same tick batch into one microtask drain. Use it to test:
+
+- Microtask coalescing (two rapid `fire`s should both run before the next macrotask).
+- Anything that genuinely depends on the scheduler — order, batching, the `'sync'` schedule option.
+
+`flushMicrotasks` is `await Promise.resolve()` twice; it lets queued handlers run, including any follow-up microtasks they schedule. After it resolves, assertions are safe.
+
+<Aside type="tip">
+Mixing `fire` and `await rt.flushMicrotasks()` is the closer match to production — but `fireSync` is shorter, harder to break, and what most unit tests actually want. Reach for `fire` when you're specifically testing scheduler behaviour.
+</Aside>
+
+## Async assertions
+
+For an async handler — one that returns a `Promise` — you must let it settle. The same `flushMicrotasks` pattern works, with extra rounds if the handler does its own awaiting:
+
+```ts title="Async handler"
+const trigger = createTrigger<{
+  events: { fetch: { url: string } };
+  actions: { onData: unknown };
+}>(
+  {
+    id: 'fetcher',
+    events: ['fetch'],
+    async handler({ event, actions, signal }) {
+      const res = await fetch(event.payload.url, { signal });
+      if (signal.aborted) return;
+      actions.onData?.(await res.json());
+    },
+  },
+  rt,
+);
+
+rt.mockAction(trigger, 'onData', onData);
+rt.fire('fetch', { url: '/api/x' });
+
+// Wait for the handler's internal awaits — one for fetch, one for res.json().
+await new Promise((r) => setTimeout(r, 0));
+expect(onData).toHaveBeenCalled();
+```
+
+For deterministic timing, mock `fetch` (MSW, `vi.fn()`, a closure) so the resolution happens on a known microtask. Then `await rt.flushMicrotasks()` is usually enough.
+
+## Asserting skip reasons via the inspector
+
+When a trigger doesn't run, the inspector records why. That's the cleanest assertion target for "did it skip because the required condition was missing" — much better than asserting the action was *not* called, which proves nothing about the path taken.
+
+```ts title="Assert that 'missing-required' was the reason"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, test } from 'vitest';
+
+test('skips without settings', () => {
+  const rt = createTestRuntime();
+  createTrigger<{
+    events: { 'new-message': void };
+    conditions: { settings: { notifications: boolean } };
+    actions: { showToast: void };
+  }>(
+    {
+      id: 'message-received',
+      events: ['new-message'],
+      required: ['settings'],
+      handler({ actions }) { actions.showToast?.(); },
+    },
+    rt,
+  );
+
+  // Note: no `mockCondition` for 'settings' — `required` is missing.
+  rt.fireSync('new-message');
+
+  const [snapshot] = rt.getInspectorBuffer();
+  expect(snapshot?.status).toBe('skipped');
+  expect(snapshot?.reason).toMatch(/missing-required/);
+});
+```
+
+Other skip reasons you can match on:
+
+| Reason fragment | Meaning |
+|---|---|
+| `'missing-required: <name>'` | A `required` condition wasn't registered. |
+| `'disabled'` | The trigger was `trigger.disable()`-d. |
+| `'cancelled-by-middleware: <name>'` | A middleware's `onFire` returned `{ cancel: true }`. |
+
+The inspector also records `executedActions: readonly string[]` per run — handy for asserting which actions actually fired (think debounce/throttle):
+
+```ts
+rt.fireSync('msg', a);
+rt.fireSync('msg', b); // debounced, should suppress the first
+// ...flush timers via fake scheduler...
+const [snapshot] = rt.getInspectorBuffer();
+expect(snapshot?.executedActions).toEqual(['showToast']); // only one
+```
+
+See [Inspector](/guide/advanced/inspector/) for the full snapshot shape.
+
+## Snapshot inspection patterns
+
+Three useful patterns when you're debugging a flaky trigger or building a contract test.
+
+### Last run
+
+```ts
+const last = trigger.inspect();
+expect(last).toMatchObject({ status: 'fired', eventName: 'new-message' });
+```
+
+`trigger.inspect()` returns the latest snapshot for that trigger, or `undefined` if it hasn't run. Equivalent to `runtime.getInspectorBuffer().find(s => s.triggerId === trigger.id)` but O(1).
+
+### Full sequence (newest first)
+
+```ts
+rt.fireSync('msg', a);
+rt.fireSync('msg', b);
+rt.fireSync('msg', c);
+
+const buffer = rt.getInspectorBuffer();
+expect(buffer.map((s) => s.status)).toEqual(['fired', 'fired', 'fired']);
+```
+
+The buffer is a ring; default size is 50. If you assert on long sequences, bump `inspectorBufferSize`.
+
+### Subscribed listener
+
+```ts
+const seen: string[] = [];
+const token = rt.subscribe((s) => { seen.push(s.status); });
+rt.fireSync('msg', a);
+rt.fireSync('msg', b);
+token.unregister();
+expect(seen).toEqual(['fired', 'fired']);
+```
+
+Useful when you want to assert ordering across multiple triggers in one runtime.
+
+## Vitest configuration
+
+A minimal Vitest config that picks up trigger tests anywhere in `src/`:
+
+```ts title="vitest.config.ts"
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    include: ['src/**/*.{test,spec}.ts', 'src/**/__tests__/**/*.ts'],
+    environment: 'node', // no DOM needed for unit tests
+    globals: false,      // import { test, expect } from 'vitest' explicitly
+    clearMocks: true,    // mock fns reset between tests
+  },
+});
+```
+
+`environment: 'node'` is intentional — unit tests don't render React, so jsdom buys you nothing and slows the suite. Use `environment: 'jsdom'` (or `happy-dom`) only for the [integration tests](/guide/testing/integration-testing/).
+
+A small global helper to keep tests tidy:
+
+```ts title="src/test-utils/runtime.ts"
+import { createTestRuntime, type TestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach } from 'vitest';
+
+let rt: TestRuntime;
+export const getRuntime = (): TestRuntime => rt;
+
+beforeEach(() => { rt = createTestRuntime(); });
+afterEach(() => { rt.dispose(); });
+```
+
+Then every test starts with a fresh runtime and `dispose()` clears any in-flight timers from cancelled async handlers — no leakage between tests.
+
+## Jest interop notes
+
+Triggery packages are ESM-only. Jest's default config still treats files as CommonJS, which makes `import { createTrigger } from '@triggery/core'` fail with a `SyntaxError: Cannot use import statement outside a module`. Two ways out:
+
+### Run Jest with the ESM VM flag (recommended)
+
+```json title="package.json"
+{
+  "scripts": {
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
+  },
+  "jest": {
+    "extensionsToTreatAsEsm": [".ts"],
+    "transform": {},
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    }
+  }
+}
+```
+
+This works for Jest 28+ and is the official ESM path. If you're on an older Jest, upgrade — the ESM story before 28 is too brittle for daily use.
+
+### Switch to Vitest
+
+If you can choose: Vitest runs Jest-shaped tests with no transform config, native ESM, and a ~10× faster cold start. The migration is `import { test, expect, vi } from 'vitest'` and a one-page `vitest.config.ts`. Trigger tests are pure logic — there's no Jest API you'd miss.
+
+## `bun:test` and `node:test`
+
+Both work out of the box. The kit doesn't depend on any Vitest-specific globals; the only test-runner adaptation is which mock library you use.
+
+```ts title="node:test — built into Node 20+"
+import { mock, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+test('plays sound', () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{ events: { msg: void }; actions: { playSound: 'beep' } }>(
+    { id: 'msg', events: ['msg'], handler: ({ actions }) => actions.playSound?.('beep') },
+    rt,
+  );
+  const playSound = mock.fn();
+  rt.mockAction(t, 'playSound', playSound);
+
+  rt.fireSync('msg');
+  assert.equal(playSound.mock.callCount(), 1);
+  assert.deepEqual(playSound.mock.calls[0]?.arguments, ['beep']);
+});
+```
+
+```ts title="bun:test"
+import { test, expect, mock } from 'bun:test';
+// …same shape as Vitest
+```
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Fake scheduler"
+    description="Deterministic virtual clock for debounce / throttle / defer tests."
+    href="/guide/testing/fake-scheduler/"
+  />
+  <LinkCard
+    title="Integration testing"
+    description="Render the real provider tree with React / Solid / Vue testing libraries."
+    href="/guide/testing/integration-testing/"
+  />
+  <LinkCard
+    title="Inspector"
+    description="The snapshot shape — durationMs, executedActions, snapshotKeys, status."
+    href="/guide/advanced/inspector/"
+  />
+  <LinkCard
+    title="@triggery/testing"
+    description="API reference for createTestRuntime, mockCondition, mockAction, fakeScheduler."
+    href="/packages/testing/"
+  />
+</CardGrid>

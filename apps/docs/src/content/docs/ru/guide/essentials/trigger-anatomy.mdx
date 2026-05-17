@@ -1,0 +1,226 @@
+---
+title: Анатомия триггера
+description: "Каждое поле конфигурации createTrigger разобрано: что именно оно даёт."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`createTrigger` — единственный конструктор в публичном API. Каждый триггер выглядит так:
+
+```ts title="Anatomy"
+const myTrigger = createTrigger<Schema>({
+  id:           'unique-id',
+  events:       ['event-a', 'event-b'],
+  required:     ['conditionA', 'conditionB'],
+  schedule:     'microtask',         // optional
+  concurrency:  'take-latest',       // optional
+  scope:        'feature-x',         // optional
+  handler({ event, conditions, actions, check, signal, meta }) {
+    // …
+  },
+});
+```
+
+Восемь полей, три из них опциональные. Разберём каждое.
+
+## Обобщённый параметр схемы
+
+`<Schema>` — единственный источник правды о наборе портов триггера. У него три опциональные карты:
+
+```ts
+type Schema = {
+  events?:     Record<string, unknown>; // payload type per event name
+  conditions?: Record<string, unknown>; // value type per condition name
+  actions?:    Record<string, unknown>; // payload type per action name
+};
+```
+
+Триггеры без событий запрещены на этапе компиляции — без события триггер никогда не запустится. А вот без условий или без действий — нормально и часто полезно: у многих аналитических триггеров одно событие и одно действие.
+
+Пустой payload пишется как `void`:
+
+```ts
+events: {
+  'app:ready':       void;             // no payload
+  'message-received': { author: string };
+};
+```
+
+<Aside type="tip">
+Каждое имя в каждой карте становится строковым литералом в `ctx`. Имена могут быть в kebab-case, с двоеточиями, точками, слешами — любая валидная строка JavaScript. Договорённость: kebab-case-глаголы для событий, camelCase-существительные для условий и действий.
+</Aside>
+
+## `id` (обязательно)
+
+Уникальная строка, идентифицирующая триггер в рантайме. Её используют три вещи:
+
+- **Инспектор** индексирует прогоны по `id`.
+- **DevTools** подписывают действия как `triggery/<id>/fire`.
+- **`graph()`** (CLI / API рантайма) делает по одной ноде на каждый `id`.
+
+Id **должен быть строковым литералом**. Правило `no-dynamic-id` из `@triggery/eslint-plugin` это контролирует — динамические id ломают devtools, индексацию инспектора и статический экстрактор графа.
+
+```ts
+// ✓
+createTrigger<Schema>({ id: 'message-received', /* … */ });
+
+// ✗ — rejected by ESLint, breaks devtools.
+const dynamic = `trigger-${Date.now()}`;
+createTrigger<Schema>({ id: dynamic, /* … */ });
+```
+
+Id — это **существительные в kebab-case, описывающие сценарий**, а не событие. `message-received` читается лучше, чем `on-new-message-show-toast` или `new-message`. Имя, совпадающее с реальным продуктовым понятием, ещё и делает инспектор читаемым.
+
+## `events` (обязательно)
+
+Readonly-массив имён событий из схемы. Рантайм индексирует триггеры по имени события — рассматриваются только те триггеры, у которых в `events` указано сработавшее событие.
+
+```ts
+events: ['new-message', 'urgent-message'],
+```
+
+Если у триггера одно событие — укажи его. Если он реагирует на несколько — перечисли все: обработчик увидит `event.name` и `event.payload`, типизированные как объединение всех перечисленных событий.
+
+Этот список — единственное, против чего eslint-правило `exhaustive-conditions` делает кросс-проверку. Если в файле вызывается `useEvent(messageTrigger, 'foo')`, но `'foo'` нет в `events`, получишь lint-ошибку.
+
+## `required` (опционально)
+
+Список имён условий, которые должны присутствовать, чтобы обработчик запустился.
+
+```ts
+required: ['user', 'settings'],
+```
+
+Поведение:
+
+- Перед запуском обработчика рантайм проверяет, что **у каждого required-условия есть хотя бы один зарегистрированный геттер**.
+- Если хоть одного нет → `inspector.recordSkip('missing-required')`, обработчик не вызывается.
+- Если все есть → обработчик запускается как обычно.
+
+`required` — это шлюз, позволяющий безопасно собирать сценарии. Если `<UserProvider>` ещё не размещён, никто ничего не запускает; как только он смонтируется, следующее событие запустит обработчик.
+
+<Aside type="caution" title="Ограничение сужения типов в V1">
+В V1 `required` проверяется только в рантайме — TypeScript не сужает `conditions.user` до `User` (он остаётся `User | undefined`). Есть два безопасных способа прочитать required-условие:
+
+1. **Ручной guard** — `if (!conditions.user) return;`, после чего TS сам сужает тип.
+2. **`check.is` / `check.all`** — типобезопасные предикаты, умеющие обращаться с `undefined`.
+
+Билдер-API с автоматическим сужением — в [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) на V1.1.
+</Aside>
+
+## `schedule` (опционально, по умолчанию `'microtask'`)
+
+Управляет тем, когда отправленное событие диспатчится обработчикам.
+
+| Значение | Поведение | Сценарий |
+|---|---|---|
+| `'microtask'` (по умолчанию) | Все события, отправленные в одном тике, батчатся и диспатчатся в следующем microtask. | Почти всё. Хорошо сочетается с React. |
+| `'sync'` | Диспатч сразу, до возврата из `fireEvent`. | Тесты, горячие пути, где надо проверить побочный эффект в том же кадре вызова. |
+
+Будущие планировщики (`'animation-frame'`, `'idle'`, `'priority'`) есть в roadmap как опциональные варианты, а не как умолчания.
+
+## `concurrency` (опционально, по умолчанию `'take-latest'`)
+
+Управляет поведением *async* обработчиков, когда триггер срабатывает снова, пока предыдущий прогон ещё в полёте.
+
+| Стратегия | Поведение |
+|---|---|
+| `'take-latest'` (по умолчанию) | Новый прогон отменяет предыдущий через `signal.aborted = true`. За проверку отвечает сам предыдущий прогон. |
+| `'take-every'` | Каждый прогон идёт независимо. Без отмены. |
+| `'take-first'` / `'exhaust'` | Новые срабатывания игнорируются, пока один в полёте. |
+| `'queue'` | Новые срабатывания встают в очередь; сериализуются. |
+| `'sync'` | То же, что `take-every`; нужен как маркер для документации синхронных обработчиков. |
+
+Это важно только для `async` обработчиков. У синхронных обработчиков нет понятия «в полёте». См. [Стратегии конкурентности](/ru/guide/async/concurrency/).
+
+## `scope` (опционально)
+
+Привязывает триггер к `<TriggerScope id="...">`. Внутри этого скоупа триггеру видны только регистрации, сделанные через `useCondition` / `useAction` в том же скоупе. Без скоупа триггер видит все глобальные регистрации.
+
+```ts
+createTrigger<Schema>({ id: 'message-received', scope: 'chat', /* … */ });
+```
+
+```tsx
+<TriggerScope id="chat">
+  <ChatRoom />        {/* useCondition('user', …) — only this trigger sees it */}
+  <NotificationLayer />
+</TriggerScope>
+<TriggerScope id="settings">
+  {/* this scope's registrations are invisible to the 'chat'-scoped trigger */}
+</TriggerScope>
+```
+
+Сценарий — *изоляция фичи*: два экземпляра одной триггер-логики работают в двух разных панелях чата, у каждого свой стейт, и их условия не наступают друг другу на пятки. См. [Скоупы](/ru/guide/architecture/scopes/).
+
+## `handler` (обязательно)
+
+Функция, которая запускается, когда происходит подходящее событие и все `required`-условия на месте. Аргумент — **контекст триггера** (`ctx`) с шестью полями:
+
+```ts
+handler({ event, conditions, actions, check, signal, meta }) {
+  // event       — { name, payload } discriminated union of all listed events
+  // conditions  — { [name]: value | undefined } typed map of registered values
+  // actions     — { [name]: (payload) => void } typed map of registered actions
+  //               + actions.debounce(ms).foo(), actions.throttle(ms).foo(), etc.
+  // check       — { is, all, any } typed predicate helpers over conditions
+  // signal      — AbortSignal that flips when this run is superseded
+  // meta        — { triggerId, runId, cascadeId, scheduledAt, … }
+}
+```
+
+Полный разбор каждого поля — в [Обработчиках](/ru/guide/essentials/handlers/).
+
+Обработчик может быть `async`. Тогда он получает `AbortSignal`, который рантайм переключает, когда новый прогон вытесняет этот (под `take-latest`) или когда рантайм / скоуп уничтожается. Передавай его в свои `fetch`-вызовы.
+
+```ts
+async handler({ event, signal, actions }) {
+  const res = await fetch(event.payload.url, { signal });
+  if (signal.aborted) return;
+  actions.show?.(await res.json());
+}
+```
+
+## Что возвращает `createTrigger`
+
+Объект `Trigger<Schema>` с небольшим API:
+
+```ts
+trigger.id;                  // the same string you passed in
+trigger.enable();            // re-enable a disabled trigger
+trigger.disable();           // skip future events (records 'disabled' in inspector)
+trigger.isEnabled();         // boolean
+trigger.inspect();           // current snapshot — most recent run, run count, …
+trigger.dispose();           // unregister from the runtime; usually never called
+trigger.namedHooks();        // → use the createNamedHooks() helper instead
+```
+
+К большинству из этого ты никогда не прикоснёшься — `dispose` нужен в тестах, `disable` — для фича-флагов.
+
+## Где живёт триггер
+
+Договорённость — один триггер на файл, с суффиксом `.trigger.ts`. Помести его в `src/triggers/` или положи рядом с фичей, к которой он относится:
+
+```text
+src/
+├── features/
+│   ├── chat/
+│   │   ├── Chat.tsx
+│   │   └── chat.trigger.ts       ← here
+│   └── notifications/
+│       ├── NotificationLayer.tsx
+│       └── notifications.trigger.ts
+└── triggers/                     ← or here, for cross-feature scenarios
+    └── analytics.trigger.ts
+```
+
+Автообнаружение через [`@triggery/vite`](/ru/packages/vite/) подхватывает каждый `*.trigger.ts` и импортирует его на старте. С ним руками никогда не приходится писать `import './triggers/message.trigger'`.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard title="События" description="Отправляй, реагируй, батчь и маршрутизируй события." href="/ru/guide/essentials/events/" />
+  <LinkCard title="Условия" description="Pull-only снимки состояния мира." href="/ru/guide/essentials/conditions/" />
+  <LinkCard title="Действия" description="Каналы побочных эффектов с debounce/throttle/queue." href="/ru/guide/essentials/actions/" />
+  <LinkCard title="Обработчики" description="ctx — event, conditions, actions, check, signal, meta." href="/ru/guide/essentials/handlers/" />
+</CardGrid>

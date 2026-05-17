@@ -1,0 +1,60 @@
+name: Deploy docs
+
+# Triggery docs are served from `triggeryjs.github.io` (root URL, no sub-path).
+# To make that work GitHub serves the artifact from an ORG-site repo:
+# `triggeryjs/triggeryjs.github.io`. This workflow builds the docs here and
+# pushes the static artifact to that other repo's default branch.
+#
+# Setup (one-time, manual):
+#   1. Create empty public repo `triggeryjs/triggeryjs.github.io`.
+#   2. Generate a fine-grained PAT (or use a deploy key) with `Contents: write`
+#      on that repo.
+#   3. Add the PAT as a secret in THIS repo called `DOCS_DEPLOY_TOKEN`.
+#   4. In `triggeryjs/triggeryjs.github.io` repo settings, enable GitHub Pages
+#      with source = "Deploy from a branch" → `main` / `(root)`.
+#
+# After step 4 the docs go live at https://triggeryjs.github.io within ~1 min
+# of every push to `main` of this repo.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/docs/**'
+      - 'packages/**/README.md'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Workspace packages must be built first so their dist/index.d.ts
+      # is available for Twoslash type-resolution in API reference pages.
+      - run: pnpm --filter "./packages/*" build
+      - run: pnpm --filter @triggery/docs build
+      - name: Push docs to triggeryjs/triggeryjs.github.io
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          external_repository: triggeryjs/triggeryjs.github.io
+          publish_branch: main
+          publish_dir: apps/docs/dist
+          force_orphan: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'docs: deploy from triggery@${{ github.sha }}'

@@ -1,0 +1,226 @@
+---
+title: Trigger anatomy
+description: "Every field of createTrigger config explained, with what each one buys you."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`createTrigger` is the only constructor in the public API. Every trigger looks like this:
+
+```ts title="Anatomy"
+const myTrigger = createTrigger<Schema>({
+  id:           'unique-id',
+  events:       ['event-a', 'event-b'],
+  required:     ['conditionA', 'conditionB'],
+  schedule:     'microtask',         // optional
+  concurrency:  'take-latest',       // optional
+  scope:        'feature-x',         // optional
+  handler({ event, conditions, actions, check, signal, meta }) {
+    // …
+  },
+});
+```
+
+Eight fields total, three of them optional. We'll walk each one.
+
+## The schema generic
+
+The `<Schema>` generic is the single source of truth for the trigger's port surface. It has three optional maps:
+
+```ts
+type Schema = {
+  events?:     Record<string, unknown>; // payload type per event name
+  conditions?: Record<string, unknown>; // value type per condition name
+  actions?:    Record<string, unknown>; // payload type per action name
+};
+```
+
+Triggers without events are illegal at compile time (an event triggers a trigger — without it nothing runs). Triggers without conditions or actions are fine, common, and useful — many analytics-only triggers have an event and a single action.
+
+A void payload is written `void`:
+
+```ts
+events: {
+  'app:ready':       void;             // no payload
+  'message-received': { author: string };
+};
+```
+
+<Aside type="tip">
+Each name in each map becomes a string-literal type in `ctx`. Names can include kebab-case, colons, dots, slashes — anything that's a valid JavaScript string. Convention: kebab-case verbs for events, camelCase nouns for conditions and actions.
+</Aside>
+
+## `id` (required)
+
+A unique string that identifies the trigger across the runtime. Three things use it:
+
+- **Inspector** keys runs by `id`.
+- **DevTools** label actions like `triggery/<id>/fire`.
+- **`graph()`** (CLI / runtime API) emits one node per `id`.
+
+The id **must be a string literal**. The `@triggery/eslint-plugin` rule `no-dynamic-id` enforces this — dynamic ids break devtools, inspector indexing, and the static graph extractor.
+
+```ts
+// ✓
+createTrigger<Schema>({ id: 'message-received', /* … */ });
+
+// ✗ — rejected by ESLint, breaks devtools.
+const dynamic = `trigger-${Date.now()}`;
+createTrigger<Schema>({ id: dynamic, /* … */ });
+```
+
+Ids should be **kebab-case nouns describing the scenario**, not the event. `message-received` reads better than `on-new-message-show-toast` or `new-message`. Picking a name that matches a real product concept also makes the inspector readable.
+
+## `events` (required)
+
+A readonly array of event names from the schema. The runtime indexes triggers by event name and only triggers whose `events` array includes the fired event are even considered.
+
+```ts
+events: ['new-message', 'urgent-message'],
+```
+
+If your trigger uses one event, list it. If it reacts to multiple events, list all of them — the handler will see `event.name` and `event.payload` typed as the union of all listed events.
+
+This list is also the only thing the eslint rule `exhaustive-conditions` cross-checks. If your file calls `useEvent(messageTrigger, 'foo')` but `'foo'` isn't in `events`, you'll get a lint error.
+
+## `required` (optional)
+
+A list of condition names that must be present for the handler to run.
+
+```ts
+required: ['user', 'settings'],
+```
+
+Behaviour:
+
+- Before the handler runs, the runtime checks that **every required condition has at least one registered getter**.
+- If any are missing → `inspector.recordSkip('missing-required')` and the handler is not called.
+- If all are present → handler runs normally.
+
+`required` is the gate that lets you wire scenarios safely. If `<UserProvider>` hasn't mounted yet, no one fires anything; once it mounts, the next event fires the handler.
+
+<Aside type="caution" title="V1 type-narrowing limitation">
+In V1, `required` is enforced at runtime only — TypeScript does not narrow `conditions.user` to `User` (it stays `User | undefined`). You have two safe ways to read a required condition:
+
+1. **Manual guard** — `if (!conditions.user) return;` after which TS narrows on its own.
+2. **`check.is` / `check.all`** — typesafe predicates that handle the `undefined` case.
+
+A builder API that auto-narrows is on the [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) for V1.1.
+</Aside>
+
+## `schedule` (optional, default `'microtask'`)
+
+Controls when a fired event is dispatched to handlers.
+
+| Value | Behaviour | Use case |
+|---|---|---|
+| `'microtask'` (default) | All events fired in one tick are batched and dispatched at the next microtask. | Almost everything. Plays well with React. |
+| `'sync'` | Dispatch immediately, before `fireEvent` returns. | Tests, hot paths where you need to assert a side effect in the same call frame. |
+
+Future schedulers (`'animation-frame'`, `'idle'`, `'priority'`) live on the roadmap as opt-in choices, not defaults.
+
+## `concurrency` (optional, default `'take-latest'`)
+
+Controls how *async* handlers behave when fired again while a previous run is still in flight.
+
+| Strategy | Behaviour |
+|---|---|
+| `'take-latest'` (default) | New run aborts the previous via `signal.aborted = true`. The previous run is responsible for checking. |
+| `'take-every'` | Every run proceeds independently. No abort. |
+| `'take-first'` / `'exhaust'` | New runs are dropped while one is in flight. |
+| `'queue'` | New runs queue up; serialized. |
+| `'sync'` | Same as `take-every`; provided as a documentation marker for sync-only handlers. |
+
+This only matters for `async` handlers. For sync handlers there's no concept of "in flight". See [Concurrency strategies](/guide/async/concurrency/).
+
+## `scope` (optional)
+
+Scopes a trigger to a `<TriggerScope id="...">`. Inside that scope, only registrations made with `useCondition` / `useAction` inside the same scope are visible to this trigger. Outside any scope, the trigger sees all global registrations.
+
+```ts
+createTrigger<Schema>({ id: 'message-received', scope: 'chat', /* … */ });
+```
+
+```tsx
+<TriggerScope id="chat">
+  <ChatRoom />        {/* useCondition('user', …) — only this trigger sees it */}
+  <NotificationLayer />
+</TriggerScope>
+<TriggerScope id="settings">
+  {/* this scope's registrations are invisible to the 'chat'-scoped trigger */}
+</TriggerScope>
+```
+
+The use case is *feature isolation*: two instances of the same trigger logic running in two different chat panels, each with its own state, without their conditions stomping on each other. See [Scopes](/guide/architecture/scopes/).
+
+## `handler` (required)
+
+The function that runs when a matching event fires and all `required` conditions are present. Its argument is the **trigger context** (`ctx`), with six fields:
+
+```ts
+handler({ event, conditions, actions, check, signal, meta }) {
+  // event       — { name, payload } discriminated union of all listed events
+  // conditions  — { [name]: value | undefined } typed map of registered values
+  // actions     — { [name]: (payload) => void } typed map of registered actions
+  //               + actions.debounce(ms).foo(), actions.throttle(ms).foo(), etc.
+  // check       — { is, all, any } typed predicate helpers over conditions
+  // signal      — AbortSignal that flips when this run is superseded
+  // meta        — { triggerId, runId, cascadeId, scheduledAt, … }
+}
+```
+
+See [Handlers](/guide/essentials/handlers/) for the full deep dive on each field.
+
+The handler may be `async`. When async, it gets an `AbortSignal` that the runtime flips when a newer run supersedes this one (under `take-latest`) or when the runtime/scope is disposed. Pass it into your `fetch` calls.
+
+```ts
+async handler({ event, signal, actions }) {
+  const res = await fetch(event.payload.url, { signal });
+  if (signal.aborted) return;
+  actions.show?.(await res.json());
+}
+```
+
+## What `createTrigger` returns
+
+A `Trigger<Schema>` object with a small API:
+
+```ts
+trigger.id;                  // the same string you passed in
+trigger.enable();            // re-enable a disabled trigger
+trigger.disable();           // skip future events (records 'disabled' in inspector)
+trigger.isEnabled();         // boolean
+trigger.inspect();           // current snapshot — most recent run, run count, …
+trigger.dispose();           // unregister from the runtime; usually never called
+trigger.namedHooks();        // → use the createNamedHooks() helper instead
+```
+
+Most of these you'll never touch — `dispose` is used in tests, `disable` in feature flags.
+
+## Where the trigger lives
+
+The convention is one trigger per file, suffixed `.trigger.ts`. Place it in `src/triggers/`, or co-locate with the feature it belongs to:
+
+```text
+src/
+├── features/
+│   ├── chat/
+│   │   ├── Chat.tsx
+│   │   └── chat.trigger.ts       ← here
+│   └── notifications/
+│       ├── NotificationLayer.tsx
+│       └── notifications.trigger.ts
+└── triggers/                     ← or here, for cross-feature scenarios
+    └── analytics.trigger.ts
+```
+
+Auto-discovery via [`@triggery/vite`](/packages/vite/) picks up every `*.trigger.ts` and imports it at boot time. With it you never write `import './triggers/message.trigger'` by hand.
+
+## Next
+
+<CardGrid>
+  <LinkCard title="Events" description="Fire, react to, batch and route events." href="/guide/essentials/events/" />
+  <LinkCard title="Conditions" description="Pull-only world snapshots." href="/guide/essentials/conditions/" />
+  <LinkCard title="Actions" description="Side-effect channels with debounce/throttle/queue." href="/guide/essentials/actions/" />
+  <LinkCard title="Handlers" description="ctx — event, conditions, actions, check, signal, meta." href="/guide/essentials/handlers/" />
+</CardGrid>

@@ -1,0 +1,430 @@
+---
+title: "Интеграционные тесты"
+description: "Когда модульных тестов недостаточно — рендер реального дерева провайдеров с тестовыми библиотеками React / Solid / Vue, проверки через DOM и изоляция рантайма пер-тест."
+---
+
+import { Aside, TabItem, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+Модульные тесты покрывают логику обработчика — при таком payload и таком снимке сработали ли нужные действия. Они ничего не говорят о слое, который этот снимок и подкладывает: `useCondition` в каком-то провайдере, `useAction` в каком-то реакторе, `useEvent` в каком-то продьюсере. Если баг в подключении — модульный тест его не поймает.
+
+Интеграционные тесты рендерят настоящее дерево компонентов под `TriggerRuntimeProvider`, отправляют события так, как это делает UI, и проверяют наблюдаемые побочные эффекты в DOM. Они медленнее модульных (jsdom + render + commit), поэтому их меньше — но они покрывают слой, где живёт большинство багов вида «забыл смонтировать реактор».
+
+## Когда писать интеграционный тест
+
+Тянись за ним, когда:
+
+- Баг в **регистрации** — провайдер не монтируется на каком-то маршруте, реактор размонтируется во время перехода, скоуп переименован.
+- Эффект триггера **виден в DOM** — появляется тост, переключается класс, перемещается фокус. Проверить, что побочный эффект *произошёл*, проще, чем что действие *было вызвано*, если вся цель действия — позвать сторонний UI-либ.
+- Тестируешь **сценарий через два скоупа / рантайма / микрофронтенда**.
+- Тестируешь **интеграцию с network-моком** (MSW) — данные, скачанные на событие, должны пройти через рантайм в реактор.
+
+На всё остальное предпочитай подход из [Модульных тестов](/ru/guide/testing/unit-testing/) — та же логика, ~10× быстрее.
+
+## Изолированный рантайм пер-тест
+
+Главное правило: **никогда не дели рантайм между тестами**. Без изоляции триггеры, зарегистрированные в одном тесте, протекают в следующий, провайдеры от вчерашнего рендера всё ещё держат регистрации, и ты проводишь полдня, разглядывая, «почему этот тест падает только когда перед ним прошёл предыдущий».
+
+Стандартный паттерн — свежий `createRuntime`, обёрнутый вокруг тестируемого компонента:
+
+```tsx title="src/test-utils/render-with-runtime.tsx (React)"
+import { createRuntime, type Runtime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { render, type RenderOptions } from '@testing-library/react';
+import type { ReactElement } from 'react';
+
+export function renderWithRuntime(
+  ui: ReactElement,
+  options: RenderOptions & { runtime?: Runtime } = {},
+) {
+  const runtime = options.runtime ?? createRuntime();
+  const result = render(ui, {
+    ...options,
+    wrapper: ({ children }) => (
+      <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>
+    ),
+  });
+  return { ...result, runtime };
+}
+```
+
+Тогда каждый тест получает свой рантайм *бесплатно* — а ты при этом можешь передать его явно, когда тесту нужно проверить инспектор:
+
+```tsx
+const { runtime } = renderWithRuntime(<App />);
+// ...interact...
+expect(runtime.getInspectorBuffer()[0]?.status).toBe('fired');
+```
+
+## React: React Testing Library
+
+```tsx title="src/features/__tests__/NotificationFlow.test.tsx"
+import { createTrigger } from '@triggery/core';
+import { useAction, useCondition, useEvent } from '@triggery/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
+import { expect, test } from 'vitest';
+import { renderWithRuntime } from '../../test-utils/render-with-runtime';
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings?.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+
+function SettingsPanel() {
+  const [on, setOn] = useState(true);
+  useCondition(messageTrigger, 'settings', () => ({ notifications: on }), [on]);
+  return (
+    <label>
+      <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} />
+      notifications
+    </label>
+  );
+}
+
+function Chat() {
+  const fire = useEvent(messageTrigger, 'new-message');
+  return (
+    <button onClick={() => fire({ author: 'Alice', text: 'hi' })}>send</button>
+  );
+}
+
+function ToastSlot() {
+  const [toast, setToast] = useState<string | null>(null);
+  useAction(messageTrigger, 'showToast', (p) => setToast(`${p.title}: ${p.body}`));
+  return toast ? <output role="status">{toast}</output> : null;
+}
+
+function App() {
+  return (
+    <>
+      <SettingsPanel />
+      <Chat />
+      <ToastSlot />
+    </>
+  );
+}
+
+test('toast appears when notifications are on', async () => {
+  renderWithRuntime(<App />);
+  fireEvent.click(screen.getByRole('button', { name: 'send' }));
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('Alice: hi');
+  });
+});
+
+test('no toast when notifications are off', async () => {
+  renderWithRuntime(<App />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /notifications/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'send' }));
+  // Microtask drains, no toast renders.
+  await new Promise((r) => setTimeout(r, 0));
+  expect(screen.queryByRole('status')).toBeNull();
+});
+```
+
+Несколько заметок по форме:
+
+- Триггер объявлен **на module scope**, ровно как в продакшене. Рантайм — пер-тест; модуль триггера общий. Это работает, потому что `createTrigger(config)` без второго аргумента регистрирует против `getDefaultRuntime()`, а `<TriggerRuntimeProvider runtime={fresh}>` переопределяет, к какому рантайму обращаются хуки.
+- Для полной изоляции (без общего дефолтного рантайма) передавай рантайм явно: `createTrigger(config, runtime)` внутри тестовой фабрики. Цена — больше настройки, меньше похоже на продакшен.
+- `await waitFor(...)` покрывает разрыв микротаски между `fire` и запуском обработчика. `await new Promise(r => setTimeout(r, 0))` тоже работает — выбирай, что роднее твоему сьюту.
+
+## Solid: Solid Testing Library
+
+```tsx title="src/features/__tests__/notification-flow.test.tsx"
+import { createTrigger } from '@triggery/core';
+import { useAction, useCondition, useEvent, TriggerRuntimeProvider } from '@triggery/solid';
+import { fireEvent, render, screen } from '@solidjs/testing-library';
+import { createRuntime } from '@triggery/core';
+import { createSignal } from 'solid-js';
+import { expect, test } from 'vitest';
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings?.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+
+function App() {
+  const [on, setOn] = createSignal(true);
+  const [toast, setToast] = createSignal<string | null>(null);
+  const fire = useEvent(messageTrigger, 'new-message');
+
+  useCondition(messageTrigger, 'settings', () => ({ notifications: on() }));
+  useAction(messageTrigger, 'showToast', (p) => setToast(`${p.title}: ${p.body}`));
+
+  return (
+    <>
+      <input type="checkbox" checked={on()} onChange={(e) => setOn(e.currentTarget.checked)} />
+      <button onClick={() => fire({ author: 'Alice', text: 'hi' })}>send</button>
+      {toast() ? <output role="status">{toast()}</output> : null}
+    </>
+  );
+}
+
+test('toast appears when notifications are on', async () => {
+  const runtime = createRuntime();
+  render(() => (
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  ));
+  fireEvent.click(screen.getByRole('button', { name: 'send' }));
+  // Microtask scheduler — wait one tick.
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(screen.getByRole('status').textContent).toBe('Alice: hi');
+});
+```
+
+Тестовая библиотека Solid экспортирует ту же поверхность `render` / `screen` / `fireEvent`, что и React-овская, но `render(() => <App />)` принимает функцию вместо JSX-элемента (рендеры Solid — реактивные функции, не снимки). Два `await Promise.resolve()` сливают планировщик микротасок — тот же приём, что использует `flushMicrotasks` внутри `@triggery/testing`.
+
+## Vue: Vue Test Utils
+
+```ts title="src/features/__tests__/NotificationFlow.test.ts"
+import { mount } from '@vue/test-utils';
+import { createRuntime } from '@triggery/core';
+import { defineComponent, ref } from 'vue';
+import { TriggerRuntimeProvider, useAction, useCondition, useEvent } from '@triggery/vue';
+import { createTrigger } from '@triggery/core';
+import { expect, test } from 'vitest';
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings?.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+
+const App = defineComponent({
+  setup() {
+    const on = ref(true);
+    const toast = ref<string | null>(null);
+    const fire = useEvent(messageTrigger, 'new-message');
+    useCondition(messageTrigger, 'settings', () => ({ notifications: on.value }));
+    useAction(messageTrigger, 'showToast', (p) => { toast.value = `${p.title}: ${p.body}`; });
+    return { on, toast, fire };
+  },
+  template: `
+    <div>
+      <input type="checkbox" v-model="on" />
+      <button @click="fire({ author: 'Alice', text: 'hi' })">send</button>
+      <output role="status" v-if="toast">{{ toast }}</output>
+    </div>
+  `,
+});
+
+test('toast appears when notifications are on', async () => {
+  const runtime = createRuntime();
+  const wrapper = mount(App, {
+    global: {
+      components: { TriggerRuntimeProvider },
+    },
+    slots: {
+      // not needed here — TriggerRuntimeProvider is provided via wrapping app
+    },
+  });
+  // Easier: wrap directly via a per-test root component.
+  const Root = defineComponent({
+    components: { TriggerRuntimeProvider, App },
+    template: `
+      <TriggerRuntimeProvider :runtime="runtime"><App /></TriggerRuntimeProvider>
+    `,
+    setup: () => ({ runtime }),
+  });
+  const root = mount(Root);
+
+  await root.get('button').trigger('click');
+  // Microtask drain.
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(root.get('[role="status"]').text()).toBe('Alice: hi');
+
+  wrapper.unmount();
+  root.unmount();
+});
+```
+
+Vue-овский `mount` даёт стандартный wrapper-API. Самый чистый паттерн — небольшой компонент `Root` пер-тест (или пер-файл), фиксирующий рантайм. Экспортируемый `TriggerRuntimeProvider` — тот же компонент, что и в продакшене — никакого отдельного тестового провайдера учить не нужно.
+
+## Проверки через наблюдаемые побочные эффекты
+
+Главный сдвиг от модульных к интеграционным тестам — **что ты проверяешь**.
+
+Модульные тесты проверяют, что действие было вызвано, — они владеют подменой действия, поэтому могут. Интеграционные тесты не подменяют действие; они проверяют, что *реальный* побочный эффект произошёл где-то в DOM:
+
+```tsx title="Good — assert the DOM mutation"
+fireEvent.click(screen.getByRole('button', { name: 'send' }));
+await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Alice: hi'));
+```
+
+```tsx title="Less good — assert via the inspector (still useful, but indirect)"
+const { runtime } = renderWithRuntime(<App />);
+fireEvent.click(screen.getByRole('button', { name: 'send' }));
+await new Promise((r) => setTimeout(r, 0));
+expect(runtime.getInspectorBuffer()[0]?.executedActions).toContain('showToast');
+```
+
+DOM-проверка ловит баги, которые инспектор пропускает: реактор, вызывающий `setToast`, но ничего не рендерящий, портал, который не монтируется, CSS-правило, прячущее тост. Используй инспектор как вторичную проверку, когда DOM-чек уже прошёл (или как основную, когда побочный эффект *невизуальный*, например, запись в `localStorage`).
+
+## Приёмы изоляции
+
+### Разборка между тестами
+
+`render(...)` из React Testing Library авто-размонтирует между тестами в Vitest с `@testing-library/jest-dom/vitest`. Solid и Vue делают то же со своими конфигами. Подтверди в настройке:
+
+```ts title="src/setupTests.ts"
+import '@testing-library/jest-dom/vitest';
+```
+
+```ts title="vitest.config.ts"
+import { defineConfig } from 'vitest/config';
+export default defineConfig({
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/setupTests.ts'],
+    clearMocks: true,
+  },
+});
+```
+
+`environment: 'jsdom'` обязателен для интеграционных тестов; деревьям React / Solid / Vue нужен DOM.
+
+### Вызывай dispose у рантайма в `afterEach`
+
+Авто-размонтирование удаляет React-дерево, что снимает каждое условие и действие через cleanup-пути. Сам триггер остаётся зарегистрированным на рантайме — вызови dispose у рантайма в `afterEach` для надёжности:
+
+```ts
+afterEach(() => {
+  // If you stash the runtime somewhere global per-test:
+  currentRuntime?.dispose();
+  currentRuntime = undefined;
+});
+```
+
+С пер-тестовым wrapper выше это происходит автоматически — каждый тест получает свежий `createRuntime()`, старый становится недостижим, и сборщик мусора его уберёт.
+
+## Network-заглушки параллельно (MSW)
+
+Когда триггер забирает данные на событие, понадобится MSW для сети и Triggery для всего downstream от запроса.
+
+```ts title="src/test-utils/msw.ts"
+import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
+import { afterAll, afterEach, beforeAll } from 'vitest';
+
+export const server = setupServer(
+  http.get('/api/messages/:id', ({ params }) => {
+    return HttpResponse.json({ id: params.id, body: 'mocked' });
+  }),
+);
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+```ts title="vitest.config.ts (add setup)"
+test: {
+  environment: 'jsdom',
+  setupFiles: ['./src/setupTests.ts', './src/test-utils/msw.ts'],
+}
+```
+
+Теперь async-обработчик работает против контролируемого `fetch`, а DOM-проверки ждут действия, потребляющего ответ.
+
+```tsx title="Test"
+test('fetched message renders in toast', async () => {
+  renderWithRuntime(<App />);
+  fireEvent.click(screen.getByRole('button', { name: 'load' }));
+
+  // Two waits: one for the microtask scheduler, one for the fetch resolution.
+  // waitFor handles both.
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('mocked'));
+});
+```
+
+## Ловушки
+
+### Не тянись к `vi.useFakeTimers()`
+
+Если твой триггер использует `debounce` / `throttle` / `defer`, бери `createFakeScheduler` из [`@triggery/testing`](/ru/guide/testing/fake-scheduler/). Он фреймворк-агностичен и не дерётся с `vi`. Смесь приводит к загадкам вида «тест зависает навсегда».
+
+### StrictMode тебе друг
+
+Гоняй интеграционный сьют с `<StrictMode>`, обёрнутым вокруг провайдера рантайма. Хуки Triggery спроектированы strict-mode-safe (last-mount-wins на стеке condition/action) — обёртка делает безопасными и *твои* компоненты. Подробности жизненного цикла см. в [StrictMode (React)](/ru/guide/ssr/strict-mode/).
+
+### Не дели `getDefaultRuntime()`
+
+Если зовёшь `createTrigger(config)` без аргумента рантайма, регистрация идёт против глобального дефолтного рантайма. Два теста, делящие его — даже через wrapper, переопределяющий React-контекст — всё равно могут видеть *регистрации триггеров* друг друга (wrapper переопределяет React-lookup, не таргет регистрации). Два безопасных варианта:
+
+1. **Передай рантайм в `createTrigger`** внутри фабрики, которую вызывает тест:
+   ```ts
+   function makeTriggers(rt: Runtime) {
+     return { messageTrigger: createTrigger<…>({ id: '…', /* … */ }, rt) };
+   }
+   ```
+2. **Вызывай `rt.dispose()` в `afterEach`** и прими, что глобальный дефолт всё равно будет держать триггер — нормально для проверок read-after-render, проблемно для тестов «триггер ещё не существует».
+
+В 90% интеграционных тестов глобальный дефолт нормально. Тянись за фабрикой только когда изоляция тестов реально ломается.
+
+### `await`-ай планировщик микротасок
+
+`fire` ставит в очередь. `fireSync` запускает сразу. `fireEvent` из React Testing Library *синхронный*, поэтому клик по кнопке, вызывающей `fire`, возвращается до запуска обработчика:
+
+```tsx
+fireEvent.click(screen.getByRole('button')); // returns immediately
+expect(screen.queryByRole('status')).toBeNull(); // not yet rendered
+await waitFor(() => /* now it's there */ );
+```
+
+`await waitFor(...)` из React Testing Library поллит, пока проверка не пройдёт, — это закрывает и слив микротасок, и фазу коммита React. Используй его. Не тянись к `act(() => …)`, если не замерил конкретную необходимость.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Модульные тесты"
+    description="Быстрый, фреймворк-агностический слой тестов триггеров — стартуй здесь, когда интеграционные ощущаются тяжёлыми."
+    href="/ru/guide/testing/unit-testing/"
+  />
+  <LinkCard
+    title="Тестовый планировщик"
+    description="Используй createFakeScheduler вместо vi.useFakeTimers для тестов debounce / throttle / defer."
+    href="/ru/guide/testing/fake-scheduler/"
+  />
+  <LinkCard
+    title="StrictMode (React)"
+    description="Почему гонять интеграционный сьют под StrictMode — бесплатная страховка."
+    href="/ru/guide/ssr/strict-mode/"
+  />
+  <LinkCard
+    title="Инспектор"
+    description="Цель проверок на уровне рантайма, когда DOM-проверок мало."
+    href="/ru/guide/advanced/inspector/"
+  />
+</CardGrid>

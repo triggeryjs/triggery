@@ -1,0 +1,152 @@
+---
+title: "createNamedHooks"
+description: "Build a proxy of PascalCase hooks (useNewMessageEvent / useUserCondition / useShowToastAction) from a trigger."
+sidebar:
+  order: 7
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Returns a proxy of hooks specialized for one trigger. Instead of writing `useEvent(messageTrigger, 'new-message')` everywhere, you call `useNewMessageEvent()` and the type system already knows which trigger and which port. Same for `useUserCondition(getter, deps?)` and `useShowToastAction(handler)`.
+
+The proxy is lazy and cached: each hook name is parsed once, the matching delegator is built once, and subsequent renders hit the cache.
+
+## Import
+
+```ts
+import { createNamedHooks } from '@triggery/react';
+```
+
+## Signature
+
+```ts
+function createNamedHooks<S extends TriggerSchema>(
+  trigger: Trigger<S>,
+): NamedHooks<S>;
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `trigger` | `Trigger<S>` | The trigger to bind the hooks to. |
+
+## Returns
+
+A proxy object typed as `NamedHooks<S>` — the union of:
+
+| Source schema field | Generated hook | Signature |
+|---|---|---|
+| `events: { 'new-message': T }` | `useNewMessageEvent` | `() => (payload: T) => void` |
+| `conditions: { user: U }` | `useUserCondition` | `(getter: () => U, deps?: readonly unknown[]) => void` |
+| `actions: { showToast: P }` | `useShowToastAction` | `(handler: (payload: P) => void \| Promise<void>) => void` |
+
+Name conversion: kebab-case and camelCase keys both round-trip through PascalCase. `'new-message'` → `NewMessage`, `'user'` → `User`, `'showToast'` → `ShowToast`.
+
+## Examples
+
+### Export the hooks alongside the trigger
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createNamedHooks } from '@triggery/react';
+
+type Message = { author: string; text: string };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { user: { id: string; name: string } | null };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'chat:new-message',
+  events: ['new-message'],
+  required: ['user'],
+  handler({ event, conditions, actions }) {
+    actions.showToast?.({
+      title: conditions.user?.name ?? '',
+      body:  event.payload.text,
+    });
+  },
+});
+
+export const {
+  useNewMessageEvent,
+  useUserCondition,
+  useShowToastAction,
+} = createNamedHooks(messageTrigger);
+```
+
+### Consume them in components
+
+```tsx
+import { useEffect } from 'react';
+import {
+  useNewMessageEvent,
+  useUserCondition,
+  useShowToastAction,
+} from '../triggers/message.trigger';
+
+function Producer({ socket }: { socket: WebSocket }) {
+  const fire = useNewMessageEvent();
+  useEffect(() => {
+    socket.addEventListener('message', e => fire(JSON.parse(e.data)));
+  }, [socket, fire]);
+  return null;
+}
+
+function UserProvider({ user }: { user: { id: string; name: string } | null }) {
+  useUserCondition(() => user, [user]);
+  return null;
+}
+
+function Toaster() {
+  useShowToastAction(({ title, body }) => console.log('toast', title, body));
+  return null;
+}
+```
+
+### Per-event subset
+
+You don't have to export everything:
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createNamedHooks } from '@triggery/react';
+
+const trigger = createTrigger<{
+  events: { ping: void; pong: void };
+}>({
+  id: 'x',
+  events: ['ping', 'pong'],
+  handler() {},
+});
+
+// Pull only the hook you use.
+export const { usePingEvent } = createNamedHooks(trigger);
+```
+
+## Notes
+
+<Aside type="tip">
+The proxy is preferable to manual hook definitions: the type system enforces "the hook name maps to a real port" via the `NamedHooks<S>` template-literal type. Misspell `useNewMessageEevent` and TypeScript reports it as missing on the trigger.
+</Aside>
+
+<Aside type="caution" title="kebab-case round-trip">
+`createNamedHooks` derives PascalCase identifiers from any key. When you call a generated hook, the proxy converts back to camelCase by default — `useNewMessageEvent` calls `useEvent(trigger, 'newMessage')`. For kebab keys (`'new-message'`), the underlying port name in the runtime is still `'new-message'`. The proxy handles the round-trip; you don't see the bookkeeping unless you mix-and-match casings in one schema, in which case `useEvent(trigger, 'kebab-key')` is the safe fallback.
+</Aside>
+
+<Aside>
+Only one trigger per `createNamedHooks` call. To combine hooks from multiple triggers, call it once per trigger and merge the exports.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="useEvent" description="The underlying primitive — used by every generated event hook." href="/api/react/use-event/" />
+  <LinkCard title="useCondition" description="The underlying primitive for condition hooks." href="/api/react/use-condition/" />
+  <LinkCard title="useAction" description="The underlying primitive for action hooks." href="/api/react/use-action/" />
+  <LinkCard title="prefer-named-hook lint rule" description="Auto-suggest named hooks once threshold is reached." href="/api/eslint-plugin/recommended/" />
+</CardGrid>

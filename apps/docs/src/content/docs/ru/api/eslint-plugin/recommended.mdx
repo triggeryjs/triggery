@@ -1,0 +1,134 @@
+---
+title: "recommended"
+description: "Flat-config пресет для @triggery/eslint-plugin. Включает 7 правил с разумными степенями."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Дефолтный flat-config пресет, поставляемый `@triggery/eslint-plugin`. Включает семь из восьми правил со степенями, ловящими реальные проблемы, но не топящими диф. `prefer-named-hook` в `recommended` **отключено** — это стилистический намёк, доступный в более строгом пресете.
+
+Для проектов, которым нужен максимальный сигнал, см. пресет `strict`, поднимающий всё до уровня error и добавляющий более жёсткие лимиты на размер обработчика/портов.
+
+## Импорт
+
+```ts
+import triggery from '@triggery/eslint-plugin';
+// or, named:
+import { recommended } from '@triggery/eslint-plugin';
+```
+
+## Использование
+
+```ts
+// eslint.config.js (flat config — ESLint 9.x)
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  // … your other configs
+  triggery.configs.recommended,
+];
+```
+
+Выбор отдельных правил вместо распыления пресета тоже работает:
+
+```ts
+// eslint.config.js
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  {
+    plugins: { '@triggery': triggery },
+    rules: {
+      '@triggery/no-dynamic-id': 'error',
+      '@triggery/hook-rules': 'error',
+    },
+  },
+];
+```
+
+## Правила в `recommended`
+
+| Правило | Степень | Что ловит |
+|---|---|---|
+| `@triggery/no-dynamic-id` | `error` | `createTrigger({ id: someVariable })` — id должен быть строковым литералом, чтобы статический анализ (devtools, CLI `triggery graph`) мог его резолвить. |
+| `@triggery/no-event-cascade` | `error` | Обработчик триггера, зовущий `runtime.fire` (или хелпер зажигания), запрещён; эмить через `actions.<name>?.(payload)` либо прими, что каскад намеренный, и отключи правило построчно. |
+| `@triggery/hook-rules` | `error` | `useEvent / useCondition / useAction / useInlineTrigger` вне React-функции — тот же смысл, что у `react-hooks/rules-of-hooks`, но применительно к хукам Triggery. |
+| `@triggery/exhaustive-conditions` | `warn` | Условие, перечисленное в схеме, но не зарегистрированное ни на одной достижимой ветке кода. Выявляет мёртвую surface area. |
+| `@triggery/exhaustive-required` | `warn` | Условию, объявленному в `required`, не хватает дефолтной регистрации (и оно всегда будет short-circuit'ить). |
+| `@triggery/max-handler-size` | `warn` | Тело функции-обработчика превышает порог (по умолчанию 50 строк). Намёк вынести работу в действия. |
+| `@triggery/max-ports-per-trigger` | `warn` | У схемы триггера слишком много событий / условий / суммарных портов. Намёк разбить на несколько триггеров. |
+
+Оставшееся правило, `@triggery/prefer-named-hook`, в `recommended` **не** включено — адоптеры обычно предпочитают универсальную форму `useEvent(trigger, 'x')`, пока у порта не больше пары мест вызова. Включай его в пресете `strict` или поправилу.
+
+## Примеры
+
+### Переопределить одну степень
+
+```ts
+// eslint.config.js
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  triggery.configs.recommended,
+  {
+    rules: {
+      '@triggery/exhaustive-conditions': 'error',
+      '@triggery/max-handler-size': ['error', { max: 40 }],
+    },
+  },
+];
+```
+
+### Отключить для legacy-папок
+
+```ts
+// eslint.config.js
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  triggery.configs.recommended,
+  {
+    files: ['legacy/**/*.ts'],
+    rules: {
+      '@triggery/no-dynamic-id': 'off',
+      '@triggery/hook-rules': 'off',
+    },
+  },
+];
+```
+
+### Накатить strict-пресет сверху
+
+```ts
+// eslint.config.js
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  triggery.configs.recommended,
+  triggery.configs.strict, // overrides previous severities with stricter values
+];
+```
+
+## Замечания
+
+<Aside type="tip">
+Парься пресет с `@typescript-eslint/recommended-type-checked` — большинство правил Triggery используют TypeScript AST (без полной информации о типах), поэтому они работают и без type-checking, но type-aware-проверки хорошо их дополняют для ловли мистипнутых схем.
+</Aside>
+
+<Aside type="caution" title="Только flat config">
+Плагин поставляет flat-config пресеты (ESLint 9+). Легаси `.eslintrc.json` не поддерживается — если надо остаться на старом формате, доставай имена правил из `triggery.rules` и ссылайся на них вручную.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="Конструктор, который анализирует большинство правил." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="useEvent / useCondition / useAction" description="Хуки, которые принуждает `hook-rules`." href="/ru/api/react/use-event/" />
+  <LinkCard title="createNamedHooks" description="Включай `prefer-named-hook`, когда внедряешь этот хелпер." href="/ru/api/react/create-named-hooks/" />
+  <LinkCard title="Руководство по линтингу" description="Интеграция с редактором, настройка CI, ignore-паттерны." href="/ru/api/eslint-plugin/recommended/" />
+</CardGrid>

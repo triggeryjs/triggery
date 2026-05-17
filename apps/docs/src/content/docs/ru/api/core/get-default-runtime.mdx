@@ -1,0 +1,94 @@
+---
+title: "getDefaultRuntime"
+description: "Доступ к лениво создаваемому глобальному синглтону рантайма. Используется биндингами, если провайдер не найден."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Возвращает глобальный `Runtime` по умолчанию, лениво создавая его при первом вызове. К этому рантайму обращаются все биндинги, когда в дереве нет `<TriggerRuntimeProvider>`. Большинство приложений никогда не зовут его напрямую — это деталь реализации хуков.
+
+Функция идемпотентна. Первый вызов конструирует рантайм с опциями по умолчанию; каждый последующий вызов возвращает тот же экземпляр, пока [`setDefaultRuntime`](/ru/api/core/set-default-runtime/) его не заменит.
+
+## Импорт
+
+```ts
+import { getDefaultRuntime } from '@triggery/core';
+```
+
+## Сигнатура
+
+```ts
+function getDefaultRuntime(): Runtime;
+```
+
+## Параметры
+
+Нет.
+
+## Возвращает
+
+Один общий экземпляр [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts). Последующие вызовы возвращают ту же ссылку (`===`).
+
+## Примеры
+
+### Зажечь событие вне React
+
+```ts twoslash
+import { createTrigger, getDefaultRuntime } from '@triggery/core';
+
+createTrigger<{ events: { ping: number } }>({
+  id: 'demo:ping',
+  events: ['ping'],
+  handler({ event }) {
+    console.log('ping', event.payload);
+  },
+});
+
+// In a WebSocket adapter, a service worker, or any non-React layer.
+getDefaultRuntime().fire('ping', 42);
+```
+
+### Заинспектировать реестр из glue-кода devtools
+
+```ts twoslash
+import { getDefaultRuntime } from '@triggery/core';
+
+export function dumpGraph() {
+  const runtime = getDefaultRuntime();
+  return runtime.graph();
+}
+```
+
+### Доказательство ленивого создания
+
+```ts twoslash
+import { getDefaultRuntime } from '@triggery/core';
+
+const a = getDefaultRuntime();
+const b = getDefaultRuntime();
+console.log(a === b); // true — same instance
+```
+
+## Замечания
+
+<Aside type="tip">
+Биндинги (`useEvent`, `useCondition`, `useAction`) внутренне зовут этот метод всякий раз, когда `<TriggerRuntimeProvider>` отсутствует в дереве. Если в тестах нужна изоляция — комбинируй [`createRuntime`](/ru/api/core/create-runtime/) с [`setDefaultRuntime`](/ru/api/core/set-default-runtime/) или оборачивай дерево в провайдер.
+</Aside>
+
+<Aside type="caution">
+На сервере (SSR) рантайм по умолчанию создаётся по требованию, но `fire` — это no-op, а регистрации пропускаются: диспатчить просто некуда — нет event loop. Реальный экземпляр конструируется при первом вызове на стороне браузера.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="setDefaultRuntime" description="Заменить синглтон — полезно в тестах." href="/ru/api/core/set-default-runtime/" />
+  <LinkCard title="createRuntime" description="Создать изолированный рантайм." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="Тип Runtime" description="Полная поверхность методов." href="https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts" />
+  <LinkCard title="TriggerRuntimeProvider" description="Прокинуть рантайм через контекст." href="/ru/api/react/trigger-runtime-provider/" />
+</CardGrid>

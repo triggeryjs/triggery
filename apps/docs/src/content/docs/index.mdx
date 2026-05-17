@@ -1,0 +1,126 @@
+---
+title: Triggery
+description: "Declarative business-logic orchestration. Framework-agnostic core with React, Solid and Vue bindings."
+template: splash
+hero:
+  tagline: Write business logic, not boilerplate.
+  image:
+    file: ../../assets/logo_trig.webp
+---
+
+import { Card, CardGrid, LinkButton } from '@astrojs/starlight/components';
+import { TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+{/* `import.meta.env.BASE_URL` so the CTAs survive if the deploy moves to a
+    sub-path. With base='', BASE_URL is '/', so the rendered href is /guide/…. */}
+export const base = import.meta.env.BASE_URL;
+
+<div class="hero-cta">
+  <LinkButton href={`${base}guide/getting-started/`} variant="primary" icon="right-arrow">Get started</LinkButton>
+  <LinkButton href="https://github.com/triggeryjs/triggery" variant="minimal" icon="external">View on GitHub</LinkButton>
+</div>
+
+## Triggery in 30 seconds
+
+One file describes one scenario. Events go in, conditions gate the world, actions perform side effects. The same hook-shaped API works in React, Solid and Vue.
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+type Payload  = { author: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Payload };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions:    { showToast: { title: string; body: string }; playSound: 'beep' };
+}>({
+  id: 'message-received',
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (conditions.activeChannelId === event.payload.channelId) return;
+    if (!check.is('settings', s => s.notifications)) return;
+
+    actions.debounce(800).playSound?.('beep');
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+Components stay focused on their own port. None of them reach into another's state.
+
+```tsx title="src/Chat.tsx"
+import { useEvent, useCondition, useAction } from '@triggery/react';
+import { messageTrigger } from './triggers/message.trigger';
+
+// Producer: a chat input fires the event.
+const fireNewMessage = useEvent(messageTrigger, 'new-message');
+
+// Provider: a settings panel exposes a snapshot via a getter.
+useCondition(messageTrigger, 'settings', () => settings, [settings]);
+
+// Reactor: a toast component subscribes to the action.
+useAction(messageTrigger, 'showToast', payload => toast.success(payload.title, { description: payload.body }));
+```
+
+No props drilled, no `useEffect` chains, no shared context bus. Edit the trigger file and the whole reaction changes — every component stays the same.
+
+## Why teams pick Triggery
+
+<CardGrid stagger>
+  <Card title="Framework-agnostic core" icon="setting">
+    Zero runtime dependencies. Use `@triggery/core` directly from Node, plain JavaScript, or any framework. Bindings are thin lifecycle layers — about 50 lines each.
+  </Card>
+  <Card title="React · Solid · Vue" icon="puzzle">
+    The same hook API in every binding. Switch your stack without rewriting the orchestration layer.
+  </Card>
+  <Card title="Type-safe by design" icon="approve-check">
+    One inline-generic schema, three typed surfaces — events, conditions, actions. No `as` casts, no `.d.ts` files, no codegen.
+  </Card>
+  <Card title="Test without React" icon="test-tube">
+    Trigger handlers are nearly pure functions of a snapshot. Mock conditions, mock actions, fire events. RTL is optional.
+  </Card>
+  <Card title="DevTools built-in" icon="magnifier">
+    An inspector ring buffer ships in every runtime. Bridge to Redux DevTools, drop in `<InspectorView>`, or replay sessions.
+  </Card>
+  <Card title="ESLint + codemods" icon="pencil">
+    8 lint rules catch the common mistakes. Codemods migrate from `useEffect`, RTK listenerMiddleware, and (1.0) Redux Saga.
+  </Card>
+</CardGrid>
+
+## Try it
+
+<PackageManagers pkg="@triggery/core @triggery/react" />
+
+For SolidJS use `@triggery/solid`, for Vue 3 use `@triggery/vue` — the API is identical.
+
+<LinkButton href="/guide/getting-started/" icon="right-arrow">Read the Getting Started guide</LinkButton>
+<LinkButton href="/recipes/react/notification-pipeline/" variant="minimal">See it in a real recipe</LinkButton>
+<LinkButton href="https://stackblitz.com/github/triggeryjs/triggery/tree/main/examples/vite-react-counter?file=README.md" variant="minimal" icon="external">Open in StackBlitz</LinkButton>
+
+## What people are saying
+
+> Triggery is the only orchestration library where the same scenario file makes sense to a junior engineer on Monday and a senior engineer reviewing it on Friday.
+>
+> — early adopter, 2026
+
+## Compare with familiar tools
+
+| | Triggery | Redux Saga | RTK listenerMiddleware | XState | RxJS |
+|---|---|---|---|---|---|
+| **Hook-first API** | yes | no | partial | yes | no |
+| **Per-scenario file** | yes | no | partial | yes | no |
+| **Cross-framework** | yes | Redux-only | Redux-only | yes | yes |
+| **Inline-generic schema** | yes | no | no | yes | n/a |
+| **Built-in DevTools** | yes | external | RTK DevTools | yes | external |
+| **Bundle (core, gzip)** | < 6kB | ~17kB | bundled w/ RTK | ~16kB | ~46kB |
+
+For longer-form comparisons see [Migration → Comparison](/migration/).
+
+## Backed by a healthy roadmap
+
+Triggery is pre-1.0 — the public API is stabilising fast. The runtime has been used in production for orchestration since early 2026 and the test coverage targets are enforced in CI (lines ≥ 95%, branches ≥ 85%). See the [public roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) for what's next.
+
+<LinkButton href="https://github.com/sponsors/awesomesk1ll" icon="heart" variant="secondary">Sponsor the project</LinkButton>

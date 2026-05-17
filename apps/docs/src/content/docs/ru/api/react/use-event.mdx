@@ -1,0 +1,130 @@
+---
+title: useEvent
+description: "Возвращает стабильный типизированный эмиттер события для триггера. Идентичность стабильна между рендерами."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Возвращает стабильный callback, зажигающий типизированное событие на триггере. Идентичность сохраняется между рендерами, поэтому передавать его в массивы зависимостей `useEffect` безопасно.
+
+## Импорт
+
+```ts
+import { useEvent } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function useEvent<S extends TriggerSchema, K extends EventKey<S>>(
+  trigger: Trigger<S>,
+  eventName: K,
+): EventMap<S>[K] extends void
+  ? () => void
+  : (payload: EventMap<S>[K]) => void;
+```
+
+Тип возвращаемого значения выводится из схемы триггера. События с void-payload возвращают эмиттер `() => void`; иначе эмиттер принимает типизированный payload.
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `trigger` | `Trigger<S>` | Триггер, возвращённый из [`createTrigger`](/ru/api/core/create-trigger/). |
+| `eventName` | `K extends EventKey<S>` | Должно быть одним из ключей, перечисленных в схеме `events` триггера и в массиве `events: [...]`. |
+
+## Возвращает
+
+Стабильную функцию-эмиттер:
+
+- `void` payload → `() => void`
+- Типизированный payload → `(payload: …) => void`
+
+Функция обёрнута в `useCallback`, поэтому её идентичность не меняется, пока неизменны `runtime` и `eventName`.
+
+## Примеры
+
+### Обычный payload
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useEvent } from '@triggery/react';
+
+const chatTrigger = createTrigger<{
+  events: { 'new-message': { author: string; text: string } };
+}>({
+  id: 'chat',
+  events: ['new-message'],
+  handler() {},
+});
+
+function Chat() {
+  const fire = useEvent(chatTrigger, 'new-message');
+  return (
+    <button type="button" onClick={() => fire({ author: 'Alice', text: 'hi' })}>
+      simulate
+    </button>
+  );
+}
+```
+
+### Void-payload
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useEvent } from '@triggery/react';
+
+const readyTrigger = createTrigger<{
+  events: { 'app:ready': void };
+}>({
+  id: 'app-ready',
+  events: ['app:ready'],
+  handler() {},
+});
+
+function Bootstrap() {
+  const ready = useEvent(readyTrigger, 'app:ready');
+  return <button onClick={() => ready()}>signal ready</button>;
+}
+```
+
+### Передача в другой эффект
+
+```tsx
+import { useEvent } from '@triggery/react';
+import { useEffect } from 'react';
+import { messageTrigger } from './triggers/message.trigger';
+
+function WebSocketAdapter({ socket }: { socket: WebSocket }) {
+  const fireMessage = useEvent(messageTrigger, 'new-message');
+
+  useEffect(() => {
+    socket.addEventListener('message', e => fireMessage(JSON.parse(e.data)));
+    return () => socket.removeEventListener('message', /* ... */ () => {});
+  }, [socket, fireMessage]); // ← stable identity means this effect re-binds rarely
+}
+```
+
+## Замечания
+
+<Aside type="tip">
+Вызов эмиттера никогда не ререндерит компонент. Рантайм диспатчит асинхронно через сконфигурированный планировщик (по умолчанию microtask).
+</Aside>
+
+<Aside>
+Можно иметь несколько продюсеров, зажигающих одно и то же событие из разных компонентов — Triggery всё равно, кто именно его вызвал. Обработчик получит `event.payload` с идентичной типизацией.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="useCondition" description="Зарегистрировать pull-only геттер условия." href="/ru/api/react/use-condition/" />
+  <LinkCard title="useAction" description="Зарегистрировать обработчик действия." href="/ru/api/react/use-action/" />
+  <LinkCard title="Руководство по событиям" description="Нарратив: планирование, батчинг, broadcast." href="/ru/guide/essentials/events/" />
+  <LinkCard title="createNamedHooks" description="Сокращение `useNewMessageEvent`." href="/ru/api/react/create-named-hooks/" />
+</CardGrid>

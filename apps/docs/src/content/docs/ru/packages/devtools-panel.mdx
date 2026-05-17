@@ -1,0 +1,70 @@
+---
+title: "@triggery/devtools-panel"
+description: "React-компоненты для инспекции рантайма Triggery прямо в приложении. Drop-in панель инспектора и view'ы снимков."
+sidebar:
+  order: 17
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+React-компоненты для инспекции рантайма [Triggery](https://github.com/triggeryjs/triggery) прямо в приложении. Без CSS-пайплайна — компоненты используют inline-стили, поэтому встают в любой хост без конфликтов с глобальными стилями.
+
+[![npm](https://img.shields.io/npm/v/@triggery/devtools-panel?style=flat-square)](https://www.npmjs.com/package/@triggery/devtools-panel)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/devtools-panel?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/devtools-panel)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/devtools-panel" dev />
+
+Peer-зависимости: `react ^18 || ^19`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `<InspectorView limit?={20} title?={'Triggery Inspector'} />` | Живая, подписанная панель с последними запусками. Клик по строке раскрывает полный JSON-снимок. |
+| `<TriggerSnapshotView snapshot variant?='compact'\|'full' />` | Рендерит одну строку запуска (`compact`) или раскрытый JSON (`full`). |
+
+## Быстрый пример
+
+```tsx
+import { InspectorView } from '@triggery/devtools-panel';
+
+function DebugDrawer() {
+  return import.meta.env.DEV ? <InspectorView limit={50} /> : null;
+}
+```
+
+Это вся интеграция. Компонент подписывается на активный рантайм (через контекст `<TriggerRuntimeProvider>` или глобальный дефолтный) и показывает живой список последних запусков. Клик по строке раскрывает полный JSON-снимок.
+
+Для разового рендера одного снимка (например, внутри кастомного дебаг-инструмента):
+
+```tsx
+import { TriggerSnapshotView } from '@triggery/devtools-panel';
+
+<TriggerSnapshotView snapshot={mySnapshot} variant="full" />
+```
+
+## Roadmap
+
+Standalone-панель (в браузере, на postMessage) и обёртка Chrome DevTools выйдут в v1.1. Прогресс — в [заготовке Chrome-расширения](https://github.com/triggeryjs/triggery/tree/main/extensions/chrome-devtools).
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Рантайм, который инспектирует эта панель." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="Это React-компоненты." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/devtools-redux" description="Стримит события рантайма в расширение Redux DevTools." href="/ru/packages/devtools-redux/" />
+  <LinkCard title="@triggery/devtools-bridge" description="Page-side мост для внешних инспекторов." href="/ru/packages/devtools-bridge/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/devtools-panel)
+- [npm](https://www.npmjs.com/package/@triggery/devtools-panel)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/devtools-panel/CHANGELOG.md)

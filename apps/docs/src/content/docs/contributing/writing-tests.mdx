@@ -1,0 +1,91 @@
+---
+title: "Writing tests"
+description: "Vitest, happy-dom, fakeScheduler, contract tests for adapters and the inspector snapshot."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery is tested top-to-bottom with **Vitest** + **happy-dom**. Core has no React/Solid/Vue imports and tests run DOM-free; bindings tests pull in the framework's testing library. This page covers the conventions every test in the monorepo follows.
+
+## Where tests live
+
+| Layer | Folder | Helpers |
+|---|---|---|
+| `@triggery/core` | `packages/core/__tests__/` | DOM-free; uses raw runtime. |
+| Framework bindings | `packages/{react,solid,vue}/__tests__/` | `@testing-library/react` / `@solidjs/testing-library` / `@vue/test-utils`. |
+| Adapters | `packages/{zustand,redux,jotai,…}/__tests__/` | Adapter-specific shape tests + contract tests. |
+| Codemod | `packages/codemod/__tests__/` | Snapshot fixtures of input/output `.ts` files. |
+| ESLint plugin | `packages/eslint-plugin/__tests__/` | `RuleTester` from `@typescript-eslint/rule-tester`. |
+
+Each new public API needs at least one test that exercises it end-to-end (event → condition gate → action).
+
+## The fake scheduler
+
+The default scheduler is microtask-based. Tests that need deterministic timing should use the fake scheduler from `@triggery/testing`:
+
+```ts
+import { createTestRuntime, mockAction, mockCondition, fakeScheduler } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { messageTrigger } from './message.trigger';
+
+it('debounces sound across a burst of messages', async () => {
+  const { runtime, advance } = fakeScheduler();
+  const rt = createTestRuntime({ triggers: [messageTrigger], runtime });
+  const play = vi.fn();
+  mockCondition(rt, messageTrigger, 'settings', { sound: true, notifications: true, dnd: false });
+  mockCondition(rt, messageTrigger, 'currentUserId', 'u-bob');
+  mockCondition(rt, messageTrigger, 'activeChannelId', null);
+  mockAction(rt, messageTrigger, 'playSound', play);
+
+  rt.fire('new-message', { /* … */ });
+  rt.fire('new-message', { /* … */ });
+  rt.fire('new-message', { /* … */ });
+
+  await advance(800);
+  expect(play).toHaveBeenCalledTimes(1);   // debounced
+});
+```
+
+The `advance(ms)` helper moves the fake clock without `setTimeout` flake.
+
+## Contract tests for adapters
+
+Each adapter (`@triggery/zustand`, `@triggery/redux`, …) ships a shared **contract test suite** that verifies:
+
+- The adapter does not subscribe the host component (no re-render on store change).
+- Updates to the underlying state are visible to the next handler run.
+- Unmounting the host clears the condition registration.
+- `selector` is called with the right argument and only on read.
+
+When you add a new adapter, import the contract tests from `@triggery/testing/contract` and supply the adapter-specific setup. The PR review will check that the contract suite is wired in.
+
+## Snapshot tests for the inspector
+
+The inspector ring buffer is tested by firing a fixture sequence of events and snapshot-comparing the recorded entries:
+
+```ts
+expect(rt.inspector.entries()).toMatchInlineSnapshot(`/* … */`);
+```
+
+If a change to the runtime alters the inspector output, the snapshot test is the first to fail. Run with `pnpm test -u` only after you've confirmed the new output is correct.
+
+## Coverage gates
+
+- **`@triggery/core` ≥ 95% lines** — checked in CI.
+- Bindings, adapters, codemod, ESLint plugin — aim for ≥ 90% on lines and branches.
+- Tests for `if`/`else` branches inside handlers should cover both arms; uncovered defensive branches are acceptable when annotated `/* c8 ignore next */`.
+
+## What not to test
+
+- Don't test that React calls a `useEffect` after render. That's React's job, not yours.
+- Don't snapshot rendered HTML for a hook test. Use the hook's contract (registered condition? called action?) as the assertion target.
+- Don't test the underlying state library's behaviour (e.g. that Zustand store updates fire subscribers). Trust the adapter contract test for the boundary.
+
+<CardGrid>
+  <LinkCard title="Testing guide (users)" description="The user-facing version of these patterns." href="/guide/testing/unit-testing/" />
+  <LinkCard title="Fake scheduler" description="advance(ms), how time works in tests." href="/guide/testing/fake-scheduler/" />
+  <LinkCard title="Coding standards" description="TypeScript strict, no any, ESM only." href="/contributing/coding-standards/" />
+  <LinkCard title="@triggery/testing" description="Public testing API." href="/packages/testing/" />
+</CardGrid>

@@ -71,5 +71,7 @@
     "typescript": "^6.0.3",
     "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^4.1.6"
-  }
+  },
+  "llms": "https://triggeryjs.github.io/llms.txt",
+  "llmsFull": "https://triggeryjs.github.io/llms-full.txt"
 }

@@ -1,0 +1,430 @@
+---
+title: Integration testing
+description: "When unit tests aren't enough — render the real provider tree with React / Solid / Vue testing libraries, assert via the DOM, and isolate runtimes per test."
+---
+
+import { Aside, TabItem, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+Unit tests cover handler logic — given a payload and a snapshot, did the right actions fire. They tell you nothing about the part that gets the snapshot in there in the first place: the `useCondition` in some provider, the `useAction` in some reactor, the `useEvent` in some producer. If wiring is the bug, a unit test won't catch it.
+
+Integration tests render the actual component tree under a `TriggerRuntimeProvider`, fire events the way the UI does, and assert observable side effects in the DOM. They're slower than unit tests (jsdom + render + commit), so you'll have fewer of them — but they cover the layer where most "I forgot to mount the reactor" bugs live.
+
+## When to write an integration test
+
+Reach for one when:
+
+- The bug is in **registration** — a provider doesn't mount on some route, a reactor unmounts during a transition, a scope is misnamed.
+- The trigger's effect is **visible in the DOM** — a toast appears, a class flips, a focus moves. Asserting that the side effect *happened* is easier than asserting that the action *was called* if the action's whole purpose is to call a third-party UI library.
+- You're testing **a scenario across two scopes / runtimes / micro-frontends**.
+- You're testing **integration with a network mock** (MSW) — the data fetched on an event needs to flow through the runtime to the reactor.
+
+For everything else, prefer the unit-testing approach in [Unit testing](/guide/testing/unit-testing/) — same logic, ~10× faster.
+
+## Isolated runtime per test
+
+The single most important rule: **never share a runtime across tests**. Without isolation, triggers registered in one test leak into the next, providers from yesterday's render still hold registrations, and you spend an afternoon staring at "why does this test only fail when the previous one ran first".
+
+The standard pattern is a fresh `createRuntime` wrapped around the component under test:
+
+```tsx title="src/test-utils/render-with-runtime.tsx (React)"
+import { createRuntime, type Runtime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { render, type RenderOptions } from '@testing-library/react';
+import type { ReactElement } from 'react';
+
+export function renderWithRuntime(
+  ui: ReactElement,
+  options: RenderOptions & { runtime?: Runtime } = {},
+) {
+  const runtime = options.runtime ?? createRuntime();
+  const result = render(ui, {
+    ...options,
+    wrapper: ({ children }) => (
+      <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>
+    ),
+  });
+  return { ...result, runtime };
+}
+```
+
+Then every test gets its own runtime *for free* — and you can still pass one in explicitly when a test wants to assert against the inspector:
+
+```tsx
+const { runtime } = renderWithRuntime(<App />);
+// ...interact...
+expect(runtime.getInspectorBuffer()[0]?.status).toBe('fired');
+```
+
+## React: React Testing Library
+
+```tsx title="src/features/__tests__/NotificationFlow.test.tsx"
+import { createTrigger } from '@triggery/core';
+import { useAction, useCondition, useEvent } from '@triggery/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
+import { expect, test } from 'vitest';
+import { renderWithRuntime } from '../../test-utils/render-with-runtime';
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings?.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+
+function SettingsPanel() {
+  const [on, setOn] = useState(true);
+  useCondition(messageTrigger, 'settings', () => ({ notifications: on }), [on]);
+  return (
+    <label>
+      <input type="checkbox" checked={on} onChange={(e) => setOn(e.target.checked)} />
+      notifications
+    </label>
+  );
+}
+
+function Chat() {
+  const fire = useEvent(messageTrigger, 'new-message');
+  return (
+    <button onClick={() => fire({ author: 'Alice', text: 'hi' })}>send</button>
+  );
+}
+
+function ToastSlot() {
+  const [toast, setToast] = useState<string | null>(null);
+  useAction(messageTrigger, 'showToast', (p) => setToast(`${p.title}: ${p.body}`));
+  return toast ? <output role="status">{toast}</output> : null;
+}
+
+function App() {
+  return (
+    <>
+      <SettingsPanel />
+      <Chat />
+      <ToastSlot />
+    </>
+  );
+}
+
+test('toast appears when notifications are on', async () => {
+  renderWithRuntime(<App />);
+  fireEvent.click(screen.getByRole('button', { name: 'send' }));
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent('Alice: hi');
+  });
+});
+
+test('no toast when notifications are off', async () => {
+  renderWithRuntime(<App />);
+  fireEvent.click(screen.getByRole('checkbox', { name: /notifications/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'send' }));
+  // Microtask drains, no toast renders.
+  await new Promise((r) => setTimeout(r, 0));
+  expect(screen.queryByRole('status')).toBeNull();
+});
+```
+
+A few notes on the shape:
+
+- The trigger is defined **at module scope**, exactly as it would be in production. The runtime is per-test; the trigger module is shared. That works because `createTrigger(config)` without a second argument registers against `getDefaultRuntime()`, but `<TriggerRuntimeProvider runtime={fresh}>` overrides which runtime the hooks talk to.
+- For full isolation (no shared default runtime), pass the runtime explicitly: `createTrigger(config, runtime)` inside the test factory. The trade-off is more setup code, less production-like.
+- `await waitFor(...)` covers the microtask gap between `fire` and the handler running. `await new Promise(r => setTimeout(r, 0))` works too — pick whichever feels more native to your test suite.
+
+## Solid: Solid Testing Library
+
+```tsx title="src/features/__tests__/notification-flow.test.tsx"
+import { createTrigger } from '@triggery/core';
+import { useAction, useCondition, useEvent, TriggerRuntimeProvider } from '@triggery/solid';
+import { fireEvent, render, screen } from '@solidjs/testing-library';
+import { createRuntime } from '@triggery/core';
+import { createSignal } from 'solid-js';
+import { expect, test } from 'vitest';
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings?.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+
+function App() {
+  const [on, setOn] = createSignal(true);
+  const [toast, setToast] = createSignal<string | null>(null);
+  const fire = useEvent(messageTrigger, 'new-message');
+
+  useCondition(messageTrigger, 'settings', () => ({ notifications: on() }));
+  useAction(messageTrigger, 'showToast', (p) => setToast(`${p.title}: ${p.body}`));
+
+  return (
+    <>
+      <input type="checkbox" checked={on()} onChange={(e) => setOn(e.currentTarget.checked)} />
+      <button onClick={() => fire({ author: 'Alice', text: 'hi' })}>send</button>
+      {toast() ? <output role="status">{toast()}</output> : null}
+    </>
+  );
+}
+
+test('toast appears when notifications are on', async () => {
+  const runtime = createRuntime();
+  render(() => (
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  ));
+  fireEvent.click(screen.getByRole('button', { name: 'send' }));
+  // Microtask scheduler — wait one tick.
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(screen.getByRole('status').textContent).toBe('Alice: hi');
+});
+```
+
+Solid's testing library exports the same `render` / `screen` / `fireEvent` surface as React's, but `render(() => <App />)` takes a function instead of a JSX element (Solid renders are reactive functions, not snapshots). The two `await Promise.resolve()` calls flush the microtask scheduler — same trick `flushMicrotasks` uses inside `@triggery/testing`.
+
+## Vue: Vue Test Utils
+
+```ts title="src/features/__tests__/NotificationFlow.test.ts"
+import { mount } from '@vue/test-utils';
+import { createRuntime } from '@triggery/core';
+import { defineComponent, ref } from 'vue';
+import { TriggerRuntimeProvider, useAction, useCondition, useEvent } from '@triggery/vue';
+import { createTrigger } from '@triggery/core';
+import { expect, test } from 'vitest';
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings?.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+
+const App = defineComponent({
+  setup() {
+    const on = ref(true);
+    const toast = ref<string | null>(null);
+    const fire = useEvent(messageTrigger, 'new-message');
+    useCondition(messageTrigger, 'settings', () => ({ notifications: on.value }));
+    useAction(messageTrigger, 'showToast', (p) => { toast.value = `${p.title}: ${p.body}`; });
+    return { on, toast, fire };
+  },
+  template: `
+    <div>
+      <input type="checkbox" v-model="on" />
+      <button @click="fire({ author: 'Alice', text: 'hi' })">send</button>
+      <output role="status" v-if="toast">{{ toast }}</output>
+    </div>
+  `,
+});
+
+test('toast appears when notifications are on', async () => {
+  const runtime = createRuntime();
+  const wrapper = mount(App, {
+    global: {
+      components: { TriggerRuntimeProvider },
+    },
+    slots: {
+      // not needed here — TriggerRuntimeProvider is provided via wrapping app
+    },
+  });
+  // Easier: wrap directly via a per-test root component.
+  const Root = defineComponent({
+    components: { TriggerRuntimeProvider, App },
+    template: `
+      <TriggerRuntimeProvider :runtime="runtime"><App /></TriggerRuntimeProvider>
+    `,
+    setup: () => ({ runtime }),
+  });
+  const root = mount(Root);
+
+  await root.get('button').trigger('click');
+  // Microtask drain.
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(root.get('[role="status"]').text()).toBe('Alice: hi');
+
+  wrapper.unmount();
+  root.unmount();
+});
+```
+
+Vue's `mount` provides the standard wrapper API. The cleanest pattern is a small `Root` component per test (or per file) that pins the runtime. The exported `TriggerRuntimeProvider` is the same component used in production — there's no separate test-only provider to learn.
+
+## Asserting via observable side effects
+
+The big shift from unit to integration is **what you assert**.
+
+Unit tests assert that an action was called — they own the action mock, so they can. Integration tests don't mock the action; they assert that the *real* side effect happened, somewhere in the DOM:
+
+```tsx title="Good — assert the DOM mutation"
+fireEvent.click(screen.getByRole('button', { name: 'send' }));
+await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Alice: hi'));
+```
+
+```tsx title="Less good — assert via the inspector (still useful, but indirect)"
+const { runtime } = renderWithRuntime(<App />);
+fireEvent.click(screen.getByRole('button', { name: 'send' }));
+await new Promise((r) => setTimeout(r, 0));
+expect(runtime.getInspectorBuffer()[0]?.executedActions).toContain('showToast');
+```
+
+The DOM assertion catches bugs the inspector misses — a reactor that calls `setToast` but renders nothing, a portal that doesn't mount, a CSS rule that hides the toast. Use the inspector as a secondary assertion when the DOM check has already passed (or as the primary one when the side effect is *non-visual*, e.g. a `localStorage` write).
+
+## Mid-test isolation tricks
+
+### Tear down between tests
+
+`render(...)` from React Testing Library auto-unmounts between tests in Vitest with `@testing-library/jest-dom/vitest`. Solid and Vue do the same with their respective configs. Confirm in your test setup:
+
+```ts title="src/setupTests.ts"
+import '@testing-library/jest-dom/vitest';
+```
+
+```ts title="vitest.config.ts"
+import { defineConfig } from 'vitest/config';
+export default defineConfig({
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/setupTests.ts'],
+    clearMocks: true,
+  },
+});
+```
+
+`environment: 'jsdom'` is mandatory for integration tests; the React / Solid / Vue trees need a DOM.
+
+### Dispose the runtime in `afterEach`
+
+Auto-unmount disposes the React tree, which unregisters every condition and action via the cleanup paths. The trigger itself stays registered against the runtime — disposing the runtime in `afterEach` is belt-and-suspenders:
+
+```ts
+afterEach(() => {
+  // If you stash the runtime somewhere global per-test:
+  currentRuntime?.dispose();
+  currentRuntime = undefined;
+});
+```
+
+With the per-test wrapper above, this is automatic — each test gets a fresh `createRuntime()`, the old one becomes unreachable and gets garbage-collected.
+
+## Network mocks alongside (MSW)
+
+When a trigger fetches data on an event, you'll want MSW for the network and Triggery for everything downstream of the fetch.
+
+```ts title="src/test-utils/msw.ts"
+import { setupServer } from 'msw/node';
+import { http, HttpResponse } from 'msw';
+import { afterAll, afterEach, beforeAll } from 'vitest';
+
+export const server = setupServer(
+  http.get('/api/messages/:id', ({ params }) => {
+    return HttpResponse.json({ id: params.id, body: 'mocked' });
+  }),
+);
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+```ts title="vitest.config.ts (add setup)"
+test: {
+  environment: 'jsdom',
+  setupFiles: ['./src/setupTests.ts', './src/test-utils/msw.ts'],
+}
+```
+
+Now the async handler runs against a controlled `fetch`, and your DOM assertions wait for the action that consumes the response.
+
+```tsx title="Test"
+test('fetched message renders in toast', async () => {
+  renderWithRuntime(<App />);
+  fireEvent.click(screen.getByRole('button', { name: 'load' }));
+
+  // Two waits: one for the microtask scheduler, one for the fetch resolution.
+  // waitFor handles both.
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('mocked'));
+});
+```
+
+## Pitfalls
+
+### Don't reach for `vi.useFakeTimers()`
+
+If your trigger uses `debounce` / `throttle` / `defer`, use `createFakeScheduler` from [`@triggery/testing`](/guide/testing/fake-scheduler/) instead. It's framework-agnostic and doesn't fight with `vi`. Mixing the two leads to "the test hangs forever" puzzles.
+
+### StrictMode is your friend
+
+Run your integration suite with `<StrictMode>` wrapping the runtime provider. Triggery's hooks are designed to be StrictMode-safe (last-mount-wins on the condition/action stack) — wrapping makes sure your *components* are too. See [StrictMode (React)](/guide/ssr/strict-mode/) for the lifecycle details.
+
+### Don't share `getDefaultRuntime()`
+
+If you `createTrigger(config)` without a runtime argument, you register against the global default runtime. Two tests sharing that — even via the wrapper that overrides the React context — can still see each other's *trigger registrations* (the wrapper overrides the React lookup, not the registration target). Two safer options:
+
+1. **Pass the runtime to `createTrigger`** inside a factory that the test calls:
+   ```ts
+   function makeTriggers(rt: Runtime) {
+     return { messageTrigger: createTrigger<…>({ id: '…', /* … */ }, rt) };
+   }
+   ```
+2. **Call `rt.dispose()` in `afterEach`** and accept that the global default runtime will still hold the trigger — fine for read-after-render assertions, problematic for "the trigger doesn't exist yet" tests.
+
+For 90% of integration tests, the global default is fine. Reach for the factory pattern only when test isolation is materially broken.
+
+### `await` the microtask scheduler
+
+`fire` queues. `fireSync` runs immediately. React Testing Library's `fireEvent` *is* synchronous, so a click on a button that calls `fire` returns before the handler runs:
+
+```tsx
+fireEvent.click(screen.getByRole('button')); // returns immediately
+expect(screen.queryByRole('status')).toBeNull(); // not yet rendered
+await waitFor(() => /* now it's there */ );
+```
+
+`await waitFor(...)` from React Testing Library polls until the assertion passes — that handles both the microtask drain and the React commit phase. Use it. Don't reach for `act(() => …)` unless you've measured a specific need.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Unit testing"
+    description="The faster, framework-agnostic layer of trigger tests — start here when integration tests feel heavy."
+    href="/guide/testing/unit-testing/"
+  />
+  <LinkCard
+    title="Fake scheduler"
+    description="Use createFakeScheduler instead of vi.useFakeTimers for debounce / throttle / defer tests."
+    href="/guide/testing/fake-scheduler/"
+  />
+  <LinkCard
+    title="StrictMode (React)"
+    description="Why running the integration suite under StrictMode is a free safety net."
+    href="/guide/ssr/strict-mode/"
+  />
+  <LinkCard
+    title="Inspector"
+    description="The runtime-level assertion target when DOM-only assertions aren't enough."
+    href="/guide/advanced/inspector/"
+  />
+</CardGrid>

@@ -1,0 +1,309 @@
+---
+title: Schema typing
+description: "The TriggerSchema generic, EventKey / ConditionKey / ActionKey, the handler ctx chain, void payloads, branded ids, and tips for very large schemas."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+The whole of Triggery's type safety comes from a **single inline generic** on `createTrigger`: a `TriggerSchema` that lists what events, conditions and actions a trigger has. That one type powers eight derived types under the hood, every framework binding's hook signatures, and the named-hooks proxy. This page walks the generic, the derived types you might need to name explicitly, and the patterns that scale to large schemas.
+
+## The TriggerSchema generic
+
+`TriggerSchema` has three optional maps:
+
+```ts
+type TriggerSchema = {
+  events?:     Record<string, unknown>;  // payload type per event name
+  conditions?: Record<string, unknown>;  // value type per condition name
+  actions?:    Record<string, unknown>;  // payload type per action name
+};
+```
+
+All three are optional, but a useful trigger always has at least `events` — without events the handler never runs. Conditions-only or actions-only schemas are legal but rare.
+
+```ts
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { user: { id: string; name: string }; settings: { sound: boolean } };
+  actions:    { showToast: { title: string }; playSound: void };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user'],
+  handler({ event, conditions, actions, check }) {
+    if (!conditions.user) return;
+    if (check.is('settings', s => s.sound)) actions.playSound?.();
+    actions.showToast?.({ title: event.payload.author });
+  },
+});
+```
+
+The schema **is the contract**. Every key, every payload, every action argument is typed off this one generic. Rename `'new-message'` here, and TS breaks every `useEvent(messageTrigger, 'new-message')` call site for you.
+
+## Void payloads
+
+Events and actions that carry no data use `void`:
+
+```ts
+events:  { 'app:ready': void; 'message-received': { author: string } };
+actions: { incrementBadge: number; playSound: void };
+```
+
+The `void` is special-cased throughout the API:
+
+```ts
+// Producer side
+const fireAppReady = useEvent(trigger, 'app:ready');
+fireAppReady();                         // ✓ no payload
+fireAppReady({ x: 1 });                 // ✗ TS error
+
+const fireMessage = useEvent(trigger, 'message-received');
+fireMessage({ author: 'Alice' });       // ✓ payload required
+fireMessage();                          // ✗ TS error
+
+// Action side
+actions.incrementBadge?.(1);            // ✓ payload required
+actions.playSound?.();                  // ✓ no payload
+```
+
+The behaviour is enforced by a small conditional type in the public API: `ActionFn<P> = [P] extends [void] ? () => void : (payload: P) => void`. Same shape for the event producer hook.
+
+## Derived types you can name
+
+You rarely need to name these — the inline generic on `createTrigger` flows through. But occasionally you write a generic wrapper component or test helper, and these matter:
+
+```ts
+import type {
+  EventKey, ConditionKey, ActionKey,
+  EventMap, ConditionMap, ActionMap,
+  EventOf, TriggerCtx, TriggerHandler,
+} from '@triggery/core';
+
+type S = {
+  events:     { 'new-message': Message; 'urgent-message': Message };
+  conditions: { user: User };
+  actions:    { showToast: ToastPayload };
+};
+
+type Ev   = EventKey<S>;        // 'new-message' | 'urgent-message'
+type Cond = ConditionKey<S>;    // 'user'
+type Act  = ActionKey<S>;       // 'showToast'
+
+type EvMap   = EventMap<S>;     // { 'new-message': Message; 'urgent-message': Message }
+type EvUnion = EventOf<S>;      // { name: 'new-message';     payload: Message }
+                                // | { name: 'urgent-message'; payload: Message }
+
+type Ctx     = TriggerCtx<S, 'user'>;        // handler ctx with `user` required
+type Handler = TriggerHandler<S, 'user'>;
+```
+
+`EventOf<S>` is a **discriminated union** over `(name, payload)` pairs. Inside the handler, switching on `event.name` narrows `event.payload` automatically:
+
+```ts
+handler({ event }) {
+  switch (event.name) {
+    case 'new-message':    /* event.payload is Message */     break;
+    case 'urgent-message': /* event.payload is Message */     break;
+  }
+}
+```
+
+## The handler `ctx` type chain
+
+The handler receives a `TriggerCtx<S, R>` where `R` is the required-condition union. Six fields, each derived from the schema or from `R`:
+
+```ts
+type TriggerCtx<S, R> = {
+  readonly event:      EventOf<S>;
+  readonly conditions: ConditionsCtx<ConditionMap<S>, R>;
+  readonly actions:    ActionsCtx<ActionMap<S>>;
+  readonly check:      CheckCtx<ConditionMap<S>>;
+  readonly meta:       MetaCtx;
+  readonly signal:     AbortSignal;
+};
+```
+
+`ConditionsCtx` makes `R` keys non-optional and the rest optional:
+
+```ts
+type ConditionsCtx<C, R extends keyof C = never> =
+  & { readonly [K in R]: C[K] }
+  & { readonly [K in Exclude<keyof C, R>]?: C[K] };
+```
+
+`ActionsCtx` makes every action key optional (a reactor may not be mounted) and adds the modifier chain:
+
+```ts
+type ActionsCtx<A> =
+  & { readonly [K in keyof A]?: ActionFn<A[K]> }
+  & {
+      debounce(ms: number): ActionsCtx<A>;
+      throttle(ms: number): ActionsCtx<A>;
+      defer(ms: number):    ActionsCtx<A>;
+    };
+```
+
+This is the type-system reason every action call in a handler looks like `actions.foo?.(payload)` — the `?` covers "no reactor registered yet". The [Strict mode](/guide/typescript/strict-mode/) page explains why this is deliberate and how to read it without flinching.
+
+<Aside type="caution" title="V1 — required does not narrow types">
+In V1, `required: ['user']` is enforced **at runtime only**. TypeScript still types `conditions.user` as `User | undefined`. Two safe ways to read a required condition:
+
+1. Early return — `if (!conditions.user) return;` narrows the rest of the function.
+2. `check.is('user', u => u.isActive)` — typesafe predicate, `u` is `NonNullable<User>`.
+
+A builder API (`createTrigger<S>().require(['user']).handle(...)`) ships in V1.1 and narrows automatically. The runtime guard is identical — the change is type-only.
+</Aside>
+
+## Schema reuse — share once, refine per trigger
+
+In a real app several triggers refer to the same domain types. Extract them once:
+
+```ts title="src/domain/types.ts"
+export type User = { id: string; name: string; isActive: boolean };
+export type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
+export type Message = { author: string; text: string; channelId: string };
+```
+
+Then each trigger's schema is one-screen and obvious:
+
+```ts title="src/triggers/message.trigger.ts"
+import type { Message, Settings, User } from '../domain/types';
+
+createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { user: User; settings: Settings };
+  actions:    { showToast: { title: string }; playSound: void };
+}>({ /* … */ });
+```
+
+```ts title="src/triggers/badge.trigger.ts"
+import type { Message, User } from '../domain/types';
+
+createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { user: User; activeChannelId: string | null };
+  actions:    { incrementBadge: string };
+}>({ /* … */ });
+```
+
+Triggers don't need to share schemas — same domain types, different port surfaces is the normal case.
+
+## Branded ids — protecting cross-API calls
+
+A common bug class with string ids: passing a `customerId` where a `channelId` is expected. TypeScript can't tell `string` from `string`. Branded types are a one-line cure:
+
+```ts title="src/domain/ids.ts"
+declare const channelIdBrand: unique symbol;
+declare const userIdBrand: unique symbol;
+
+export type ChannelId = string & { readonly [channelIdBrand]: never };
+export type UserId    = string & { readonly [userIdBrand]:    never };
+
+export const channelId = (s: string): ChannelId => s as ChannelId;
+export const userId    = (s: string): UserId    => s as UserId;
+```
+
+Used in a schema:
+
+```ts
+type Message = { author: UserId; channelId: ChannelId; text: string };
+
+createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { activeChannelId: ChannelId | null };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  handler({ event, conditions }) {
+    // ✓ branded-vs-branded comparison
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    // ✗ TS error: would catch a swap of UserId for ChannelId
+    // if (event.payload.author === conditions.activeChannelId) return;
+  },
+});
+```
+
+The runtime sees plain strings (the brand is a phantom field that disappears at compile time). The only cost is one constructor function per branded type — and one place to put validation if you want it.
+
+## Generic depth — why we use interfaces over deep generics
+
+Triggery's public types are intentionally **shallow generics + mapped types**, not nested conditional ladders. The reason: TypeScript's depth limit (`Type instantiation is excessively deep …`) kicks in around 50 levels in some schemas, and deeply chained `infer` patterns make IDE responses pause noticeably even when they work.
+
+In your own code:
+
+- **Avoid passing the schema through three layers of generic wrappers.** Each layer multiplies the cost.
+- **Prefer `type` aliases over computed property mapped types** when you only need to name a small piece of the schema.
+- **Use the derived types** (`EventKey<S>`, `ActionMap<S>`) instead of re-deriving them with conditional types of your own.
+
+A useful smell test: if your editor takes more than half a second to show hover info on a handler body, you've crossed a line. The fix is almost always to introduce a named intermediate alias.
+
+## Tips for very large schemas
+
+When a single scenario legitimately has 8+ events and a dozen actions, the schema literal becomes hard to read. Two patterns help.
+
+### Split by role
+
+```ts title="src/triggers/checkout.trigger.ts"
+type CheckoutEvents = {
+  'checkout:started':    { cartId: string };
+  'checkout:abandoned':  { cartId: string; reason: string };
+  'checkout:completed':  { orderId: string };
+  'checkout:errored':    { cartId: string; error: string };
+};
+
+type CheckoutConditions = {
+  cart:    Cart;
+  user:    User;
+  payment: PaymentMethod | null;
+};
+
+type CheckoutActions = {
+  logAnalytics:  AnalyticsPayload;
+  showToast:     ToastPayload;
+  redirectTo:    string;
+  rollbackCart:  string;
+};
+
+createTrigger<{
+  events:     CheckoutEvents;
+  conditions: CheckoutConditions;
+  actions:    CheckoutActions;
+}>({ /* … */ });
+```
+
+This also makes the schema reusable for tests that want to type a stub `ctx`.
+
+### Split the trigger itself
+
+If a single trigger has 4 events that each do unrelated things, it's not one scenario — it's four. Split into four `.trigger.ts` files. The size cap is informal but real: most scenarios are between 30 and 80 lines of trigger file including imports.
+
+## Solid and Vue: same schema, same types
+
+The bindings re-export the same `TriggerSchema`, `EventKey`, `Trigger`, `TriggerCtx`, etc., from `@triggery/core`. The schema you write for a React app is identical for Solid and Vue — the only thing that differs is the per-framework hook implementation. Cross-framework codebases get exactly one place to look up port names.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Strict mode"
+    description="Why every action is optional, why every condition is undefined-able, and how to write handlers without `as any`."
+    href="/guide/typescript/strict-mode/"
+  />
+  <LinkCard
+    title="Validation"
+    description="Runtime validation of payloads with Standard Schema — turns types into checked invariants."
+    href="/guide/typescript/validation/"
+  />
+  <LinkCard
+    title="Trigger anatomy"
+    description="Each field of createTrigger config in context."
+    href="/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Named hooks"
+    description="The template-literal type that turns the schema into per-port hook names."
+    href="/guide/advanced/named-hooks/"
+  />
+</CardGrid>

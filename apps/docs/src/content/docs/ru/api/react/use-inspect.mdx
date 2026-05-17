@@ -1,0 +1,123 @@
+---
+title: "useInspect"
+description: "Возвращает последний снепшот запуска триггера. Для внутри-приложенческих debug-панелей."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Возвращает самый свежий [`TriggerInspectSnapshot`](/ru/api/core/types/) для одного триггера или `undefined`, если триггер ещё ни разу не запускался. Полезно для инлайн-оверлеев отладки, штампов "last run at" или быстрых проверок "выстрелил ли он вообще" в dev-панелях.
+
+`useInspect` не подписывается на новые запуски — он читает свежий снепшот на каждом рендере и возвращает его как есть. Парься с [`useInspectHistory`](/ru/api/react/use-inspect-history/) для живого фида свежих запусков.
+
+## Импорт
+
+```ts
+import { useInspect } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function useInspect<S extends TriggerSchema>(
+  trigger: Trigger<S>,
+): TriggerInspectSnapshot | undefined;
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `trigger` | `Trigger<S>` | Триггер, возвращённый из [`createTrigger`](/ru/api/core/create-trigger/). |
+
+## Возвращает
+
+Свежий `TriggerInspectSnapshot` или `undefined`, если триггер ещё не запускался (либо в рантайме отключён инспектор).
+
+| Поле снепшота | Тип | Описание |
+|---|---|---|
+| `triggerId` | `string` | Совпадает с `trigger.id`. |
+| `runId` | `string` | Уникальный id на запуск. |
+| `eventName` | `string` | Событие, которое сматчилось. |
+| `status` | `'fired' \| 'skipped' \| 'errored' \| 'aborted'` | Исход запуска. |
+| `reason?` | `string` | Установлено, когда `status` — `'skipped'`, `'errored'` или `'aborted'`. |
+| `durationMs` | `number` | Wall-time обработчика. |
+| `executedActions` | `readonly string[]` | Имена действий, вызванных в ходе запуска. |
+| `snapshotKeys` | `readonly string[]` | Ключи условий, прочитанные обработчиком. |
+
+## Примеры
+
+### Инлайн debug-оверлей
+
+```tsx
+import { useInspect } from '@triggery/react';
+import { messageTrigger } from './triggers/message.trigger';
+
+function DebugBadge() {
+  const snap = useInspect(messageTrigger);
+  if (!snap) return null;
+  return (
+    <span style={{ color: snap.status === 'fired' ? 'green' : 'orange' }}>
+      {snap.status} ({snap.durationMs.toFixed(1)}ms)
+    </span>
+  );
+}
+```
+
+### Быстрая проверка "выстрелил ли он" в dev-инструментах
+
+```tsx
+import { useInspect } from '@triggery/react';
+import { fetchUserTrigger } from './triggers/fetch-user.trigger';
+
+function FetchUserDebug() {
+  const snap = useInspect(fetchUserTrigger);
+  return (
+    <pre>
+      {snap
+        ? JSON.stringify(
+            { id: snap.runId, status: snap.status, actions: snap.executedActions },
+            null,
+            2,
+          )
+        : '(no runs yet)'}
+    </pre>
+  );
+}
+```
+
+### Штамп последнего успешного запуска
+
+```tsx
+import { useInspect } from '@triggery/react';
+import { syncTrigger } from './triggers/sync.trigger';
+
+function LastSync() {
+  const snap = useInspect(syncTrigger);
+  if (!snap || snap.status !== 'fired') return <span>never</span>;
+  return <span>last sync: {snap.runId}</span>;
+}
+```
+
+## Замечания
+
+<Aside type="caution" title="Не подписывается">
+`useInspect` возвращает свежий снепшот на момент рендера, но не ререндерит при записи нового запуска. Для живого фида используй [`useInspectHistory`](/ru/api/react/use-inspect-history/) или связку `useState` + `runtime.subscribe` напрямую.
+</Aside>
+
+<Aside type="tip">
+Когда в рантайме инспектор отключён (`inspector: false` или production-auto), этот хук всегда возвращает `undefined`. То же относится к `trigger.inspect()` из `@triggery/core`. Devtools-панели должны проверять `runtime.inspectorEnabled` и показывать подсказку "инспектор выключен" вместо пустого списка.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="useInspectHistory" description="Живой список свежих запусков по всем триггерам." href="/ru/api/react/use-inspect-history/" />
+  <LinkCard title="createInspector" description="Кольцевой буфер за каждым снепшотом." href="/ru/api/core/create-inspector/" />
+  <LinkCard title="RuntimeOptions" description="Флаги `inspector` и `inspectorBufferSize`." href="/ru/api/core/types/runtime-options/" />
+  <LinkCard title="Руководство по devtools" description="Когда строить инлайн-панели, а когда использовать @triggery/devtools-panel." href="/ru/guide/advanced/inspector/" />
+</CardGrid>

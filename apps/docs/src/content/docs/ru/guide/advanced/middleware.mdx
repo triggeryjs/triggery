@@ -1,0 +1,365 @@
+---
+title: "Middleware"
+description: "Наблюдение за рантаймом и его прерывание — хуки жизненного цикла, тип Middleware и сборка собственных стеков без поломки диспетчера."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Middleware — поверхность интроспекции рантайма. Это обычный объект с именем и максимум семью хуками жизненного цикла; рантайм вызывает только те, которые ты реализовал, — по мере того как рассылаются события, отрабатывают обработчики, срабатывают действия и возникают ошибки. Middleware также может **отменить** срабатывание ещё до того, как его увидит хоть один обработчик.
+
+Именно на middleware подписан инспектор, на нём построен `@triggery/devtools-redux`, и через него же добавляется структурированное логирование или метрики производительности вокруг твоих триггеров — без правок в файлах самих триггеров.
+
+## Тип `Middleware`
+
+```ts title="@triggery/core"
+export type Middleware = {
+  readonly name: string;
+  onFire?(ctx: FireContext): void | { cancel: true; reason: string };
+  onBeforeMatch?(ctx: MatchContext): void;
+  onSkip?(ctx: SkipContext): void;
+  onActionStart?(ctx: ActionContext): void;
+  onActionEnd?(ctx: ActionContext & { durationMs: number; result?: unknown }): void;
+  onError?(ctx: ActionContext & { error: unknown }): void;
+  onCascade?(ctx: CascadeContext): void;
+};
+```
+
+Семь хуков. Каждый необязателен. `name` — единственное обязательное поле; имя появляется в DevTools и помогает понять, какой именно middleware ведёт себя некорректно. Рантайм хранит middleware в том порядке, в каком их передали в `createRuntime`, и обходит ими каждый хук в этом же порядке.
+
+## Жизненный цикл по шагам
+
+При типичном срабатывании, которое попадает в один триггер и запускает одно действие, рантайм вызывает хуки в такой последовательности:
+
+```text
+runtime.fire('new-message', payload)
+  ├─ middleware.onFire             ← может прервать через { cancel: true }
+  │      (ограничения глубины и циклов работают и здесь — см. Каскады)
+  ├─ for each matching trigger:
+  │     ├─ middleware.onBeforeMatch     ← чисто наблюдательный
+  │     ├─ concurrency gate (может пропустить — сработает onSkip)
+  │     ├─ required gate     (может пропустить — сработает onSkip)
+  │     ├─ handler runs
+  │     │     └─ actions.<name>(payload)
+  │     │           ├─ middleware.onActionStart
+  │     │           ├─ user-registered action handler runs
+  │     │           ├─ middleware.onActionEnd  (sync result or after promise resolves)
+  │     │           └─ middleware.onError      (if the action threw or rejected)
+  │     └─ (handler returns / errors / aborts)
+  └─ runtime.fire('next-event') from inside the handler
+        ├─ depth or cycle violated → middleware.onCascade({ kind: 'overflow' | 'cycle' })
+        └─ otherwise → recurse from `onFire`
+```
+
+Сам обработчик для middleware непрозрачен — никаких `onHandlerStart` / `onHandlerEnd` нет. Это сделано намеренно: обработчик — это замыкание, которое написал ты, а не артефакт рантайма. Рантайм инструментирует *границы* (fire, match, skip, action, cascade), а middleware, которому нужен тайминг обработчика, собирает его сам — замеряя интервал между `onBeforeMatch` и последним `onActionEnd` для заданного `runId`.
+
+## Каждый хук в деталях
+
+### `onFire(ctx: FireContext)`
+
+Срабатывает **один раз на срабатывание** — верхнеуровневое или каскадное — до того, как найден хотя бы один триггер. Это единственный хук, который может отменить срабатывание:
+
+```ts title="src/middleware/feature-flag.ts"
+import type { Middleware } from '@triggery/core';
+
+export function makeFeatureFlagMiddleware(disabledEvents: Set<string>): Middleware {
+  return {
+    name: 'feature-flag',
+    onFire({ eventName }) {
+      if (disabledEvents.has(eventName)) {
+        return { cancel: true, reason: `event '${eventName}' is feature-flagged off` };
+      }
+    },
+  };
+}
+```
+
+`ctx` несёт имя события, payload, `cascadeDepth` и (для каскадов) `parentTriggerId` / `parentRunId`. Поле `parentContext` для middleware непрозрачно — обращайся с ним как с чёрным ящиком.
+
+Отмена здесь останавливает всё срабатывание целиком — ни один триггер даже не рассматривается. Если нужно отменить срабатывание только для одного триггера, пропусти `onFire` и собери нужные данные в `onBeforeMatch`; пер-триггерная отмена не поддерживается намеренно — так порядок диспатча остаётся читаемым.
+
+### `onBeforeMatch(ctx: MatchContext)`
+
+Срабатывает **один раз на пару (event, trigger)**, сразу после того, как диспетчер достал триггер из индекса событий — до ограничений concurrency, проверки `required` и обработчика.
+
+Используй, чтобы залогировать, какие триггеры рассматривались для этого события, или зафиксировать таймстамп намерения. Из этого хука прервать нельзя; если нужно подавить срабатывание — делай это из `onFire`.
+
+```ts title="src/middleware/match-logger.ts"
+export const matchLogger: Middleware = {
+  name: 'match-logger',
+  onBeforeMatch({ triggerId, eventName, cascadeDepth }) {
+    console.debug(`[match] ${eventName} → ${triggerId} (depth ${cascadeDepth})`);
+  },
+};
+```
+
+### `onSkip(ctx: SkipContext)`
+
+Срабатывает, когда найденный триггер **не запускается**. Сегодня сюда попадают три причины:
+
+- `concurrency-take-first` или `concurrency-exhaust` — предыдущий запуск ещё выполняется.
+- `missing-required-condition:<name>` — обязательное условие без зарегистрированного геттера.
+- Любая причина, которую custom middleware пишет в инспектор через публичное API.
+
+```ts title="src/middleware/skip-counter.ts"
+const skipCounts = new Map<string, number>();
+export const skipCounter: Middleware = {
+  name: 'skip-counter',
+  onSkip({ triggerId, reason }) {
+    const key = `${triggerId}:${reason}`;
+    skipCounts.set(key, (skipCounts.get(key) ?? 0) + 1);
+  },
+};
+```
+
+`onSkip` — наблюдательный. Триггер уже пропущен к моменту вызова хука; middleware не может его вернуть.
+
+### `onActionStart(ctx: ActionContext)` / `onActionEnd(ctx & { durationMs, result? })`
+
+Срабатывают вокруг **каждого вызова действия** — включая вызовы через `actions.debounce(...)` / `throttle(...)` / `defer(...)`. Два хука обрамляют пользовательский обработчик действия. `durationMs` измеряет время от вызова до резолва возвращённого промиса (для async-действий) или до синхронного возврата (для sync).
+
+```ts title="src/middleware/perf.ts"
+export const perfTimer: Middleware = {
+  name: 'perf-timer',
+  onActionEnd({ triggerId, actionName, durationMs }) {
+    if (durationMs > 50) {
+      console.warn(`[perf] ${triggerId}/${actionName} took ${durationMs.toFixed(1)}ms`);
+    }
+  },
+};
+```
+
+Поле `result` в `onActionEnd` — это значение, которое вернул обработчик действия (или то, к чему зарезолвился await-промис). Большинство обработчиков возвращают `void`; поле существует ради действий, у которых `result` имеет смысл (например, шаг редактирования, возвращающий преобразованный payload).
+
+<Aside type="tip">
+Рантайм кеширует `needsTiming(middleware)` на этапе конструирования. Если ни один middleware не реализует `onActionStart`, `onActionEnd` или `onError`, диспетчер пропускает `performance.now()` на горячем пути. За то, чем не пользуешься, платить не приходится.
+</Aside>
+
+### `onError(ctx: ActionContext & { error: unknown })`
+
+Срабатывает, когда пользовательское **действие** бросает исключение или возвращает отклонённый промис. Ошибка никогда не вылетает из рантайма — диспетчер её ловит, вызывает `onError` каждого middleware и идёт дальше к следующему действию. Именно это не даёт одному сломанному реактору положить остальные действия триггера.
+
+```ts title="src/middleware/sentry.ts"
+import * as Sentry from '@sentry/browser';
+import type { Middleware } from '@triggery/core';
+
+export const sentryReporter: Middleware = {
+  name: 'sentry-reporter',
+  onError({ triggerId, actionName, error }) {
+    Sentry.captureException(error, {
+      tags: { triggerId, actionName, source: 'triggery' },
+    });
+  },
+};
+```
+
+Если бросает **сам обработчик** (вне вызова действия), ошибка логируется рантаймом через `console.error` как последний рубеж обороны, и запуск завершается со статусом `'errored'` — но `onError` зарезервирован за ошибками уровня действия, а не уровня обработчика. Снимок инспектора несёт ошибку обработчика в поле `reason`.
+
+### `onCascade(ctx: CascadeContext)`
+
+Срабатывает, когда каскад **отброшен** — либо потому что `cascadeDepth > maxCascadeDepth` (`kind: 'overflow'`), либо потому что обнаружен цикл (`kind: 'cycle'`). Это observability-хук для предохранителей, описанных в разделе [Каскады](/ru/guide/architecture/cascade/).
+
+```ts title="src/middleware/cascade-logger.ts"
+export const cascadeLogger: Middleware = {
+  name: 'cascade-logger',
+  onCascade({ parentTriggerId, newEventName, cascadeDepth, kind }) {
+    console.warn(
+      `[cascade] ${kind} at depth ${cascadeDepth}: '${newEventName}' from ${parentTriggerId}`,
+    );
+  },
+};
+```
+
+Хук вызывается **только** при переполнении или цикле. Легитимные каскады — в пределах лимита глубины и без циклов — `onCascade` **не** вызывают. Чтобы наблюдать каждый каскад, используй `onFire` и проверяй `cascadeDepth > 0`.
+
+## Подключение middleware
+
+Middleware задаётся **при создании рантайма** и неизменяем на всё время его жизни. В V1 нет `runtime.use(...)` — такая гибкость стоит дополнительной ветки на горячем пути и оставлена за бортом намеренно. Если нужен условный middleware — ветвись на создании рантайма:
+
+```ts title="src/main.ts"
+import { createRuntime } from '@triggery/core';
+import { perfTimer } from './middleware/perf';
+import { sentryReporter } from './middleware/sentry';
+import { cascadeLogger } from './middleware/cascade-logger';
+
+const isDev = import.meta.env.MODE !== 'production';
+
+const runtime = createRuntime({
+  middleware: [
+    cascadeLogger,
+    ...(isDev ? [perfTimer] : []),
+    sentryReporter,
+  ],
+});
+```
+
+Для тестов, которым нужно менять стек, создавай свежий рантайм на каждый тест через `createTestRuntime(options)`:
+
+```ts title="src/tests/notification.test.ts"
+import { createTestRuntime } from '@triggery/testing';
+
+const skips: string[] = [];
+const recorder: Middleware = {
+  name: 'recorder',
+  onSkip: ({ reason }) => skips.push(reason),
+};
+
+const rt = createTestRuntime({ middleware: [recorder] });
+// …test against rt…
+```
+
+См. [Модульные тесты](/ru/guide/testing/unit-testing/).
+
+## Порядок исполнения
+
+Для каждого хука middleware выполняются **в том порядке, в котором были переданы в `createRuntime`** — индекс 0 первым, N-1 последним. Порядок важен в двух ситуациях:
+
+1. **Отмена в `onFire`.** Побеждает первый middleware, вернувший `{ cancel: true }`; последующие в списке *не* увидят это срабатывание. Если у тебя есть middleware feature-флага и логгер, поставь логгер первым, чтобы он зафиксировал попытку срабатывания до отмены.
+
+   ```ts
+   middleware: [logger, featureFlag]      // ← логирует каждое срабатывание, включая отменённые
+   middleware: [featureFlag, logger]      // ← логирует только не отменённые
+   ```
+
+2. **Отчётность об ошибках вокруг общего состояния.** Если два middleware изменяют общую мапу по ключу `runId`, пиши продьюсера раньше потребителя. Рантайм не даёт гарантий атомарности между вызовами middleware (это синхронный for-of); два middleware, наблюдающие один и тот же `onActionEnd`, видят его строго по порядку.
+
+`onActionEnd` и `onError` запускаются **после** того, как зарезолвится промис действия — поэтому два middleware, наблюдающие конец async-действия, видят друг друга в той же микротаске, но **после** любого кода, выполненного в await-задержанных фреймах между `onActionStart` и резолвом.
+
+## Ошибки из middleware изолированы
+
+Хуки middleware выполняются **внутри try/catch-границы, унаследованной от вызывающего кода**. Middleware, бросивший внутри `onFire`, рантайм трактует как вернувший `undefined` (без отмены) — исключение попадает на границе `console.error` диспетчера как последняя инстанция. Остальные middleware **продолжают работать**, и триггер диспатчится нормально.
+
+Это правильный дефолт для слоя интроспекции. Сломанный логгер не должен класть пайплайн уведомлений. Это также означает: если твой middleware глотает свои ошибки, ты можешь не заметить баг — пиши на middleware юнит-тест и не полагайся, что рантайм обнаружит его ошибки за тебя.
+
+<Aside type="caution" title="Middleware наблюдательный по умолчанию">
+Считай `onBeforeMatch`, `onSkip`, `onActionStart`, `onActionEnd`, `onError`, `onCascade` **read-only**. На диспатч влияет только возврат `{ cancel: true }` из `onFire`. Мутация `ctx.payload` — **неопределённое поведение**: диспетчер читает живой FireContext, а не клон, и другие middleware увидят то, что ты записал. Если нужно отредактировать payload, делай это на *входе* (до `runtime.fire(...)`), а не внутри хука.
+</Aside>
+
+## Распространённые middleware
+
+У большинства команд набор примерно одинаковый. Вот формы; реализации достаточно коротки, чтобы жить в твоём коде.
+
+### Console logger
+
+```ts title="src/middleware/console-logger.ts"
+import type { Middleware } from '@triggery/core';
+
+export const consoleLogger: Middleware = {
+  name: 'console-logger',
+  onFire: ({ eventName, cascadeDepth }) =>
+    console.debug(`[fire] ${eventName} ${cascadeDepth > 0 ? `(cascade depth ${cascadeDepth})` : ''}`),
+  onSkip:        ({ triggerId, reason }) => console.debug(`[skip] ${triggerId}: ${reason}`),
+  onActionStart: ({ triggerId, actionName }) => console.debug(`[action]  ${triggerId}.${actionName}`),
+  onActionEnd:   ({ triggerId, actionName, durationMs }) =>
+    console.debug(`[done]   ${triggerId}.${actionName} (${durationMs.toFixed(1)}ms)`),
+  onError:       ({ triggerId, actionName, error }) =>
+    console.error(`[error] ${triggerId}.${actionName}`, error),
+};
+```
+
+### Замер производительности
+
+```ts title="src/middleware/perf-timing.ts"
+import type { Middleware } from '@triggery/core';
+
+const slowMs = 50;
+
+export const perfTiming: Middleware = {
+  name: 'perf-timing',
+  onActionEnd({ triggerId, actionName, durationMs }) {
+    if (durationMs > slowMs) {
+      performance.measure(`triggery/${triggerId}/${actionName}`, {
+        start: performance.now() - durationMs,
+        duration: durationMs,
+      });
+    }
+  },
+};
+```
+
+### Редактирование payload (на стороне продьюсера, а не в middleware)
+
+Не пытайся редактировать внутри `onFire`. Правильная форма — тонкая обёртка вокруг `runtime.fire`:
+
+```ts title="src/redacted-fire.ts"
+import type { Runtime } from '@triggery/core';
+
+export function redactedFire<T extends { email?: string }>(
+  runtime: Runtime,
+  eventName: string,
+  payload: T,
+) {
+  const { email, ...rest } = payload;
+  runtime.fire(eventName, { ...rest, email: email ? '[redacted]' : undefined });
+}
+```
+
+Так представление рантайма о мире совпадает с представлением диспетчера, а граница middleware остаётся наблюдательной.
+
+### Сохранение запусков
+
+```ts title="src/middleware/persist-runs.ts"
+import type { Middleware, TriggerInspectSnapshot } from '@triggery/core';
+
+const runs: TriggerInspectSnapshot[] = [];
+
+export const persistRuns: Middleware = {
+  name: 'persist-runs',
+  onActionEnd(ctx) {
+    runs.push({
+      triggerId: ctx.triggerId,
+      runId: ctx.runId,
+      eventName: '',                       // unknown at action level
+      status: 'fired',
+      durationMs: ctx.durationMs,
+      executedActions: [ctx.actionName],
+      snapshotKeys: [],
+    });
+    if (runs.length > 200) runs.shift();
+  },
+};
+```
+
+Для реальной реализации подпишись на буфер инспектора через `runtime.subscribe(listener)` — получишь полный снимок один раз на запуск, а не по одному на каждое действие. См. [Инспектор](/ru/guide/advanced/inspector/).
+
+## Готовые middleware
+
+Писать самому необязательно. Пакеты first-party экспортируют по одному или несколько middleware:
+
+- [**`@triggery/devtools-redux`**](/ru/packages/devtools-redux/) — прогоняет каждое срабатывание / пропуск / действие через расширение Redux DevTools. Положи в `middleware: [...]`, открой панель Redux — больше ничего подключать не надо.
+- [**`@triggery/devtools-bridge`**](/ru/packages/devtools-bridge/) — postMessage-мост к standalone-панели Triggery.
+- [**`@triggery/socket`**](/ru/packages/socket/) — мост срабатываний триггеров через `BroadcastChannel` / WebSocket; полезен для мультитабовой оркестрации.
+
+Они компонуются. Типичный dev-стек: `cascadeLogger`, `perfTiming`, `@triggery/devtools-redux`. Типичный prod-стек: пустой или только `sentryReporter`.
+
+## Чек-лист ревьюера
+
+- [ ] У каждого middleware уникальный `name`. (Рантайм не проверяет, но в devtools и логах два `'logger'` быстро запутывают.)
+- [ ] Хуки **синхронные** и **быстрые**. Async-работа внутри хука не задерживает диспатч, но может породить unhandled rejection — оборачивай внутри.
+- [ ] Ни один middleware не изменяет `ctx`. Если нужна производная форма — собери её локально.
+- [ ] `{ cancel: true }` в `onFire` используется только когда можешь чётко сформулировать, почему это срабатывание должно быть невидимо каждому триггеру. Для пер-триггерных ограничений объяви `required`-условие.
+- [ ] Порядок middleware в `createRuntime` соответствует желаемому порядку лога и отмен.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Инспектор"
+    description="Другая половина observability — кольцевой буфер, useInspect, мосты DevTools."
+    href="/ru/guide/advanced/inspector/"
+  />
+  <LinkCard
+    title="Каскады"
+    description="Лимиты глубины, обнаружение циклов, хук onCascade в контексте."
+    href="/ru/guide/architecture/cascade/"
+  />
+  <LinkCard
+    title="Рантайм"
+    description="Опции createRuntime, несколько рантаймов для тестов и микрофронтендов."
+    href="/ru/guide/essentials/runtime/"
+  />
+  <LinkCard
+    title="@triggery/devtools-redux"
+    description="Drop-in middleware для расширения Redux DevTools."
+    href="/ru/packages/devtools-redux/"
+  />
+</CardGrid>

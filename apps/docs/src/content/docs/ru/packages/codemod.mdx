@@ -1,0 +1,87 @@
+---
+title: "@triggery/codemod"
+description: "Codemod-скрипты для миграции side-effect кода React/Redux в Triggery — на ts-morph."
+sidebar:
+  order: 20
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Codemod-скрипты, которые механически переводят side-effect код React / Redux в модель Triggery «событие → условия → действия». На [ts-morph](https://ts-morph.com), поэтому на выходе — настоящий TypeScript: JSX, типы и импорты сохранены.
+
+[![npm](https://img.shields.io/npm/v/@triggery/codemod?style=flat-square)](https://www.npmjs.com/package/@triggery/codemod)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/codemod?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/codemod)
+
+## Установка
+
+<PackageManagers pkg="@triggery/codemod" dev />
+
+## Что внутри
+
+| Команда / Экспорт | Назначение |
+|---|---|
+| `triggery-codemod extract-trigger --name <event> <file>` | Вытаскивает блок `useEffect(() => { ... }, [])` из компонента в соседний `<name>.trigger.ts`. |
+| `triggery-codemod migrate-from-listener-middleware <file>` | Генерирует по одному триггеру на каждый вызов RTK `startListening({ actionCreator, effect })`. |
+| `extractTrigger`, `migrateFromListenerMiddleware` | Программный API этих двух codemod-скриптов. |
+
+Добавь `--dry-run`, чтобы посмотреть результат без записи.
+
+## Быстрый пример
+
+```bash
+# Pull a useEffect block out of a component into a *.trigger.ts file.
+npx triggery-codemod extract-trigger --name new-message src/Chat.tsx
+
+# Generate one trigger per RTK listenerMiddleware effect.
+npx triggery-codemod migrate-from-listener-middleware src/store/middleware.ts
+```
+
+Программный API:
+
+```ts
+import { extractTrigger, migrateFromListenerMiddleware } from '@triggery/codemod';
+
+extractTrigger({ file: 'src/Chat.tsx', name: 'new-message' });
+migrateFromListenerMiddleware({ file: 'src/store/middleware.ts' });
+```
+
+## Что делает каждый codemod
+
+### `extract-trigger`
+
+Читает первый `useEffect(() => { ... }, [])` в файле и создаёт соседний `<name>.trigger.ts` со скелетным `createTrigger({...})`. Компонент переписывается так, чтобы вместо эффекта вызывался `useEvent(<name>Trigger, '<event-name>')`.
+
+Codemod намеренно **не**:
+
+- Выводит схему-дженерик `events` / `conditions` / `actions` — это пишешь ты.
+- Переносит захваченное замыканием состояние в типизированные условия — рефактори вручную.
+- Трогает функции очистки или эффекты с условными зависимостями — обрабатывай вручную.
+
+### `migrate-from-listener-middleware`
+
+Для каждого вызова `startListening({ actionCreator, effect })` в файле генерирует один `<event-name>.trigger.ts`. Тело `effect` дословно переносится в обработчик нового триггера с маркером `// TODO: refactor dispatch/getState into actions/conditions`.
+
+Другие формы listenerMiddleware (`matcher`, `predicate`, `type`) распознаются, но пропускаются — их нужно смотреть глазами.
+
+<Aside type="note">
+  Почему ts-morph, а не jscodeshift? ts-morph — это TypeScript Compiler API с более приятной поверхностью. Он понимает JSX и ту же систему типов, что и сам Triggery, поэтому codemod-скрипты выдают type-aware TypeScript-вывод.
+</Aside>
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/eslint-plugin" description="Lint-правила ловят то, что этот codemod починить не может." href="/ru/packages/eslint-plugin/" />
+  <LinkCard title="@triggery/cli" description="triggery scaffold trigger для greenfield-файлов." href="/ru/packages/cli/" />
+  <LinkCard title="@triggery/redux" description="Рантайм-аналог миграции listener-middleware." href="/ru/packages/redux/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/codemod)
+- [npm](https://www.npmjs.com/package/@triggery/codemod)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/codemod/CHANGELOG.md)

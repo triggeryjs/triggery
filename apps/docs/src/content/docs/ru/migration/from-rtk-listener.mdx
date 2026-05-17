@@ -1,0 +1,149 @@
+---
+title: "От RTK listenerMiddleware"
+description: "Перевод регистраций listener'ов из @reduxjs/toolkit в Triggery — один listener становится одним триггером."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`listenerMiddleware` из `@reduxjs/toolkit` — это то, что в экосистеме Redux ближе всего к триггеру. Миграция в основном механическая: одна регистрация `startListening({ actionCreator, effect })` становится одним `createTrigger({ id, events, handler })`. Codemod `migrate-from-listener-middleware` обрабатывает форму с actionCreator; другие формы требуют человеческой ревизии.
+
+## Соответствие ментальных моделей
+
+| listenerMiddleware | Triggery |
+|---|---|
+| `startListening({ actionCreator: foo, effect })` | `createTrigger({ events: ['foo'], handler })` |
+| `startListening({ matcher: isAnyOf(a, b) })` | `events: ['a', 'b']` и ветвление по `event.name` |
+| `startListening({ predicate: (action, state) => … })` | Предикат → условие + охранник в обработчике |
+| `effect(action, api)` — `api.getState()` | `conditions.someName` (зарегистрировано через `useReduxCondition`) |
+| `api.dispatch(action)` | `actions.someAction?.(payload)` |
+| `api.cancelActiveListeners()` | `concurrency: 'take-latest'` (по умолчанию) с `signal` |
+| `api.signal` | `signal` в контексте обработчика |
+| `api.fork(task)` | Под-обработчик; явная стратегия конкурентности `take-every` |
+
+## Паттерн 1 — listener на основе actionCreator
+
+```ts title="Before"
+listenerMiddleware.startListening({
+  actionCreator: chatSlice.actions.messageReceived,
+  effect: (action, api) => {
+    const settings = api.getState().settings;
+    if (!settings.notifications) return;
+    api.dispatch(uiSlice.actions.showToast({ title: action.payload.author }));
+  },
+});
+```
+
+```ts title="After"
+export const messageTrigger = createTrigger<{
+  events:     { 'chat/messageReceived': Message };
+  conditions: { settings: Settings };
+  actions:    { showToast: { title: string } };
+}>({
+  id: 'message-received',
+  events: ['chat/messageReceived'],
+  required: ['settings'],
+  handler({ event, check, actions }) {
+    if (!check.is('settings', s => s.notifications)) return;
+    actions.showToast?.({ title: event.payload.author });
+  },
+});
+```
+
+Доступ к состоянию (`api.getState().settings`) становится `useReduxCondition`, зарегистрированным фичей settings; dispatch тоста становится `useAction` в UI-фиче.
+
+## Паттерн 2 — matcher
+
+```ts title="Before"
+import { isAnyOf } from '@reduxjs/toolkit';
+
+listenerMiddleware.startListening({
+  matcher: isAnyOf(chatSlice.actions.messageReceived, chatSlice.actions.mentionReceived),
+  effect: (action, api) => { /* … */ },
+});
+```
+
+```ts title="After"
+createTrigger<{ /* … */ }>({
+  events: ['chat/messageReceived', 'chat/mentionReceived'],
+  handler({ event /* event.name is the discriminator */, actions }) {
+    if (event.name === 'chat/mentionReceived') actions.playSound?.('mention');
+    actions.showToast?.({ /* … */ });
+  },
+});
+```
+
+Перечисление обоих имён в `events:` индексирует триггер под оба ключа событий — обработчик видит discriminated union полезных нагрузок.
+
+## Паттерн 3 — предикат против состояния
+
+```ts title="Before"
+listenerMiddleware.startListening({
+  predicate: (action, currentState) =>
+    action.type === 'chat/messageReceived' &&
+    currentState.settings.notifications,
+  effect: /* … */,
+});
+```
+
+```ts title="After"
+createTrigger<{
+  events:     { 'chat/messageReceived': Message };
+  conditions: { settings: Settings };
+}>({
+  events: ['chat/messageReceived'],
+  required: ['settings'],
+  handler({ check, actions }) {
+    if (!check.is('settings', s => s.notifications)) return;
+    actions.showToast?.({ /* … */ });
+  },
+});
+```
+
+Проверка предиката "состояние верное?" превращается в `check.is` внутри обработчика — та же логика, ленивая оценка из единого источника.
+
+## Паттерн 4 — race против signal (асинхронные listener'ы)
+
+```ts title="Before"
+effect: async (action, api) => {
+  api.cancelActiveListeners();           // take-latest
+  const res = await fetch('/details', { signal: api.signal });
+  if (api.signal.aborted) return;
+  api.dispatch(detailsLoaded(await res.json()));
+}
+```
+
+```ts title="After"
+{
+  concurrency: 'take-latest',            // default
+  async handler({ signal, actions }) {
+    const res = await fetch('/details', { signal });
+    if (signal.aborted) return;
+    actions.storeDetails?.(await res.json());
+  },
+}
+```
+
+`take-latest` — это значение по умолчанию; `concurrency:` передаётся только для опт-ина в что-то другое.
+
+## Codemod
+
+`@triggery/codemod` поставляет [`migrate-from-listener-middleware`](/ru/packages/codemod/) для формы с actionCreator:
+
+```bash
+npx triggery-codemod migrate-from-listener-middleware src/store/middleware.ts --dry-run
+```
+
+Для каждого вызова `startListening({ actionCreator, effect })` codemod генерирует один `*.trigger.ts`-заготовку с телом `effect`, перенесённым дословно в обработчик, и маркером `// TODO` для конвертации `getState()`/`dispatch()`. Формы с matcher / predicate определяются, но пропускаются — их делаешь руками по паттернам выше.
+
+## Оставить Redux
+
+Удалять Redux не обязательно. Самый частый путь: оставить стор, оставить `createSlice` и заменить listenerMiddleware *как механизм побочных эффектов* на триггеры. Адаптер `@triggery/redux` показывает селекторы как условия в 30 строках — см. [`@triggery/redux`](/ru/packages/redux/).
+
+<CardGrid>
+  <LinkCard title="От Redux Saga" description="takeLatest / takeEvery / takeLeading → стратегии конкурентности." href="/ru/migration/from-redux-saga/" />
+  <LinkCard title="@triggery/redux" description="Адаптер useReduxCondition." href="/ru/packages/redux/" />
+  <LinkCard title="Стратегии конкурентности" description="take-latest, take-every, queue, exhaust." href="/ru/guide/async/concurrency/" />
+  <LinkCard title="Codemod CLI" description="migrate-from-listener-middleware." href="/ru/packages/codemod/" />
+</CardGrid>

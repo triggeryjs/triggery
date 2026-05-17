@@ -69,6 +69,10 @@ useQueryCondition<T, S, K>(
 ): void
 ```
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/query/](https://triggeryjs.github.io/packages/query/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.

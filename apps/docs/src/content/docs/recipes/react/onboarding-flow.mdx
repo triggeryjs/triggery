@@ -1,0 +1,286 @@
+---
+title: "Onboarding flow"
+description: "Drive a multi-step product tour from one trigger that listens to route changes and feature discoveries — no useEffect graveyard, no tour-library lock-in."
+sidebar:
+  order: 6
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Onboarding flows are notorious for sprawling logic: "show step 2 only if step 1 is done AND the user is on this route AND they haven't dismissed the tour AND they actually have access to the feature". You either hard-code it in one giant `useEffect` chain, or you reach for a tour library that owns half your UI. Triggery's third path: keep the *rules* in one trigger and let *each step component* announce itself to the trigger.
+
+<StackBlitzButton path="examples/vite-react-onboarding" label="Open in StackBlitz" />
+
+## Scenario
+
+A two-step onboarding tour:
+
+1. **Step 1 — "Try the search"**: shown the first time the user lands on `/dashboard`, unless they've dismissed onboarding.
+2. **Step 2 — "Save a filter"**: shown the first time the user fires a `feature:search-used` event (after Step 1 has been completed).
+
+State driving the rules:
+
+- `<RouterProvider>` exposes the current `route`.
+- `<UserProvider>` exposes `{ completedSteps, dismissed }` from the user profile.
+- Features themselves announce usage via `feature:*` events.
+
+## File layout
+
+<FileTree>
+- src/
+  - triggers/
+    - **onboarding.trigger.ts** what to show, when
+  - features/
+    - router/
+      - RouterProvider.tsx provider (`route`)
+    - user/
+      - UserProvider.tsx provider (`completedSteps`, `dismissed`)
+    - dashboard/
+      - DashboardSearch.tsx producer (fires `feature:search-used`)
+    - onboarding/
+      - OnboardingHost.tsx reactor (renders the active step)
+</FileTree>
+
+## 1. The trigger
+
+```ts title="src/triggers/onboarding.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type StepId = 'try-search' | 'save-filter';
+
+export const onboardingTrigger = createTrigger<{
+  events: {
+    'route-changed':      { to: string };
+    'feature-discovered': { name: 'search-used' | 'filter-saved' };
+  };
+  conditions: {
+    completedSteps: ReadonlySet<StepId>;
+    dismissed:      boolean;
+    route:          string;
+  };
+  actions: {
+    showStep:     StepId;
+    completeStep: StepId;
+  };
+}>({
+  id: 'onboarding',
+  events: ['route-changed', 'feature-discovered'],
+  required: ['completedSteps', 'dismissed'],
+  handler({ event, conditions, actions }) {
+    // The user opted out — never bother them.
+    if (conditions.dismissed) return;
+
+    const done = conditions.completedSteps;
+
+    if (event.name === 'route-changed') {
+      // Step 1: first visit to the dashboard.
+      if (event.payload.to === '/dashboard' && !done.has('try-search')) {
+        actions.showStep?.('try-search');
+      }
+      return;
+    }
+
+    // Feature discovery — promote step 2 when search is used (and step 1 is done).
+    if (event.name === 'feature-discovered') {
+      const { name } = event.payload;
+
+      if (name === 'search-used' && done.has('try-search') && !done.has('save-filter')) {
+        actions.completeStep?.('try-search');
+        actions.showStep?.('save-filter');
+      }
+
+      if (name === 'filter-saved' && done.has('save-filter') === false) {
+        actions.completeStep?.('save-filter');
+      }
+    }
+  },
+});
+```
+
+The entire onboarding rule book is twenty-five lines, easy to read in one sitting, and impossible to disagree with the spec.
+
+## 2. Providers
+
+```tsx title="src/features/router/RouterProvider.tsx"
+import { useCondition, useEvent } from '@triggery/react';
+import { useEffect } from 'react';
+import { onboardingTrigger } from '../../triggers/onboarding.trigger';
+
+export function RouterProvider({
+  route,
+  children,
+}: {
+  route: string;
+  children: React.ReactNode;
+}) {
+  useCondition(onboardingTrigger, 'route', () => route, [route]);
+
+  // Doubles as the producer for `route-changed`.
+  const fireRouteChanged = useEvent(onboardingTrigger, 'route-changed');
+  useEffect(() => {
+    fireRouteChanged({ to: route });
+  }, [fireRouteChanged, route]);
+
+  return <>{children}</>;
+}
+```
+
+<Aside type="tip">
+This is the *only* `useEffect` you'll see in the entire onboarding system — and it's purely a bridge from "the router updated" to "fire an event". Every other reactive rule lives in the trigger file.
+</Aside>
+
+```tsx title="src/features/user/UserProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { useMemo } from 'react';
+import { onboardingTrigger, type StepId } from '../../triggers/onboarding.trigger';
+
+export function UserProvider({
+  completed,
+  dismissed,
+  children,
+}: {
+  completed: readonly StepId[];
+  dismissed: boolean;
+  children: React.ReactNode;
+}) {
+  const set = useMemo(() => new Set(completed), [completed]);
+
+  useCondition(onboardingTrigger, 'completedSteps', () => set,       [set]);
+  useCondition(onboardingTrigger, 'dismissed',      () => dismissed, [dismissed]);
+
+  return <>{children}</>;
+}
+```
+
+## 3. Feature producers
+
+Any feature that wants to *advance the tour* fires a `feature-discovered` event. It doesn't know which step it's promoting — that's the trigger's job.
+
+```tsx title="src/features/dashboard/DashboardSearch.tsx"
+import { useEvent } from '@triggery/react';
+import { useState } from 'react';
+import { onboardingTrigger } from '../../triggers/onboarding.trigger';
+
+export function DashboardSearch() {
+  const [q, setQ] = useState('');
+  const fireDiscovered = useEvent(onboardingTrigger, 'feature-discovered');
+
+  return (
+    <form
+      onSubmit={e => {
+        e.preventDefault();
+        fireDiscovered({ name: 'search-used' });
+      }}
+    >
+      <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" />
+      <button type="submit">Search</button>
+    </form>
+  );
+}
+```
+
+## 4. The host
+
+One component owns the visible coachmarks. It registers `showStep` / `completeStep` and writes the current step into a store.
+
+```tsx title="src/features/onboarding/OnboardingHost.tsx"
+import { useAction } from '@triggery/react';
+import { useState } from 'react';
+import { onboardingTrigger, type StepId } from '../../triggers/onboarding.trigger';
+
+const STEP_COPY: Record<StepId, { title: string; body: string }> = {
+  'try-search':  { title: 'Try the search', body: 'Type anything in the box up top.' },
+  'save-filter': { title: 'Save a filter',  body: 'Save the current view to come back to it.' },
+};
+
+export function OnboardingHost({ onComplete }: { onComplete: (step: StepId) => void }) {
+  const [active, setActive] = useState<StepId | null>(null);
+
+  useAction(onboardingTrigger, 'showStep', step => setActive(step));
+  useAction(onboardingTrigger, 'completeStep', step => {
+    onComplete(step);
+    setActive(curr => (curr === step ? null : curr));
+  });
+
+  if (!active) return null;
+
+  return (
+    <aside role="dialog" className="coachmark">
+      <h3>{STEP_COPY[active].title}</h3>
+      <p>{STEP_COPY[active].body}</p>
+      <button type="button" onClick={() => setActive(null)}>Got it</button>
+    </aside>
+  );
+}
+```
+
+`onComplete` is the seam where you'd persist progress to your user profile API. The trigger doesn't need to know about that — it only cares whether the `completedSteps` condition reflects the latest state on the next fire.
+
+## 5. Wire it up
+
+```tsx title="src/App.tsx"
+import { useState } from 'react';
+import { OnboardingHost } from './features/onboarding/OnboardingHost';
+import { RouterProvider } from './features/router/RouterProvider';
+import { UserProvider } from './features/user/UserProvider';
+import type { StepId } from './triggers/onboarding.trigger';
+
+export function App() {
+  const [route]      = useState('/dashboard');
+  const [completed, setCompleted] = useState<readonly StepId[]>([]);
+  const [dismissed]  = useState(false);
+
+  return (
+    <UserProvider completed={completed} dismissed={dismissed}>
+      <RouterProvider route={route}>
+        <OnboardingHost onComplete={step => setCompleted(c => [...c, step])} />
+        {/* …the rest of the app… */}
+      </RouterProvider>
+    </UserProvider>
+  );
+}
+```
+
+## Test it
+
+```ts title="src/triggers/onboarding.trigger.test.ts"
+import { createTestRuntime, mockAction, mockCondition } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { onboardingTrigger, type StepId } from './onboarding.trigger';
+
+describe('onboarding', () => {
+  it('shows step 1 on first dashboard visit', async () => {
+    const rt = createTestRuntime({ triggers: [onboardingTrigger] });
+    const showStep = vi.fn();
+    mockCondition(rt, onboardingTrigger, 'completedSteps', new Set<StepId>());
+    mockCondition(rt, onboardingTrigger, 'dismissed',      false);
+    mockCondition(rt, onboardingTrigger, 'route',          '/dashboard');
+    mockAction(rt, onboardingTrigger, 'showStep', showStep);
+
+    await rt.fire('route-changed', { to: '/dashboard' });
+
+    expect(showStep).toHaveBeenCalledWith('try-search');
+  });
+
+  it('never shows anything when the user dismissed onboarding', async () => {
+    const rt = createTestRuntime({ triggers: [onboardingTrigger] });
+    const showStep = vi.fn();
+    mockCondition(rt, onboardingTrigger, 'completedSteps', new Set<StepId>());
+    mockCondition(rt, onboardingTrigger, 'dismissed',      true);
+    mockAction(rt, onboardingTrigger, 'showStep', showStep);
+
+    await rt.fire('route-changed', { to: '/dashboard' });
+    await rt.fire('feature-discovered', { name: 'search-used' });
+
+    expect(showStep).not.toHaveBeenCalled();
+  });
+});
+```
+
+## Variations / Related
+
+<CardGrid>
+  <LinkCard title="Ownership boundaries" href="/guide/architecture/ownership/" description="Why router state belongs in a provider, not the trigger." />
+  <LinkCard title="useCondition" href="/api/react/use-condition/" description="Hook reference." />
+</CardGrid>

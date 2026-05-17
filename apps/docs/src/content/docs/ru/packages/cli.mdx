@@ -1,0 +1,87 @@
+---
+title: "@triggery/cli"
+description: "CLI для Triggery — create, scaffold, graph, lint."
+sidebar:
+  order: 21
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Командный спутник Triggery. Скаффолдит проекты, генерирует файлы триггеров, печатает граф триггеров и запускает ESLint с уже встроенным `@triggery/eslint-plugin`.
+
+[![npm](https://img.shields.io/npm/v/@triggery/cli?style=flat-square)](https://www.npmjs.com/package/@triggery/cli)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/cli?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/cli)
+
+## Установка
+
+<PackageManagers pkg="@triggery/cli" dev />
+
+Или разово через `npx @triggery/cli <command>`.
+
+## Что внутри
+
+| Команда | Назначение |
+|---|---|
+| `triggery create <dir> [--template vite-react\|next-app\|react-native]` | Скаффолдит стартер (по умолчанию `vite-react`). |
+| `triggery scaffold trigger <name>` | Генерирует `src/triggers/<name>.trigger.ts` с минимальной заготовкой. |
+| `triggery graph [dir] --format md\|dot\|json` | Обходит файлы `*.trigger.ts` и печатает граф триггеров. |
+| `triggery lint [...paths]` | Тонкая обёртка над `eslint` с пресетом recommended из `@triggery/eslint-plugin`. |
+
+Программные экспорты: `buildTriggerGraph`, `renderGraph`, `scaffoldTrigger`, `createProject`.
+
+## Быстрый пример
+
+```bash
+# Scaffold a new Vite + React app already wired with @triggery/vite.
+triggery create my-chat --template vite-react
+cd my-chat && pnpm install && pnpm dev
+
+# Generate a fresh trigger file.
+triggery scaffold trigger new-message
+# → src/triggers/new-message.trigger.ts
+
+# Render a Markdown graph of every trigger in the project.
+triggery graph . --format md > docs/triggers.md
+
+# DOT format for Graphviz.
+triggery graph . --format dot --out triggery.dot
+dot -Tsvg triggery.dot -o triggery.svg
+
+# Lint with the recommended preset baked in.
+triggery lint src --fix
+```
+
+Программный API:
+
+```ts
+import { buildTriggerGraph, renderGraph } from '@triggery/cli';
+
+const nodes = buildTriggerGraph({ cwd: process.cwd() });
+console.log(renderGraph(nodes, 'md'));
+```
+
+## Шаблоны
+
+- `vite-react` — Vite + React + уже подключённый авто-discovery `@triggery/vite`. По умолчанию.
+- `next-app` — Next.js App Router с SSR-безопасной регистрацией триггеров.
+- `react-native` — стартер Expo + React Native.
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/eslint-plugin" description="Lint-правила, которые вызывает triggery lint." href="/ru/packages/eslint-plugin/" />
+  <LinkCard title="@triggery/codemod" description="Codemod-скрипты миграции, дополняющие scaffold trigger." href="/ru/packages/codemod/" />
+  <LinkCard title="@triggery/vite" description="Vite-плагин, который скаффолдит triggery create." href="/ru/packages/vite/" />
+  <LinkCard title="@triggery/core" description="Рантайм, который импортит твой проскаффолженный проект." href="/ru/packages/core/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/cli)
+- [npm](https://www.npmjs.com/package/@triggery/cli)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/cli/CHANGELOG.md)

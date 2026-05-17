@@ -1,0 +1,152 @@
+---
+title: "createNamedHooks"
+description: "Построить прокси из PascalCase-хуков (useNewMessageEvent / useUserCondition / useShowToastAction) из триггера."
+sidebar:
+  order: 7
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Возвращает прокси из хуков, специализированных под один триггер. Вместо того чтобы везде писать `useEvent(messageTrigger, 'new-message')`, ты зовёшь `useNewMessageEvent()`, и система типов уже знает, какой триггер и какой порт. То же для `useUserCondition(getter, deps?)` и `useShowToastAction(handler)`.
+
+Прокси ленивый и кэшируемый: каждое имя хука парсится один раз, соответствующий делегатор строится один раз, последующие рендеры берут из кэша.
+
+## Импорт
+
+```ts
+import { createNamedHooks } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function createNamedHooks<S extends TriggerSchema>(
+  trigger: Trigger<S>,
+): NamedHooks<S>;
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `trigger` | `Trigger<S>` | Триггер, к которому привязываются хуки. |
+
+## Возвращает
+
+Прокси-объект, типизированный как `NamedHooks<S>` — объединение:
+
+| Поле исходной схемы | Сгенерированный хук | Сигнатура |
+|---|---|---|
+| `events: { 'new-message': T }` | `useNewMessageEvent` | `() => (payload: T) => void` |
+| `conditions: { user: U }` | `useUserCondition` | `(getter: () => U, deps?: readonly unknown[]) => void` |
+| `actions: { showToast: P }` | `useShowToastAction` | `(handler: (payload: P) => void \| Promise<void>) => void` |
+
+Конвертация имён: kebab-case и camelCase ключи оба round-trip'ятся через PascalCase. `'new-message'` → `NewMessage`, `'user'` → `User`, `'showToast'` → `ShowToast`.
+
+## Примеры
+
+### Экспортируй хуки рядом с триггером
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createNamedHooks } from '@triggery/react';
+
+type Message = { author: string; text: string };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { user: { id: string; name: string } | null };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'chat:new-message',
+  events: ['new-message'],
+  required: ['user'],
+  handler({ event, conditions, actions }) {
+    actions.showToast?.({
+      title: conditions.user?.name ?? '',
+      body:  event.payload.text,
+    });
+  },
+});
+
+export const {
+  useNewMessageEvent,
+  useUserCondition,
+  useShowToastAction,
+} = createNamedHooks(messageTrigger);
+```
+
+### Потребляй их в компонентах
+
+```tsx
+import { useEffect } from 'react';
+import {
+  useNewMessageEvent,
+  useUserCondition,
+  useShowToastAction,
+} from '../triggers/message.trigger';
+
+function Producer({ socket }: { socket: WebSocket }) {
+  const fire = useNewMessageEvent();
+  useEffect(() => {
+    socket.addEventListener('message', e => fire(JSON.parse(e.data)));
+  }, [socket, fire]);
+  return null;
+}
+
+function UserProvider({ user }: { user: { id: string; name: string } | null }) {
+  useUserCondition(() => user, [user]);
+  return null;
+}
+
+function Toaster() {
+  useShowToastAction(({ title, body }) => console.log('toast', title, body));
+  return null;
+}
+```
+
+### Подмножество по событиям
+
+Экспортировать всё не обязательно:
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createNamedHooks } from '@triggery/react';
+
+const trigger = createTrigger<{
+  events: { ping: void; pong: void };
+}>({
+  id: 'x',
+  events: ['ping', 'pong'],
+  handler() {},
+});
+
+// Pull only the hook you use.
+export const { usePingEvent } = createNamedHooks(trigger);
+```
+
+## Замечания
+
+<Aside type="tip">
+Прокси предпочтительнее ручных определений хуков: система типов гарантирует "имя хука соответствует реальному порту" через template-literal-тип `NamedHooks<S>`. Опечатайся в `useNewMessageEevent` — TypeScript сообщит, что у триггера такого нет.
+</Aside>
+
+<Aside type="caution" title="kebab-case round-trip">
+`createNamedHooks` выводит PascalCase-идентификаторы из любого ключа. Когда ты зовёшь сгенерированный хук, прокси по умолчанию конвертирует обратно в camelCase — `useNewMessageEvent` зовёт `useEvent(trigger, 'newMessage')`. Для kebab-ключей (`'new-message'`) имя порта в рантайме по-прежнему `'new-message'`. Прокси берёт round-trip на себя; ты не видишь этой бухгалтерии, если только не смешиваешь регистры в одной схеме — в таком случае безопасный фоллбэк это `useEvent(trigger, 'kebab-key')`.
+</Aside>
+
+<Aside>
+Только один триггер на вызов `createNamedHooks`. Чтобы скомбинировать хуки из нескольких триггеров, зови по одному разу на каждый и сливай экспорты.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="useEvent" description="Базовый примитив — используется каждым сгенерированным event-хуком." href="/ru/api/react/use-event/" />
+  <LinkCard title="useCondition" description="Базовый примитив для condition-хуков." href="/ru/api/react/use-condition/" />
+  <LinkCard title="useAction" description="Базовый примитив для action-хуков." href="/ru/api/react/use-action/" />
+  <LinkCard title="Правило prefer-named-hook" description="Авто-подсказка named-хуков при достижении порога." href="/ru/api/eslint-plugin/recommended/" />
+</CardGrid>

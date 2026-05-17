@@ -1,0 +1,63 @@
+---
+title: Counter
+description: "The simplest possible Triggery recipe in Solid — one event, one action, one component."
+sidebar:
+  order: 1
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+The same counter scenario as the [React recipe](/recipes/react/counter/), but with Solid's `createSignal`. The trigger is exactly the same — it lives in `@triggery/core` and doesn't know about either framework.
+
+## The trigger
+
+```ts title="src/triggers/counter.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const counterTrigger = createTrigger<{
+  events:  { increment: void; decrement: void };
+  actions: { adjust: number };
+}>({
+  id: 'counter',
+  events: ['increment', 'decrement'],
+  handler({ event, actions }) {
+    actions.adjust?.(event.name === 'increment' ? 1 : -1);
+  },
+});
+```
+
+## The component
+
+```tsx title="src/Counter.tsx"
+import { useAction, useEvent } from '@triggery/solid';
+import { createSignal } from 'solid-js';
+import { counterTrigger } from './triggers/counter.trigger';
+
+export function Counter() {
+  const [count, setCount] = createSignal(0);
+
+  const inc = useEvent(counterTrigger, 'increment');
+  const dec = useEvent(counterTrigger, 'decrement');
+
+  useAction(counterTrigger, 'adjust', delta => setCount(c => c + delta));
+
+  return (
+    <div>
+      <button onClick={dec}>−</button>
+      <output>{count()}</output>
+      <button onClick={inc}>+</button>
+    </div>
+  );
+}
+```
+
+Same shape, native to Solid. No re-rendering of the rest of the tree when the count changes — Solid's fine-grained reactivity does its thing, Triggery's bindings just register/unregister via `onCleanup`.
+
+## Related
+
+<CardGrid>
+  <LinkCard title="React version" href="/recipes/react/counter/" description="The exact same trigger, React hooks." />
+  <LinkCard title="Vue version" href="/recipes/vue/counter/" description="Composition API." />
+  <LinkCard title="Notification pipeline (Solid)" href="/recipes/solid/notification-pipeline/" description="The full multi-component scenario." />
+  <LinkCard title="@triggery/solid package" href="/packages/solid/" description="Hook reference." />
+</CardGrid>

@@ -1,0 +1,70 @@
+---
+title: "@triggery/devtools-panel"
+description: "React components for inspecting a Triggery runtime in-app. Drop-in inspector panel and snapshot views."
+sidebar:
+  order: 17
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+React components for inspecting a [Triggery](https://github.com/triggeryjs/triggery) runtime in-app. Zero CSS pipeline — components use inline styles so they drop into any host without conflicting with global styles.
+
+[![npm](https://img.shields.io/npm/v/@triggery/devtools-panel?style=flat-square)](https://www.npmjs.com/package/@triggery/devtools-panel)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/devtools-panel?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/devtools-panel)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/devtools-panel" dev />
+
+Peer deps: `react ^18 || ^19`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `<InspectorView limit?={20} title?={'Triggery Inspector'} />` | Live, subscribed panel showing recent runs. Click a row to expand the full JSON snapshot. |
+| `<TriggerSnapshotView snapshot variant?='compact'\|'full' />` | Render a single run row (`compact`) or expanded JSON (`full`). |
+
+## Quick example
+
+```tsx
+import { InspectorView } from '@triggery/devtools-panel';
+
+function DebugDrawer() {
+  return import.meta.env.DEV ? <InspectorView limit={50} /> : null;
+}
+```
+
+That's the full integration. The component subscribes to the active runtime (via `<TriggerRuntimeProvider>` context, or the global default) and shows a live list of recent runs. Clicking a row expands the full JSON snapshot.
+
+For a one-off render of a single snapshot (e.g. inside a custom debug tool):
+
+```tsx
+import { TriggerSnapshotView } from '@triggery/devtools-panel';
+
+<TriggerSnapshotView snapshot={mySnapshot} variant="full" />
+```
+
+## Roadmap
+
+The standalone (in-browser, postMessage-driven) panel and the Chrome DevTools wrapper land in v1.1. Track progress at the [Chrome extension stub](https://github.com/triggeryjs/triggery/tree/main/extensions/chrome-devtools).
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="The runtime this panel inspects." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="These are React components." href="/packages/react/" />
+  <LinkCard title="@triggery/devtools-redux" description="Stream runtime events into the Redux DevTools extension." href="/packages/devtools-redux/" />
+  <LinkCard title="@triggery/devtools-bridge" description="Page-side bridge for external inspectors." href="/packages/devtools-bridge/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/devtools-panel)
+- [npm](https://www.npmjs.com/package/@triggery/devtools-panel)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/devtools-panel/CHANGELOG.md)

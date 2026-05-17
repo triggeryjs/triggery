@@ -66,6 +66,10 @@ useSignalCondition<V, S, K>(
 ): void
 ```
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/signals/](https://triggeryjs.github.io/packages/signals/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.

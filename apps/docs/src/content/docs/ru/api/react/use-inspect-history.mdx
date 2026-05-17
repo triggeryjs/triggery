@@ -1,0 +1,137 @@
+---
+title: "useInspectHistory"
+description: "Подписаться на буфер инспектора рантайма и вернуть N самых свежих снепшотов."
+sidebar:
+  order: 6
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Возвращает `limit` свежих снепшотов инспектора из активного рантайма, новые — первыми. Хук подписывается на `runtime.subscribe` и ререндерит при записи каждого нового запуска — используй его для devtools-панелей внутри приложения, списков "последние 20 запусков" или любого UI, которому нужен живой лог событий.
+
+Снепшоты включают все триггеры в рантайме — фильтра по конкретному триггеру нет. Чтобы сузить до одного триггера, фильтруй возвращаемый массив.
+
+## Импорт
+
+```ts
+import { useInspectHistory } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function useInspectHistory(
+  limit?: number,
+): readonly TriggerInspectSnapshot[];
+```
+
+## Параметры
+
+| Параметр | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `limit` | `number` | `20` | Максимальное число возвращаемых снепшотов. Ограничивается `inspectorBufferSize` рантайма. |
+
+## Возвращает
+
+`readonly TriggerInspectSnapshot[]`, новые — первыми. Пустой, если инспектор выключен или запусков ещё не было.
+
+## Примеры
+
+### Панель свежих запусков
+
+```tsx
+import { useInspectHistory } from '@triggery/react';
+
+function RecentRuns() {
+  const history = useInspectHistory(50);
+  return (
+    <ul>
+      {history.map(s => (
+        <li key={s.runId}>
+          <code>{s.triggerId}</code> · {s.status} · {s.durationMs.toFixed(1)}ms
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+### Фильтр по триггеру
+
+```tsx
+import { useInspectHistory } from '@triggery/react';
+
+function MessageRuns() {
+  const history = useInspectHistory(100);
+  const ours = history.filter(s => s.triggerId === 'chat:new-message');
+  return <pre>{JSON.stringify(ours.slice(0, 10), null, 2)}</pre>;
+}
+```
+
+### Только ошибки
+
+```tsx
+import { useInspectHistory } from '@triggery/react';
+
+function Errors() {
+  const history = useInspectHistory(200);
+  const errors = history.filter(s => s.status === 'errored');
+  if (errors.length === 0) return <span>clean</span>;
+  return (
+    <ul>
+      {errors.map(s => (
+        <li key={s.runId}>
+          <strong>{s.triggerId}</strong>: {s.reason}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+### Счётчики статусов
+
+```tsx
+import { useInspectHistory } from '@triggery/react';
+import { useMemo } from 'react';
+
+function StatusBar() {
+  const history = useInspectHistory(500);
+  const counts = useMemo(() => {
+    const out = { fired: 0, skipped: 0, errored: 0, aborted: 0 };
+    for (const s of history) out[s.status] += 1;
+    return out;
+  }, [history]);
+  return (
+    <div>
+      {counts.fired}/{counts.skipped}/{counts.errored}/{counts.aborted}
+    </div>
+  );
+}
+```
+
+## Замечания
+
+<Aside type="tip">
+Хук ререндерит на каждый записанный запуск. Для высоконагруженных рантаймов притормози потребителя, обернув `useInspectHistory` в `useDeferredValue`, или отображай только каждое N-ое обновление. Сам рантайм остаётся дешёвым — инспектор O(1) на запись.
+</Aside>
+
+<Aside type="caution" title="Нужен инспектор">
+Когда `inspector` отключён в `createRuntime` (или авто-дефолт в production), `runtime.subscribe` — это no-op, а буфер всегда `[]`. `useInspectHistory` возвращает `[]` и никогда не ререндерит. Чтобы включить в prod, передай `inspector: true` в `createRuntime` — см. [`RuntimeOptions`](/ru/api/core/types/runtime-options/).
+</Aside>
+
+<Aside>
+`limit` читается на момент рендера. Если ты меняешь `limit` между рендерами, хук пересеивает данные из буфера рантайма и переподписывается. Это нормально для редких UI-переключателей, но не для `limit`, меняющегося на каждом рендере.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="useInspect" description="Свежий снепшот для одного триггера (без подписки)." href="/ru/api/react/use-inspect/" />
+  <LinkCard title="createInspector" description="Реализация кольцевого буфера." href="/ru/api/core/create-inspector/" />
+  <LinkCard title="RuntimeOptions" description="`inspector` и `inspectorBufferSize`." href="/ru/api/core/types/runtime-options/" />
+  <LinkCard title="@triggery/devtools-panel" description="Готовая панель, использующая этот хук." href="/ru/packages/devtools-panel/" />
+</CardGrid>

@@ -1,0 +1,237 @@
+---
+title: "Действия"
+description: "Каналы побочных эффектов, регистрируемые реакторами — вызываются из обработчика, никогда из рендера."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+**Действие** — это типизированный канал побочного эффекта: имя + тип payload. Компонент-*реактор* регистрирует исполнителя под этим именем через `useAction`; когда обработчик запускается и вызывает `actions.<name>(payload)`, исполнитель срабатывает.
+
+Действия — это то, через что правило, выраженное в триггере, превращается в наблюдаемое изменение в мире: появление тоста, проигрывание звука, старт `fetch`. Реактору не нужно знать, кто решил его вызвать — только что он делает, когда его вызвали.
+
+## Объявляем действие
+
+Действия живут в карте `actions` внутри схемы. Каждая запись отображает имя на тип payload, который получит исполнитель:
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events:  { 'new-message': { author: string; text: string } };
+  actions: {
+    showToast:      { title: string; body: string };
+    playSound:      'beep' | 'whoosh';
+    beep:           void;                      // без payload
+    incrementBadge: string;                    // channelId
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  handler({ event, actions }) {
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    actions.playSound?.('beep');
+    actions.beep?.();
+    actions.incrementBadge?.(event.payload.author);
+  },
+});
+```
+
+Payload `void` объявляет действие без аргумента: `actions.beep?.()`.
+
+## Регистрируем исполнителя
+
+Реакторы используют `useAction(trigger, name, handler)`. Обработчик получает payload, типизированный ровно так, как объявлено:
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/features/NotificationLayer.tsx"
+    import { useAction } from '@triggery/react';
+    import { toast } from 'sonner';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function NotificationLayer() {
+      useAction(messageTrigger, 'showToast', ({ title, body }) => {
+        toast.success(title, { description: body });
+      });
+
+      useAction(messageTrigger, 'playSound', (kind) => {
+        new Audio(`/sounds/${kind}.mp3`).play().catch(() => {});
+      });
+
+      useAction(messageTrigger, 'beep', () => console.log('beep'));
+
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/features/NotificationLayer.tsx"
+    import { useAction } from '@triggery/solid';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function NotificationLayer() {
+      useAction(messageTrigger, 'showToast', ({ title, body }) => {
+        console.log('toast', title, body);
+      });
+      useAction(messageTrigger, 'playSound', (kind) => {
+        new Audio(`/sounds/${kind}.mp3`).play().catch(() => {});
+      });
+      useAction(messageTrigger, 'beep', () => console.log('beep'));
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```vue title="src/features/NotificationLayer.vue"
+    <script setup lang="ts">
+    import { useAction } from '@triggery/vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    useAction(messageTrigger, 'showToast', ({ title, body }) => {
+      console.log('toast', title, body);
+    });
+    useAction(messageTrigger, 'playSound', (kind) => {
+      new Audio(`/sounds/${kind}.mp3`).play().catch(() => {});
+    });
+    useAction(messageTrigger, 'beep', () => console.log('beep'));
+    </script>
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+Как и у `useCondition`, регистрация **pull-only**: реактор не перерендеривается, когда триггер срабатывает. У рантайма просто есть указатель на свежее замыкание, и он зовёт его, когда обработчик попросит.
+
+Хук держит свежий обработчик в ref — оборачивать тело в `useCallback` не нужно. Каждый перерендер прозрачно подменяет замыкание; сама регистрация остаётся стабильной.
+
+## Вызываем действия из обработчика
+
+Каждый элемент `ctx.actions` типизирован как `((payload) => void) | undefined`. `undefined` тут честный: исполнитель может быть не зарегистрирован (реактор не смонтирован или живёт в другом скоупе). Опциональное `?.` — это эквивалент в месте вызова для «нормально, если никто не слушает»:
+
+```ts
+handler({ actions, event }) {
+  actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  actions.beep?.();
+  // Если ни одно не зарегистрировано: обработчик молча отрабатывает,
+  // инспектор помечает executedActions для этого прогона как пустой.
+}
+```
+
+Вызов незарегистрированного действия — no-op, **не** ошибка. Это правильное умолчание для оркестрации: правило не должно знать, смонтирована ли аудио-фича на данной странице.
+
+Если нужна семантика «должно быть зарегистрировано» — пиши проверку сам в духе `required`: `if (!actions.beep) { /* fallback, log, … */ }`. Встроенного поля `requiredActions` в V1 нет.
+
+## Прокси действий — `debounce / throttle / defer`
+
+`ctx.actions` — это прокси с маленьким композируемым API поверх. Три встроенных тайминг-обёртки:
+
+```ts
+actions.debounce(800).playSound?.('beep');
+actions.throttle(2000).updateBadge?.(channelId);
+actions.defer(100).analytics?.({ kind: 'msg.received' });
+```
+
+**`debounce(ms)`** — выкидывает промежуточные вызовы. Каждый вызов перезапускает таймер `ms`; срабатывает только payload последнего вызова, после того как триггер замолкает на `ms`. Полезно для «один beep на пачку сообщений».
+
+**`throttle(ms)`** — leading edge: первый вызов срабатывает сразу, последующие вызовы в течение `ms` отбрасываются. Полезно для «тикни бейдж максимум раз в две секунды, даже если приехало 50 сообщений». (Trailing-edge вариант приедет в V1.1.)
+
+**`defer(ms)`** — вызов один раз через `ms`, безусловно. Каждый вызов планирует независимый таймер; они не схлопываются. Полезно для «отправь аналитику через 100 мс, чтобы пользователь, мгновенно закрывший страницу, её не запустил».
+
+Рантайм владеет состоянием таймеров на каждый триггер. Когда триггер уничтожается, каждый незавершённый таймер отменяется. Никаких утёкших дескрипторов `setTimeout`, никаких исполнителей, запускающихся после размонтирования своего реактора.
+
+```ts
+handler({ event, actions, conditions }) {
+  if (event.name === 'new-message') {
+    actions.debounce(800).playSound?.('beep');         // один beep на пачку
+    actions.throttle(2000).incrementBadge?.(event.payload.channelId);
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  }
+}
+```
+
+См. [Debouncing & throttling](/ru/guide/async/debouncing-throttling/) для правил отмены и контракта очистки таймеров.
+
+## Sync vs async исполнители
+
+Исполнитель может вернуть `void` или `Promise<void>`. Рантайм обрабатывает оба:
+
+```ts
+useAction(messageTrigger, 'persistDraft', async (draft) => {
+  await fetch('/api/drafts', { method: 'POST', body: JSON.stringify(draft) });
+});
+```
+
+Для async-исполнителей рантайм записывает resolve / reject через хуки middleware `onActionEnd` / `onError` — твой trace-middleware увидит реальные длительности. Если нужно прервать выполняющегося исполнителя, когда его триггер вытеснен, — комбинируй действия с `signal` обработчика. См. [Отмена](/ru/guide/async/cancellation/) для паттерна.
+
+Обработчик **не** ждёт `actions.<name>(...)` автоматически — для обработчика действия fire-and-forget. Если два действия должны идти по порядку, await'ь их явно с маленьким хелпером — или смоделируй второе действие как собственное событие в follow-up-триггере.
+
+## Конкурентность — что происходит при быстрых вызовах
+
+Когда один и тот же обработчик срабатывает дважды быстро, стратегия конкурентности **триггера** решает, что произойдёт с *обработчиком* — `take-latest` прервёт предыдущий прогон, `queue` сериализует и т. д. Это настройка уровня триггера, не уровня действия. См. [Стратегии параллелизма](/ru/guide/async/concurrency/) для таблицы.
+
+А **исполнитель**? Он отрабатывает один раз на каждый вызов `actions.foo(...)`. Если обработчик зовёт его три раза за прогон, исполнитель отработает три раза подряд. Используй `debounce` / `throttle`, если хочешь меньше срабатываний; используй очередь внутри исполнителя, если нужна сериализация на уровне побочного эффекта. Рантайм за тебя гадать не будет.
+
+Распространённое сокращение для «запускай это по порядку, никогда не два параллельно» — это `queue` concurrency самого триггера плюс синхронное действие, которое делает реальную работу. Обработчик идёт сериализованно; действие синхронно выполняется внутри него.
+
+## Владение по правилу last-mount-wins
+
+Как и условия, действия регистрируются на внутреннем стеке. Обработчик самого свежего реактора побеждает; при размонтировании предыдущий снова всплывает на верх. В DEV рантайм выдаёт одно предупреждение на пару `(triggerId, actionName)`, когда приходит вторая живая регистрация:
+
+```text
+[triggery] multiple action registrations for "showToast" on trigger "message-received" —
+last-mount-wins. To compose values from several sources, register through a single hook.
+```
+
+Две причины, почему так нормально:
+
+1. **Оверрайды first-class.** Модалка смонтировалась и хочет перехватить `showToast`? Монтируй оверрайд, он побеждает; при закрытии размонтируется, глобальный обработчик возвращается на верх.
+2. **Тесты простые.** Монтируешь тестовый реактор; он побеждает; ассертишь, что он получил payload; teardown.
+
+Если тебе по-настоящему нужно, чтобы *оба* обработчика запустились (один тост, один лог), регистрируй через один составной хук, который вызовет оба. Библиотека не делает молчаливый fan-out — явная композиция и есть контракт.
+
+См. [Владение](/ru/guide/architecture/ownership/) для полного разбора.
+
+## Действия в скоупах
+
+Как и условия, действия по умолчанию регистрируются глобально. Оберни поддерево в `<TriggerScope id="...">`, и действия, зарегистрированные внутри, станут видны только тем триггерам, у которых `scope` совпадает:
+
+```tsx
+<TriggerScope id="modal-stack">
+  <ModalNotificationLayer />     {/* перекрывает 'showToast' только для триггеров скоупа modal */}
+</TriggerScope>
+```
+
+Это типобезопасная альтернатива «context-aware actions». См. [Скоупы](/ru/guide/architecture/scopes/).
+
+## Общие паттерны
+
+**Действие = повелительный глагол.** `showToast`, `playSound`, `incrementBadge`. Реактор *делает* вещь. Избегай имён в стиле «compute» — это уже условия.
+
+**Не читай состояние внутри действия.** Действия — это побочные эффекты, а не чистые трансформации. Если для решения «что делать» нужно состояние — смоделируй его условием, которое прочтёт обработчик, и передай результат в payload действия. Обработчик должен оставаться единственным местом с кросс-фичной логикой решений.
+
+**Одно действие на один побочный эффект.** Не объединяй `showToast` + `logError` + `incrementBadge` в одно действие `notifyAll`. Их должен компоновать триггер. Гранулированные действия делают инспектор читаемым, а реакторы — тестируемыми.
+
+**Не зови действия снаружи обработчика.** Действия существуют как порт прогона триггера, с прицепленными `triggerId`, `runId`, трекингом middleware и записями в инспекторе. Вызов из `onClick` кнопки обходит всё это. Если кнопка «делает X» — отправь событие; триггер решит, что вызвать.
+
+<CardGrid>
+  <LinkCard
+    title="Debouncing & throttling"
+    description="Полная модель таймеров — отмена, dispose, leading vs trailing edge."
+    href="/ru/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Владение"
+    description="Last-mount-wins, несколько реакторов, оверрайды, DEV warn-once."
+    href="/ru/guide/architecture/ownership/"
+  />
+  <LinkCard
+    title="Стратегии параллелизма"
+    description="take-latest, queue, exhaust — что бывает, когда обработчик срабатывает слишком быстро."
+    href="/ru/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Асинхронные обработчики"
+    description="Прокидка signal, ожидание работы, контракт AbortController."
+    href="/ru/guide/async/async-handlers/"
+  />
+</CardGrid>

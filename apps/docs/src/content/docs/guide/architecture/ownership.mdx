@@ -1,0 +1,259 @@
+---
+title: Ownership
+description: "Two providers, one condition — what last-mount-wins means in practice, how to override it in tests, and why the default exists."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+A trigger has one slot for each condition name and one slot for each action name. When two components register the same name on the same trigger, only one of them can be "the" provider. Triggery's default answer is **last-mount-wins**: the most recently mounted registration is the live one; when it unmounts, the slot reverts to the previous registration.
+
+It is a one-line policy with several consequences. This page walks through the consequences.
+
+## The default: last-mount-wins
+
+Internally the runtime keeps a **stack** per `(trigger, name)` pair for both conditions and actions. `useCondition` pushes its getter onto the stack on mount, and pops it on unmount. The top of the stack is "the" provider — the dispatcher reads only the top.
+
+```text
+register useCondition('user', () => alice)   →  stack: [alice]               top: alice
+register useCondition('user', () => bob)     →  stack: [alice, bob]          top: bob
+unregister bob                                →  stack: [alice]               top: alice
+unregister alice                              →  stack: []                    top: ⊥ (missing)
+```
+
+The runtime never merges values. The slot has one occupant. When the slot is empty, the dispatcher behaves as if the condition was never registered — for a `required` condition that means the handler is **skipped** with reason `missing-required-condition:<name>`, recorded by the inspector and emitted via `Middleware.onSkip`.
+
+<Aside type="tip">
+StrictMode's mount → unmount → mount cycle pushes, pops, and pushes again — the stack ends in the same state. The same is true for any other "double-mount" pattern; the policy is structural, not heuristic.
+</Aside>
+
+## DEV warn-once on collision
+
+When a second registration arrives while the first is still alive, the runtime emits a one-time warning per `(label, triggerId, name)`:
+
+```text
+[triggery] multiple condition registrations for "user" on trigger "session-bootstrap" — last-mount-wins.
+To compose values from several sources, register through a single hook.
+```
+
+The same shape applies to actions. The warning fires **once per pair for the lifetime of the runtime** — re-renders don't re-warn, and StrictMode's mount cycle does not trigger it (the first registration has already been popped by the time the second one mounts). If the warning fires in your app, the typical fix is one of:
+
+1. **Pick one provider.** Two `<SettingsPanel>`s mounted at once is rarely intentional; lift the state up and render exactly one.
+2. **Merge before registering.** Compose the value in a hook and register once.
+3. **Scope it.** If you really do want N parallel instances, give each its own [`<TriggerScope>`](/guide/architecture/scopes/) — the warn-once is per scope, and the slots are per scope.
+
+## Why this default
+
+Three properties make last-mount-wins the right default for UI orchestration.
+
+1. **It matches mental model for overlays.** When a modal mounts a settings panel of its own, you expect that panel to be the canonical source while it is open — not to be merged with the background panel. When the modal closes, the background panel resumes ownership.
+2. **It is deterministic and recoverable.** Push/pop is a stack; there is no precedence rule baked into a hash map and no "first-wins, but unless you set `priority: 'high'`". Tests run in the order they mount. Hot reload behaves predictably.
+3. **It interacts well with tests.** A test mounts components, then calls `rt.mockCondition(...)` to override what the components registered — the mock is the most recent push and wins. No `replace: true` flag, no precedence math.
+
+The alternative defaults (first-wins, strict-throw, stackable-merge) each break one of these. They will land as **opt-in strategies** alongside last-mount-wins; they will not replace it as the default. See "Future strategies" below.
+
+## A worked example: two SettingsPanels
+
+Imagine a tablet app with a sidebar of settings, plus a "preferences" modal that re-uses the same `<SettingsPanel>` with a slightly different view. Both panels register a `settings` condition on the notification trigger.
+
+```ts title="src/triggers/notification.trigger.ts"
+export const notificationTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings };
+  actions:    { showToast: ToastPayload };
+}>({
+  id: 'notification-on-message',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+```tsx title="src/features/SettingsPanel.tsx"
+export function SettingsPanel({ settings }: { settings: Settings }) {
+  useCondition(notificationTrigger, 'settings', () => settings, [settings]);
+  // …editor UI…
+  return null;
+}
+```
+
+```tsx title="src/App.tsx"
+<>
+  <SettingsPanel settings={sidebarSettings} />        {/* mounts first, pushes its getter */}
+  {modalOpen && (
+    <SettingsPanel settings={modalSettings} />        {/* mounts second, wins until unmount */}
+  )}
+</>
+```
+
+While the modal is open, the notification trigger reads `modalSettings`. When the modal closes, the sidebar's getter is at the top again and the trigger reads `sidebarSettings`. The DEV warning fires once when the modal mounts (and only once for the lifetime of the runtime).
+
+If that is *not* what you want — say you want the sidebar to always win — make the wiring explicit:
+
+```tsx title="One provider, two consumers"
+export function SettingsProvider() {
+  const settings = useMergedSettings(sidebarSettings, modalSettings);    // your merge rule
+  useCondition(notificationTrigger, 'settings', () => settings, [settings]);
+  return null;
+}
+```
+
+Now there is only one registration. The two `<SettingsPanel>`s become pure UI; ownership is owned by a single component.
+
+## How tests use this
+
+Because mocks are just registrations on a runtime, a test that calls `rt.mockCondition(...)` **after** the component-rendered registrations gets last-mount-wins for free. There is no `mockOverride` API — there is just stacking, and the test's call is the latest one.
+
+```ts title="src/tests/notification.test.ts"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { render } from '@testing-library/react';
+
+test('notification fires when settings are on', async () => {
+  const rt = createTestRuntime();
+  // …render the components that register a real `settings` getter…
+  render(
+    <TriggerRuntimeProvider runtime={rt}>
+      <SettingsPanel settings={{ notifications: true }} />
+    </TriggerRuntimeProvider>,
+  );
+
+  // Override the component's getter with the test's view of the world.
+  const toast = vi.fn();
+  rt.mockAction(notificationTrigger, 'showToast', toast);
+  rt.mockCondition(notificationTrigger, 'settings', { notifications: true });
+
+  rt.fireSync('new-message', { author: 'a', text: 'b', channelId: 'c' });
+  expect(toast).toHaveBeenCalled();
+});
+```
+
+Two pieces matter:
+
+1. `mockCondition`/`mockAction` are called **after** `render(...)`. The components have already pushed their getters; the test pushes a new top.
+2. `rt.fireSync` runs the dispatcher synchronously — the test does not need `await flushMicrotasks()` between `mockCondition` and the assertion.
+
+Order matters; if you mock first and render second, the component's getter is the new top and your mock is stuck underneath it. The test still passes when the component happens to register the same value, and breaks subtly when it doesn't. Treat "mocks come after render" as a hard rule. See [Unit testing](/guide/testing/unit-testing/).
+
+## Ownership and scopes
+
+Scopes change *which* slot a registration goes into; they do not change the policy inside a slot. Inside one scope, last-mount-wins. Across scopes, the slots are independent.
+
+```tsx title="One trigger, two scopes, four registrations — two collisions"
+<TriggerScope id="chat-panel">
+  <ChatPanel id="general" />   {/* registers useCondition('activeChannelId', …) in 'chat-panel' */}
+  <ChatPanel id="random" />    {/* second registration in 'chat-panel' — collision, warn-once */}
+</TriggerScope>
+
+<TriggerScope id="chat-panel">
+  <ChatPanel id="hiring" />    {/* still scope 'chat-panel' — same slot continues, warn already used */}
+</TriggerScope>
+```
+
+If the three panels truly are independent instances, each should be wrapped in **its own scope id** — `chat-panel:general`, `chat-panel:random`, `chat-panel:hiring`. The trigger's `scope: 'chat-panel'` is one declaration; the scope id on the React side is what carves the slots.
+
+See [Scopes](/guide/architecture/scopes/) for the full story; ownership and scopes compose orthogonally.
+
+## Disposal semantics
+
+Two things can pop a registration:
+
+- **The component that registered it unmounts.** Standard React effect cleanup; the runtime's `RegistrationToken.unregister()` runs.
+- **The trigger is re-registered** with the same id. Last-mount-wins applies to triggers too — re-registering a trigger drops every in-flight run, cancels every timer, and the new trigger starts with a fresh stack. This is mostly a hot-reload concern; in production you rarely call `createTrigger` more than once for the same id.
+
+The runtime is *not* responsible for popping conditions / actions when their owning trigger is replaced — the replacement starts with an empty stack, and the components re-register on their effect cycle. If a component skips its effect cycle entirely (an unusual hot-reload edge), its registration is gone. This is intentional: it makes hot reload predictable rather than smart.
+
+## Future strategies (opt-in, post-V1)
+
+V1 ships one strategy: last-mount-wins. The roadmap includes three opt-in alternatives. They are sketched here so you can read the API as it lands.
+
+### `stackable`
+
+A registration provides a value or a partial; the runtime merges the stack with a user-provided combiner.
+
+```ts title="Sketch — V1.1+"
+useCondition(trigger, 'flags', () => ({ beta: true }), [], {
+  strategy: 'stackable',
+  combine: (a, b) => ({ ...a, ...b }),
+});
+```
+
+Use case: feature flags assembled from several sources, telemetry tags accumulated from feature-level providers, etc. Today the right shape is "merge before registering" — see the `SettingsProvider` example above.
+
+### `first-wins`
+
+The first registration on a `(trigger, name)` pair stays; subsequent registrations are no-ops (still warned in DEV).
+
+```ts title="Sketch — V1.1+"
+useCondition(trigger, 'flags', () => flags, [flags], { strategy: 'first-wins' });
+```
+
+Use case: an app shell that wants its provider to be canonical even when sub-features try to override.
+
+### `strict`
+
+A second registration throws synchronously. Useful in tests where two providers mounted at once is always a bug.
+
+```ts title="Sketch — V1.1+"
+useCondition(trigger, 'flags', () => flags, [flags], { strategy: 'strict' });
+```
+
+Today, approximate this in tests with a custom `Middleware.onSkip` check, or assert that the DEV warning was not emitted.
+
+## Anti-patterns
+
+### Anti-pattern: relying on registration order
+
+```tsx
+<ContextA><SettingsPanel /></ContextA>
+<ContextB><SettingsPanel /></ContextB>
+{/* whichever ends up "later" wins — but that's the render order, not the visual order */}
+```
+
+If the right answer depends on the render order, it is brittle. Lift the decision up and pick a single provider. The render-order outcome is **deterministic** for a given tree, but it is *not* what most readers will guess from the JSX.
+
+### Anti-pattern: re-mounting to "refresh" a value
+
+```tsx
+{key && <SettingsPanel key={key} settings={fresh} />}
+```
+
+`useCondition` already reads through its getter on every fire — there is no cache. Re-mounting to refresh is a no-op for ownership semantics (the new mount becomes the top, but the value would have updated anyway because the getter closes over fresh state via `deps`). If you find yourself re-keying for this reason, the getter's `deps` array is probably wrong.
+
+### Anti-pattern: silencing the DEV warning
+
+The warn-once is a one-time line in the console. If you "fix" it by stopping the second mount with an `if` — that is the right fix. If you "fix" it by adding `console.warn = noop` to your test setup, the warning will be back for the next collision, and you will have lost the signal that *this* collision exists.
+
+## Reviewer checklist
+
+- [ ] If you see a DEV `multiple ... registrations` warning, are both registrations supposed to be alive at the same time, or is one of them a forgotten mount?
+- [ ] For tests: does the test call `rt.mockCondition` / `rt.mockAction` **after** `render(...)`? If it calls them before, the component's getter is on top and the mock is shadowed.
+- [ ] For multi-instance UIs: is each instance wrapped in its own `<TriggerScope>` so the slots don't collide?
+- [ ] For app-shell `required` conditions: is exactly **one** component responsible for registering them?
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Scopes"
+    description="Carve the registry into named buckets — independent slots per scope id."
+    href="/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Conditions"
+    description="Pull-only world snapshots, required-gates, and the getter contract."
+    href="/guide/essentials/conditions/"
+  />
+  <LinkCard
+    title="Unit testing"
+    description="Mock conditions, mock actions, fire synchronously, assert without React."
+    href="/guide/testing/unit-testing/"
+  />
+  <LinkCard
+    title="Runtime"
+    description="createRuntime, providers, inspector, middleware."
+    href="/guide/essentials/runtime/"
+  />
+</CardGrid>

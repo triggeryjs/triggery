@@ -1,0 +1,248 @@
+---
+title: "Producer-boundary validation with Zod"
+description: "Validate event payloads where they enter the trigger — once, at the producer's boundary — using zod (or any Standard Schema validator)."
+sidebar:
+  order: 10
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+A trigger's event payload is typed at compile time, but runtime data — form submissions, URL params, WebSocket frames — comes in unstructured. Triggery's recommended pattern: validate **at the producer's boundary**, fire only what passes. The trigger handler then sees a fully typed, runtime-checked payload. This recipe shows the idiom and packages it as a small `useValidatedEvent` helper so every producer in the app is a one-liner.
+
+<StackBlitzButton path="examples/vite-react-form-zod" label="Open in StackBlitz" />
+
+## Scenario
+
+A "create invoice" form submits arbitrary form data. We want to:
+
+1. **Define one zod schema** for the event payload.
+2. **Validate it before firing** — if it fails, surface the issues to the form, never reach the trigger.
+3. **Fire a typed event** with the parsed (and possibly transformed) payload.
+4. **The trigger handler** sees a fully typed value — no `as`, no `??`, no defensive checks.
+
+## File layout
+
+<FileTree>
+- src/
+  - lib/
+    - **useValidatedEvent.ts** the helper
+  - triggers/
+    - invoice.trigger.ts
+  - features/
+    - invoice/
+      - InvoiceForm.tsx producer + the schema
+      - InvoiceReactor.tsx writes to the API on success
+</FileTree>
+
+## 1. The helper
+
+A small wrapper around `useEvent`. It accepts a [Standard Schema](https://standardschema.dev/) validator — zod, valibot, arktype, anything that implements the spec — and returns `(input) => Result`, where `Result` is either `{ ok: true; data }` or `{ ok: false; issues }`. On success it fires the event with the parsed value.
+
+```ts title="src/lib/useValidatedEvent.ts"
+import type { EventKey, EventMap, Trigger, TriggerSchema } from '@triggery/core';
+import { useEvent } from '@triggery/react';
+import { useCallback } from 'react';
+
+// Tiny subset of the Standard Schema interface — enough for our purposes.
+type StandardSchema<Out> = {
+  readonly '~standard': {
+    readonly validate: (input: unknown) =>
+      | { value: Out; issues?: undefined }
+      | { issues: readonly { message: string; path?: readonly (PropertyKey | { key: PropertyKey })[] }[] }
+      | Promise<unknown>;
+  };
+};
+
+export type ValidationResult<T> =
+  | { ok: true;  data: T }
+  | { ok: false; issues: readonly { message: string; path?: readonly (PropertyKey | { key: PropertyKey })[] }[] };
+
+export function useValidatedEvent<
+  S extends TriggerSchema,
+  K extends EventKey<S>,
+>(trigger: Trigger<S>, eventName: K, schema: StandardSchema<EventMap<S>[K]>) {
+  const fire = useEvent(trigger, eventName);
+
+  return useCallback(
+    (input: unknown): ValidationResult<EventMap<S>[K]> => {
+      const out = schema['~standard'].validate(input);
+
+      if (out instanceof Promise) {
+        // For brevity: keep the helper synchronous. Most schemas (zod/valibot)
+        // run sync unless you opt into async refinements.
+        throw new Error('useValidatedEvent: async schemas are not supported');
+      }
+
+      if ('issues' in out && out.issues) {
+        return { ok: false, issues: out.issues };
+      }
+      const data = (out as { value: EventMap<S>[K] }).value;
+      // Strong assertion: zod's output is the trigger's event payload type.
+      (fire as (payload: EventMap<S>[K]) => void)(data);
+      return { ok: true, data };
+    },
+    [fire, schema],
+  );
+}
+```
+
+That's it — fewer than 30 lines, type-safe end-to-end. The producer calls it once, the trigger sees only validated payloads.
+
+<Aside type="tip">
+The helper accepts *any* Standard Schema validator — same call site works for zod, valibot, arktype, or your own. If your project standardises on one, just inline the type.
+</Aside>
+
+## 2. The trigger
+
+The handler treats `event.payload` as fully typed and clean — no second guessing.
+
+```ts title="src/triggers/invoice.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type Invoice = {
+  customer:    string;
+  amountCents: number;
+  dueDate:     string;       // ISO date
+  note?:       string;
+};
+
+export const invoiceTrigger = createTrigger<{
+  events: {
+    'invoice:submit': Invoice;
+  };
+  actions: {
+    saveInvoice: Invoice;
+  };
+}>({
+  id: 'invoice-submit',
+  events: ['invoice:submit'],
+  concurrency: 'queue',
+  handler({ event, actions }) {
+    actions.saveInvoice?.(event.payload);
+  },
+});
+```
+
+`concurrency: 'queue'` ensures that if the user mashes the submit button, the saves happen in order, one at a time.
+
+## 3. The producer (form + schema)
+
+The schema sits *next to the form*, where the boundary is. The form calls `submit(formData)`, gets back `{ ok, data | issues }`, and renders accordingly.
+
+```tsx title="src/features/invoice/InvoiceForm.tsx"
+import { useState, type FormEvent } from 'react';
+import { z } from 'zod';
+import { invoiceTrigger } from '../../triggers/invoice.trigger';
+import { useValidatedEvent } from '../../lib/useValidatedEvent';
+
+const InvoiceSchema = z.object({
+  customer:    z.string().min(1, 'Customer required'),
+  amountCents: z.coerce.number().int().positive('Amount must be > 0'),
+  dueDate:     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
+  note:        z.string().max(280).optional(),
+});
+
+export function InvoiceForm() {
+  const submit = useValidatedEvent(invoiceTrigger, 'invoice:submit', InvoiceSchema);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const result = submit({
+      customer:    fd.get('customer'),
+      amountCents: fd.get('amountCents'),
+      dueDate:     fd.get('dueDate'),
+      note:        fd.get('note') || undefined,
+    });
+
+    if (result.ok) {
+      setErrors({});
+      e.currentTarget.reset();
+      return;
+    }
+
+    setErrors(
+      Object.fromEntries(
+        result.issues.map(i => {
+          const key = i.path?.[0];
+          const field = typeof key === 'object' && key !== null && 'key' in key ? String(key.key) : String(key ?? '_');
+          return [field, i.message];
+        }),
+      ),
+    );
+  }
+
+  return (
+    <form onSubmit={onSubmit}>
+      <label>
+        Customer
+        <input name="customer" />
+        {errors.customer && <em role="alert">{errors.customer}</em>}
+      </label>
+      <label>
+        Amount (cents)
+        <input name="amountCents" inputMode="numeric" />
+        {errors.amountCents && <em role="alert">{errors.amountCents}</em>}
+      </label>
+      <label>
+        Due date
+        <input name="dueDate" placeholder="YYYY-MM-DD" />
+        {errors.dueDate && <em role="alert">{errors.dueDate}</em>}
+      </label>
+      <label>
+        Note
+        <textarea name="note" maxLength={280} />
+      </label>
+      <button type="submit">Create invoice</button>
+    </form>
+  );
+}
+```
+
+The trigger handler will never see an invalid `amountCents`, a missing `customer`, or a malformed `dueDate`. If you change the schema, you change a single file.
+
+## 4. The reactor
+
+```tsx title="src/features/invoice/InvoiceReactor.tsx"
+import { useAction } from '@triggery/react';
+import { invoiceTrigger, type Invoice } from '../../triggers/invoice.trigger';
+
+async function postInvoice(invoice: Invoice) {
+  const res = await fetch('/api/invoices', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(invoice),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export function InvoiceReactor() {
+  useAction(invoiceTrigger, 'saveInvoice', async invoice => {
+    await postInvoice(invoice);
+  });
+
+  return null;
+}
+```
+
+## Why validate at the producer
+
+There are three places you *could* validate: the producer (before firing), inside the trigger handler, or inside an action.
+
+**Producer-boundary validation is the right default**:
+
+- The schema is *near* the form — the only place input is unstructured.
+- Failures stay UI-shaped (return the issues to the form) instead of becoming runtime exceptions.
+- The trigger's event payload type is *true* — handlers don't have to defend against malformed data, and the discriminated union on `event.name` keeps its meaning.
+- Adding new producers for the same event (a different form, a CLI, a deep link) means writing — and re-using — exactly one schema per event.
+
+Validating *inside* the trigger conflates "is this data well-formed?" (a producer concern) with "what should we do about it?" (a domain concern). Don't.
+
+## Variations / Related
+
+<CardGrid>
+  <LinkCard title="Ownership boundaries" href="/guide/architecture/ownership/" description="Why validation belongs at the producer, not in the handler." />
+  <LinkCard title="useEvent" href="/api/react/use-event/" description="The hook this recipe wraps." />
+</CardGrid>

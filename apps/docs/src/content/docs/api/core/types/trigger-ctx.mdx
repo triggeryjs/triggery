@@ -1,0 +1,199 @@
+---
+title: "TriggerCtx"
+description: "The context object passed to a trigger handler on every run — event, conditions, actions, check, signal, meta."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+The single argument every trigger handler receives. It bundles the matching event, a conditions snapshot, the actions proxy, the `check` DSL, runtime metadata and an `AbortSignal`. The shape is fully derived from the trigger's [`TriggerSchema`](/api/core/types/trigger-schema/) — destructure the fields you need.
+
+## Import
+
+```ts
+import type { TriggerCtx } from '@triggery/core';
+```
+
+## Definition
+
+```ts
+type TriggerCtx<S extends TriggerSchema, R extends ConditionKey<S> = never> = {
+  readonly event:      EventOf<S>;
+  readonly conditions: ConditionsCtx<ConditionMap<S>, R>;
+  readonly actions:    ActionsCtx<ActionMap<S>>;
+  readonly check:      CheckCtx<ConditionMap<S>>;
+  readonly meta:       MetaCtx;
+  readonly signal:     AbortSignal;
+};
+```
+
+`S` is the trigger's schema; `R` is the union of required condition keys (`required: [...]` in the config).
+
+## Fields
+
+### `event` — `EventOf<S>`
+
+Discriminated union over `S['events']`. Each variant has `{ readonly name: K; readonly payload: EventMap<S>[K] }`. Narrow with `event.name`.
+
+```ts
+type EventOf<S> = { name: 'open'; payload: { id: string } }
+               | { name: 'close'; payload: { id: string; reason: 'ok' | 'cancel' } };
+```
+
+### `conditions` — `ConditionsCtx<ConditionMap<S>, R>`
+
+Snapshot of all conditions, captured once at fire time. Keys listed in `required` appear as non-optional; others are `T | undefined`.
+
+V1 limitation: `required` does not narrow in the type system — `conditions.user` stays `User | undefined` even when `required: ['user']`. Use `check.is/all/any` or an early `if (!conditions.user) return;` guard.
+
+### `actions` — `ActionsCtx<ActionMap<S>>`
+
+Map of `{ [name]?: (payload) => void }` plus three chainable timers:
+
+| Method | Returns | Description |
+|---|---|---|
+| `actions.<name>?.(payload)` | `void` | Invoke an action if it's registered. Optional chain because no reactor may be mounted. |
+| `actions.debounce(ms)` | same shape | Wait until `ms` of silence before firing. |
+| `actions.throttle(ms)` | same shape | At most one fire per `ms` window. |
+| `actions.defer(ms)` | same shape | Wait `ms` before firing — no coalescing. |
+
+### `check` — `CheckCtx<ConditionMap<S>>`
+
+The predicate DSL. See [`createCheck`](/api/core/create-check/). `is`, `all`, and `any` all NonNullable-narrow the value inside the predicate.
+
+### `meta` — `MetaCtx`
+
+Runtime metadata about the current run:
+
+| Field | Type | Description |
+|---|---|---|
+| `runId` | `string` | Unique per-run id. |
+| `triggerId` | `string` | The trigger that's running. |
+| `scheduledAt` | `number` | `performance.now()` when the run was enqueued. |
+| `cascadeDepth` | `number` | 0 for top-level fires; `n` for the n-th cascade child. |
+| `parentRunId?` | `string` | Set when the run is part of a cascade. |
+| `parentTriggerId?` | `string` | Same — id of the upstream trigger. |
+
+### `signal` — `AbortSignal`
+
+Aborts when the runtime cancels the current run — e.g. a `take-latest` concurrency strategy supersedes it, the trigger is disabled or disposed, or the runtime itself is torn down. Pass it into `fetch(url, { signal })`, `addEventListener('…', fn, { signal })`, or check `signal.aborted` after any async wait.
+
+## Examples
+
+### Destructure what you need
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events:     { ping: void };
+  conditions: { user: { id: string } | null };
+  actions:    { log: string };
+}>({
+  id: 'demo',
+  events: ['ping'],
+  required: ['user'],
+  handler({ event, conditions, actions, check, meta, signal }) {
+    if (signal.aborted) return;
+    if (!check.is('user', u => u.id.length > 0)) return;
+    actions.log?.(`[run ${meta.runId}] ${event.name}`);
+  },
+});
+```
+
+### `event.name` narrowing
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { open: { id: string }; close: { id: string; reason: 'ok' | 'cancel' } };
+}>({
+  id: 'modal',
+  events: ['open', 'close'],
+  handler({ event }) {
+    if (event.name === 'open') {
+      console.log('opening', event.payload.id);
+    } else {
+      console.log('closing', event.payload.reason);
+    }
+  },
+});
+```
+
+### Abort-aware async work
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { fetch: string };
+  actions: { setData: unknown };
+}>({
+  id: 'fetcher',
+  events: ['fetch'],
+  concurrency: 'take-latest',
+  async handler({ event, actions, signal }) {
+    const res  = await fetch(`/api/${event.payload}`, { signal });
+    if (signal.aborted) return;
+    const data = await res.json();
+    actions.setData?.(data);
+  },
+});
+```
+
+### Debounced action chain
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { keystroke: string };
+  actions: { search: string };
+}>({
+  id: 'autocomplete',
+  events: ['keystroke'],
+  handler({ event, actions }) {
+    actions.debounce(300).search?.(event.payload);
+  },
+});
+```
+
+### Cascade-aware logging
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{ events: { 'order-placed': { id: string } } }>({
+  id: 'order',
+  events: ['order-placed'],
+  handler({ event, meta }) {
+    if (meta.cascadeDepth > 0) {
+      console.log(`order ${event.payload.id} via cascade from ${meta.parentTriggerId}`);
+    }
+  },
+});
+```
+
+## Notes
+
+<Aside type="tip">
+`signal` is the canonical way to abort downstream work. The runtime fires `abort()` on it under `take-latest` supersession, on `dispose()`, on disabled triggers, and on runtime teardown. Treat any code that ignores `signal` as a leak.
+</Aside>
+
+<Aside type="caution">
+The whole context is `readonly`. Don't mutate `conditions` or `actions` — both are snapshots derived from registrations and may be shared across cascade children.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="TriggerSchema" description="The generic that drives every field's type." href="/api/core/types/trigger-schema/" />
+  <LinkCard title="createTrigger" description="The constructor that produces this context." href="/api/core/create-trigger/" />
+  <LinkCard title="createCheck" description="Build a `check` DSL outside a handler." href="/api/core/create-check/" />
+  <LinkCard title="Async handlers guide" description="signal, concurrency, abort patterns." href="/guide/async/async-handlers/" />
+</CardGrid>

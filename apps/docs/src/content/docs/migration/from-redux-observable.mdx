@@ -1,0 +1,131 @@
+---
+title: "From redux-observable"
+description: "Mapping RxJS epics to Triggery handlers — the parts that fit and the parts that don't."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`redux-observable` epics are RxJS pipelines over the action stream. The most common shape — "filter by type, do an async thing, emit a result action" — maps directly to a Triggery handler. Anything that combines multiple streams reactively (`combineLatest`, `withLatestFrom`) is where Triggery's pull-only model and RxJS's push-only model start to disagree.
+
+## Mental model mapping
+
+| redux-observable / RxJS | Triggery |
+|---|---|
+| `ofType('foo')` filter | `events: ['foo']` |
+| `ofType('foo', 'bar')` | `events: ['foo', 'bar']` |
+| `debounceTime(ms)` on the source | `actions.debounce(ms).out?.(p)` for outputs; manual for input gating |
+| `throttleTime(ms)` | `actions.throttle(ms).out?.(p)` |
+| `switchMap` | `concurrency: 'take-latest'` (default) |
+| `mergeMap` | `concurrency: 'take-every'` |
+| `exhaustMap` | `concurrency: 'exhaust'` |
+| `concatMap` | `concurrency: 'queue'` |
+| `map(action => …)` emit-action | `actions.someAction?.(…)` |
+| `withLatestFrom(state$, sel)` | `conditions.someName` registered via `useReduxCondition` |
+| `combineLatest([a$, b$, c$])` | **No direct mapping** — see below |
+| `takeUntil(stop$)` | `signal.aborted` checks in `async handler` |
+
+## Pattern 1 — ofType + switchMap
+
+```ts title="Before"
+const detailsEpic: Epic = action$ => action$.pipe(
+  ofType('chat/openConversation'),
+  switchMap(action =>
+    from(api.fetchDetails(action.payload.id)).pipe(
+      map(data => detailsLoaded(data)),
+    ),
+  ),
+);
+```
+
+```ts title="After"
+createTrigger<{
+  events:  { 'chat/openConversation': { id: string } };
+  actions: { storeDetails: Details };
+}>({
+  id: 'details-loader',
+  events: ['chat/openConversation'],
+  required: [],
+  concurrency: 'take-latest',     // default
+  async handler({ event, signal, actions }) {
+    const data = await api.fetchDetails(event.payload.id, { signal });
+    if (signal.aborted) return;
+    actions.storeDetails?.(data);
+  },
+});
+```
+
+`switchMap` = `take-latest`. They have the same semantics: a new input cancels the previous in-flight task.
+
+## Pattern 2 — debounceTime on input
+
+```ts title="Before"
+const searchEpic: Epic = action$ => action$.pipe(
+  ofType('search/queryChanged'),
+  debounceTime(300),
+  switchMap(action => /* … */),
+);
+```
+
+Triggery does not gate inputs with debounce — the convention is to gate the *output*:
+
+```ts title="After"
+createTrigger<{
+  events:  { 'search/queryChanged': string };
+  actions: { runSearch: string };
+}>({
+  id: 'search-debounced',
+  events: ['search/queryChanged'],
+  required: [],
+  handler({ event, actions }) {
+    actions.debounce(300).runSearch?.(event.payload);
+  },
+});
+```
+
+The reactor on the other end (`useAction(trigger, 'runSearch', q => /* fetch */)`) receives only the last call within the window.
+
+## Pattern 3 — withLatestFrom
+
+```ts title="Before"
+const epic: Epic = (action$, state$) => action$.pipe(
+  ofType('chat/messageReceived'),
+  withLatestFrom(state$),
+  filter(([_, state]) => state.settings.notifications),
+  map(([action]) => showToast(action.payload)),
+);
+```
+
+```ts title="After"
+createTrigger<{
+  events:     { 'chat/messageReceived': Message };
+  conditions: { settings: Settings };
+  actions:    { showToast: { title: string } };
+}>({
+  id: 'toast-on-msg',
+  events: ['chat/messageReceived'],
+  required: ['settings'],
+  handler({ event, check, actions }) {
+    if (!check.is('settings', s => s.notifications)) return;
+    actions.showToast?.({ title: event.payload.author });
+  },
+});
+```
+
+## What doesn't map cleanly
+
+- **`combineLatest` of multiple streams**. Triggers respond to *one* event at a time and pull conditions lazily — there's no "fire when any of these streams emits". Either pick one as the trigger event and treat the rest as conditions, or keep that piece as an epic / RxJS pipeline and `fireEvent` from a `subscribe`.
+- **Multicasting with `shareReplay`**. RxJS's hot/cold semantics have no analogue in Triggery; if you need them, keep RxJS.
+- **Backpressure operators** (`bufferTime`, `windowToggle`). Triggery's scheduler batches per-tick microtasks, but it doesn't implement RxJS's backpressure toolkit.
+
+## When to keep RxJS
+
+Keep RxJS for the truly stream-heavy parts: animation pipelines, complex multi-source synchronisation, anywhere `combineLatest` / `merge` / `partition` are doing real work. The two libraries cohabit fine — a trigger's handler can subscribe to a one-shot observable, or an epic can `dispatch` an action that Triggery happens to listen to.
+
+<CardGrid>
+  <LinkCard title="From Redux Saga" description="Generator-based watchers." href="/migration/from-redux-saga/" />
+  <LinkCard title="Concurrency strategies" description="take-latest, queue, exhaust." href="/guide/async/concurrency/" />
+  <LinkCard title="Debouncing & throttling" description="actions.debounce / throttle / defer." href="/guide/async/debouncing-throttling/" />
+  <LinkCard title="Comparisons" description="vs RxJS, XState, Effector, MobX." href="/migration/comparison/" />
+</CardGrid>

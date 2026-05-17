@@ -1,0 +1,288 @@
+---
+title: "Валидация (Standard Schema)"
+description: "Runtime-валидация payload событий, условий и действий через Standard Schema — zod, valibot, arktype. Граничный паттерн V1 и декларативное API V1.1."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+TypeScript проверяет, что *твой код* корректно использует схему. Он не может проверить, что **WebSocket-фрейм**, который ты получил в рантайме, реально соответствует заявленному типу payload. Для этого нужна *runtime-валидация* — парсинг нетипизированных данных через валидатор, который либо сужает к заявленной форме, либо бросает исключение.
+
+Triggery не приносит свой валидатор; он опирается на [Standard Schema](https://standardschema.dev) — контракт, на который в 2024 году договорились zod, valibot, arktype, runtypes и остальные. Standard Schema — **единственное, о чём библиотеке нужно знать**: приноси любой валидатор, который уже используешь, валидируй на выбранной границе, остальная система остаётся чистой.
+
+## Две границы, которым нужна валидация
+
+У триггера три port-поверхности (events, conditions, actions). Из трёх обычно нужно валидировать только **events**:
+
+- **Events** несут данные из внешнего мира: WebSocket-фрейм, fetch-ответ, postMessage. Продьюсер не знает, что payload корректен.
+- **Conditions** — это значения, уже хранящиеся в типизированном состоянии (Zustand-стор, useState, ref). Геттер твой; недоверенной границы нет.
+- **Actions** вызываются изнутри обработчика триггера с типизированными значениями, которые ты сам собрал. То же — недоверенной границы нет.
+
+Так что валидация почти всегда — **забота продьюсера**: парси до того, как отправил.
+
+```ts title="src/features/messaging/socket.ts"
+import { z } from 'zod';
+import { messageTrigger } from '../../triggers/message.trigger';
+import type { Runtime } from '@triggery/core';
+
+const messageSchema = z.object({
+  author:    z.string().min(1),
+  text:      z.string().min(1).max(10_000),
+  channelId: z.string().uuid(),
+});
+
+export function wireSocket(runtime: Runtime, socket: WebSocket) {
+  socket.addEventListener('message', (frame) => {
+    const parsed = messageSchema.safeParse(JSON.parse(frame.data));
+    if (!parsed.success) {
+      console.warn('[chat] dropped malformed message', parsed.error.format());
+      return;
+    }
+    runtime.fire('new-message', parsed.data);
+  });
+}
+```
+
+Обработчик доверяет типам `event.payload`, потому что **их обеспечил продьюсер**. Downstream-код (обработчик, реакторы действий) никогда не перевалидирует — это была бы лишняя работа.
+
+## Используем Standard Schema (`'~standard'`) — library-agnostic
+
+Если не хочешь привязывать место валидации к одной библиотеке, используй контракт Standard Schema напрямую. Каждая поддерживающая библиотека выставляет свойство `~standard`:
+
+```ts title="src/lib/validate.ts"
+import type { StandardSchemaV1 } from '@standard-schema/spec';
+
+export async function validate<T>(schema: StandardSchemaV1<unknown, T>, value: unknown): Promise<T> {
+  let result = schema['~standard'].validate(value);
+  if (result instanceof Promise) result = await result;
+  if (result.issues) {
+    throw new Error(
+      `Validation failed: ${result.issues.map((i) => `${i.path?.join('.')}: ${i.message}`).join('; ')}`,
+    );
+  }
+  return result.value;
+}
+```
+
+Дальше — любая библиотека:
+
+```ts
+import { z }       from 'zod';                  // works
+import * as v      from 'valibot';              // works
+import { type }    from 'arktype';              // works
+
+const Zod      = z.object({ name: z.string() });
+const Valibot  = v.object({ name: v.string() });
+const Arktype  = type({ name: 'string' });
+
+const a = await validate(Zod,     payload);
+const b = await validate(Valibot, payload);
+const c = await validate(Arktype, payload);
+```
+
+Triggery не зависит ни от одной конкретной библиотеки. Твой выбор — твой выбор; контракт есть контракт.
+
+## Переиспользуемый хук продьюсера
+
+В React самый чистый паттерн — хук продьюсера, в котором валидатор лежит рядом с вызовом события:
+
+```ts title="src/lib/useValidatedEvent.ts"
+import type {
+  EventKey, EventMap, Trigger, TriggerSchema,
+} from '@triggery/core';
+import type { StandardSchemaV1 } from '@standard-schema/spec';
+import { useEvent } from '@triggery/react';
+import { useCallback } from 'react';
+
+export function useValidatedEvent<S extends TriggerSchema, K extends EventKey<S>>(
+  trigger: Trigger<S>,
+  eventName: K,
+  schema: StandardSchemaV1<unknown, EventMap<S>[K]>,
+) {
+  const fire = useEvent(trigger, eventName);
+  return useCallback(
+    (raw: unknown) => {
+      const result = schema['~standard'].validate(raw);
+      if (result instanceof Promise) {
+        throw new Error('async validators not supported in useValidatedEvent');
+      }
+      if (result.issues) {
+        console.warn(`[${trigger.id}] ${eventName} dropped:`, result.issues);
+        return;
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: union narrowed by the cast at the call site
+      (fire as (p: EventMap<S>[K]) => void)(result.value);
+    },
+    [fire, schema, trigger.id, eventName],
+  );
+}
+```
+
+Вызывай так же, как `useEvent`, только передай схему:
+
+```tsx
+import { z } from 'zod';
+import { useValidatedEvent } from '../lib/useValidatedEvent';
+
+const newMessageSchema = z.object({
+  author: z.string(),
+  text: z.string(),
+  channelId: z.string().uuid(),
+});
+
+function SocketBridge() {
+  const fireNewMessage = useValidatedEvent(messageTrigger, 'new-message', newMessageSchema);
+
+  useEffect(() => {
+    const onFrame = (e: MessageEvent) => fireNewMessage(JSON.parse(e.data));
+    socket.addEventListener('message', onFrame);
+    return () => socket.removeEventListener('message', onFrame);
+  }, [fireNewMessage]);
+
+  return null;
+}
+```
+
+Та же идея работает для `useEvent` в Solid и Vue.
+
+## Декларативное API — `validate:`
+
+<Aside type="caution" title="Запланировано на V1.1">
+Опция `validate:` в `createTrigger` — валидация, объявленная рядом со схемой и применяемая рантаймом автоматически — поставляется в V1.1. Форма ниже — запланированное API, специально удерживаемое стабильным, чтобы сегодняшний паттерн `useValidatedEvent` мигрировался заменой хука продьюсера без правок обработчика. Код в этом разделе не скомпилируется против V1.
+</Aside>
+
+Форма V1.1 живёт там, где живёт схема, — внутри `createTrigger`:
+
+```ts title="V1.1 — declarative validation"
+import { createTrigger } from '@triggery/core';
+import { z } from 'zod';
+
+const newMessage = z.object({
+  author:    z.string().min(1),
+  text:      z.string().min(1).max(10_000),
+  channelId: z.string().uuid(),
+});
+
+const settings = z.object({
+  sound:         z.boolean(),
+  notifications: z.boolean(),
+});
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': z.infer<typeof newMessage> };
+  conditions: { settings: z.infer<typeof settings> };
+  actions:    { showToast: { title: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+
+  validate: {
+    events:     { 'new-message': newMessage },
+    conditions: { settings },
+  },
+
+  handler({ event, conditions, actions }) {
+    // event.payload and conditions.settings are validated before the handler runs.
+    if (!conditions.settings) return;
+    if (conditions.settings.notifications) {
+      actions.showToast?.({ title: event.payload.author });
+    }
+  },
+});
+```
+
+Что рантайм будет делать в V1.1:
+
+- **Events**: на каждом `fire('new-message', payload)` прогонять схему против `payload` до планирования обработчика. Провал → skip в инспекторе с `reason: 'validate-event: <issues>'`, обработчик не вызывается.
+- **Conditions**: когда обработчик запущен, валидировать возвращённое значение геттера каждого условия до того, как оно станет видно в `ctx.conditions`. Провал → skip с `reason: 'validate-condition: <name>'`. Полезно для «доверяй типизированному state-контракту, перепроверяй в dev в рантайме».
+- **Actions**: валидировать вызовы `ctx.actions.foo?.(payload)` до диспатча реакторам. Та же skip-семантика.
+
+До V1.1 используй граничный паттерн выше. Ментальная модель идентична; меняется только место вызова.
+
+## Cost-модель — платишь только когда подключаешь
+
+Валидация opt-in везде:
+
+- Граничный паттерн V1 — в твоём коде. Рантайм ничего не валидирует на горячем пути.
+- Карта `validate:` в V1.1 — opt-in пер-порт. Невалидированные порты добавляют нулевые накладные расходы.
+- Сам контракт Standard Schema — один доступ к свойству (`schema['~standard'].validate`) — никакого глобального реестра, никакой plugin-системы, никакой инициализации.
+
+Конкретно: рантайм без `validate:`-выражений ни на одном триггере имеет ровно тот же путь диспатча, что и рантайм без поддержки валидации вообще. Быстрый путь — это путь без валидации.
+
+Когда ты подключаешь, цена — один вызов валидатора на касание порта. Парсы Zod обычно — десятки микросекунд; valibot и arktype работают ближе к единицам микросекунд. Для высокочастотных событий (например, поток позиций курсора) валидируй *первое* событие и доверяй последующим или сэмплируй (валидируй 1 из 100). API `validate:` в V1.1 будет принимать функциональную форму именно для этого:
+
+```ts
+validate: {
+  events: {
+    'cursor:move': (payload) => Math.random() < 0.01
+      ? cursorMoveSchema.parse(payload)
+      : payload as CursorMove,
+  },
+}
+```
+
+## Заметка по conditions — защитная валидация
+
+Хотя conditions идут из твоего собственного состояния, есть причины валидировать их в dev:
+
+- Миграция поменяла форму персистнутого состояния; старая форма всё ещё в `localStorage` у каких-то пользователей.
+- Backend-ответ протекает в стор нетипизированным (`any` где-то по цепочке).
+- Сторонняя библиотека, которую ты оборачиваешь, возвращает `unknown`, и хочется рантайм-уверенности, что форма не изменилась.
+
+Форма V1.1 это обрабатывает — однострочный `validate.conditions.settings = settingsSchema`, и рантайм проверяет на каждом чтении на момент срабатывания. Цена — один вызов валидатора на сработавшее событие на каждое условие, обычно пренебрежимо.
+
+Сегодня эквивалент — обёртка вокруг геттера условия:
+
+```ts
+function validatedCondition<T>(getter: () => T, schema: StandardSchemaV1<unknown, T>): () => T {
+  return () => {
+    const value = getter();
+    const r = schema['~standard'].validate(value);
+    if (r instanceof Promise) throw new Error('async not supported');
+    if (r.issues) {
+      console.warn('condition validation failed:', r.issues);
+      // Fall back to the raw value — log only, don't crash.
+    }
+    return value;
+  };
+}
+
+useCondition(messageTrigger, 'settings', validatedCondition(() => settings, settingsSchema), [settings]);
+```
+
+В production-сборках подмени обёртку на identity-функцию через build-флаг — тот же продьюсер, нулевая рантайм-стоимость.
+
+## Будущее направление — pattern matching и asserts
+
+Roadmap упоминает ещё одно направление: **asserts на уровне триггера**. Сценарий вроде «после `'checkout:completed'` действие с именем `redirectTo` *должно* сработать» — сейчас выражается чтением инспектора после теста — получит first-class-поле `expect:`. Та же форма Standard Schema, та же opt-in-модель стоимости. См. [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) для таймлайна.
+
+## Нулевая зависимость от конкретного валидатора
+
+Весь смысл сборки на Standard Schema в том, что Triggery **никогда не импортирует zod, valibot, arktype или что-либо ещё**. В твой бандл попадает ровно тот валидатор, который ты затащил, ничего лишнего. Переход с zod на valibot — это search-and-replace в твоём коде, не апгрейд Triggery. Принять валидатор, на который твоя команда стандартизируется через три года, — тоже search-and-replace.
+
+Это и есть контракт: типы — работа TypeScript, runtime-инварианты — работа Standard Schema, оркестрация — работа Triggery. Три слоя; все остаются в своих рамках.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Типизация схемы"
+    description="Generic TriggerSchema, форму которого валидаторы сверяют с рантаймом."
+    href="/ru/guide/typescript/schema-typing/"
+  />
+  <LinkCard
+    title="Strict mode"
+    description="Strict-TS-паттерны для обработчиков — как валидированные payload сочетаются со strict-чтением."
+    href="/ru/guide/typescript/strict-mode/"
+  />
+  <LinkCard
+    title="Standard Schema"
+    description="Кросс-валидаторный контракт, на котором построена эта страница."
+    href="https://standardschema.dev"
+  />
+  <LinkCard
+    title="Roadmap"
+    description="Декларативный API validate: V1.1 и запланированный слой pattern matching."
+    href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md"
+  />
+</CardGrid>

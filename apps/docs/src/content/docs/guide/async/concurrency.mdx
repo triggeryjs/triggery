@@ -1,0 +1,304 @@
+---
+title: Concurrency strategies
+description: "Pick the right behaviour when a trigger fires while a previous run is still in flight: take-latest, take-every, take-first, exhaust, queue, sync."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Async handlers have *duration*. The interesting question is what happens when the same trigger fires again while a previous run is still in flight. Triggery has five real strategies (plus a `sync` documentation marker), set on the trigger config:
+
+```ts
+createTrigger<Schema>({
+  id: 'search-query',
+  events: ['query-changed'],
+  concurrency: 'take-latest',         // ← here
+  async handler(ctx) { /* … */ },
+});
+```
+
+The default is `'take-latest'` — the right choice for search, autocomplete, navigation and most user-facing reactive flows. The other four exist because they are individually correct for narrow, recurring cases.
+
+## The five strategies + sync marker
+
+| Strategy | Behaviour when a new event arrives mid-run | Best for |
+|---|---|---|
+| `'take-latest'` *(default)* | Abort the previous run (`signal.aborted = true`, reason `'superseded-by-latest'`). New run starts immediately. | Search / autocomplete, navigation loads, anything where only the latest answer matters. |
+| `'take-every'` | Both runs continue independently. No abort, no skip. | Analytics, logging, fire-and-forget side effects that must not interfere with each other. |
+| `'take-first'` | While a run is in flight, new events are dropped (recorded as `skipped`, reason `concurrency-take-first`). | Idempotent expensive reads where the in-flight result will satisfy callers. |
+| `'exhaust'` | Identical wire behaviour to `'take-first'`: new events are dropped until current completes. | Same as above; pick whichever name reads better in your config. |
+| `'queue'` | New runs wait their turn. Each starts only when the previous completes. | Mutations / writes where order matters: PATCH/POST/PUT to the same resource. |
+| `'sync'` | Documentation marker for sync-only handlers. Identical to `'take-every'` at runtime. | Pure synchronous handlers; signals intent to readers. |
+
+<Aside type="note">
+`'take-first'` and `'exhaust'` behave the same: skip-if-anything-in-flight. They exist as two names because the surrounding pattern in code often reads better one way or the other. There is no behavioural difference.
+</Aside>
+
+## Picking a strategy
+
+Real-world picks, derived from the shape of the scenario:
+
+```ts title="Search / autocomplete — take-latest"
+createTrigger<{
+  events:     { 'query-changed': { q: string } };
+  conditions: { apiBase: string };
+  actions:    { showResults: readonly Hit[] };
+}>({
+  id: 'search-query',
+  events: ['query-changed'],
+  concurrency: 'take-latest',
+  required: ['apiBase'],
+  async handler({ event, conditions, signal, actions }) {
+    const res = await fetch(`${conditions.apiBase}/search?q=${event.payload.q}`, { signal });
+    signal.throwIfAborted();
+    actions.showResults?.(await res.json());
+  },
+});
+```
+
+```ts title="Page-view analytics — take-every"
+createTrigger<{
+  events:  { 'page-view': { path: string } };
+  actions: { sendBeacon: { path: string; ts: number } };
+}>({
+  id: 'page-view-analytics',
+  events: ['page-view'],
+  concurrency: 'take-every',
+  async handler({ event, signal, actions }) {
+    await fetch(`/beacon?path=${event.payload.path}`, { signal, keepalive: true });
+    actions.sendBeacon?.({ path: event.payload.path, ts: Date.now() });
+  },
+});
+```
+
+```ts title="Idempotent expensive read — take-first"
+createTrigger<{
+  events:     { 'config-refresh-requested': void };
+  conditions: { apiBase: string };
+  actions:    { setConfig: AppConfig };
+}>({
+  id: 'config-refresh',
+  events: ['config-refresh-requested'],
+  concurrency: 'take-first',          // burst of refresh clicks → one round-trip
+  required: ['apiBase'],
+  async handler({ conditions, signal, actions }) {
+    const res = await fetch(`${conditions.apiBase}/config`, { signal });
+    signal.throwIfAborted();
+    actions.setConfig?.(await res.json());
+  },
+});
+```
+
+```ts title="Serialised mutation — queue"
+createTrigger<{
+  events:     { 'note-edited': { noteId: string; body: string } };
+  conditions: { apiBase: string };
+  actions:    { markSaved: { noteId: string; savedAt: number } };
+}>({
+  id: 'note-autosave',
+  events: ['note-edited'],
+  concurrency: 'queue',               // each PATCH lands after the previous one
+  required: ['apiBase'],
+  async handler({ event, conditions, signal, actions }) {
+    await fetch(`${conditions.apiBase}/notes/${event.payload.noteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ body: event.payload.body }),
+      signal,
+    });
+    signal.throwIfAborted();
+    actions.markSaved?.({ noteId: event.payload.noteId, savedAt: Date.now() });
+  },
+});
+```
+
+```ts title="Background refresh — exhaust"
+createTrigger<{
+  events:     { 'tick': void };
+  conditions: { apiBase: string };
+  actions:    { setFeed: readonly FeedItem[] };
+}>({
+  id: 'feed-poll',
+  events: ['tick'],
+  concurrency: 'exhaust',             // pollers that overshoot don't pile up
+  required: ['apiBase'],
+  async handler({ conditions, signal, actions }) {
+    const res = await fetch(`${conditions.apiBase}/feed`, { signal });
+    signal.throwIfAborted();
+    actions.setFeed?.(await res.json());
+  },
+});
+```
+
+The thread running through all five: **the handler body is identical**. Strategy is one line of config, never code.
+
+## How to set the strategy
+
+Per-trigger, in the config:
+
+```ts
+createTrigger<Schema>({
+  id: 'my-trigger',
+  events: ['my-event'],
+  concurrency: 'queue',
+  async handler(ctx) { /* … */ },
+});
+```
+
+There's no runtime-wide default override — the choice is local to the scenario, by design. If you find yourself wanting "all writes in this feature use `queue`", that's a hint to keep the trigger file in one place rather than to introduce a global default.
+
+<Aside type="tip">
+You don't need to repeat `concurrency: 'take-latest'` — it's the default. Spell it out only where the choice diverges from the default, so the diff highlights the decision.
+</Aside>
+
+## Interaction with the action proxy
+
+`concurrency` and `actions.debounce / throttle / defer` operate at different levels. Don't confuse them:
+
+| Mechanism | Granularity | Effect |
+|---|---|---|
+| `concurrency` | Whole **handler run** | When two events overlap, what should the runtime do with the in-flight run? |
+| `actions.debounce(800).foo()` | One **action call** | Schedule this single call to fire 800ms after the *last* invocation, replacing any pending one with the same key. |
+| `actions.throttle(2000).foo()` | One **action call** | Leading-edge throttle: fire immediately, ignore further calls within 2s. |
+| `actions.defer(50).foo()` | One **action call** | Fire after exactly 50ms; new calls don't replace it. |
+
+You can mix freely. A typical pattern: `take-latest` handler + `actions.debounce(80).showResults` to coalesce two adjacent renders.
+
+See [Debouncing and throttling](/guide/async/debouncing-throttling/) for the full proxy reference.
+
+## Timeline visualisations
+
+Below, each row is one strategy. Events arrive at `t=0ms`, `t=100ms`, `t=200ms`. Every handler invocation takes 250ms.
+
+```text
+Event:         A             B             C            
+t (ms):        0             100           200           500
+
+take-latest    A───────╳     B───────╳     C─────────────►done
+                       (aborted)    (aborted)
+                                                  
+take-every     A─────────────────────►done
+               B───────────────────────►done
+               C───────────────────────►done
+
+take-first     A─────────────────────►done
+               B (skipped)
+               C (skipped — still A in flight at t=200)
+
+exhaust        ≡ take-first
+
+queue          A─────────────────────►done
+                                         B─────────────►done
+                                                                 C─►done
+
+sync*          ≡ take-every (marker only; intended for sync handlers)
+```
+
+Reading notes:
+
+- `take-latest` — the previous run gets `signal.aborted = true` the instant the next event fires. Any subsequent `signal.throwIfAborted()` in the aborted handler short-circuits; any pending `fetch(..., { signal })` rejects with `AbortError`.
+- `queue` — start of B is gated on A's resolution. Total wall time grows linearly. If you want bounded concurrency higher than 1, write a custom solution outside Triggery (a worker pool, p-limit, etc.) and call into it from a `take-every` handler.
+- `take-every` — three overlapping runs each own their own `signal`. No abort happens unless the runtime is disposed.
+
+## Inspecting abort reasons in DEV
+
+Every aborted / skipped run is recorded in the inspector's ring buffer with a stable `reason` string. Useful when a scenario "doesn't fire" and you want to know why.
+
+| Reason | Meaning |
+|---|---|
+| `'superseded-by-latest'` | `take-latest` aborted the previous run because a newer event fired. |
+| `'concurrency-take-first'` | The new event was dropped because something was in flight. |
+| `'concurrency-exhaust'` | Same as above, recorded under the `exhaust` name. |
+| `'disposed'` | The runtime, scope or trigger was disposed mid-run. |
+| `'hmr'` | Vite/webpack HMR re-evaluated the trigger module; the previous instance was disposed. |
+
+Read the buffer from anywhere:
+
+```ts
+import { getDefaultRuntime } from '@triggery/core';
+
+for (const snap of getDefaultRuntime().getInspectorBuffer()) {
+  if (snap.status === 'aborted') {
+    console.log(snap.triggerId, snap.runId, snap.reason);
+  }
+}
+```
+
+Or in React, render an entry list with `useInspectHistory(trigger)` from `@triggery/react`. The DevTools bridge serialises the same snapshots over `postMessage`.
+
+## Common pitfall: not handling the in-flight previous run's writes
+
+`take-latest` aborts the *handler*, not the *side effects already dispatched*. If the previous run already called `actions.show?.(...)` with partial data before its abort point, that state is already in your store.
+
+```ts
+async handler({ event, conditions, signal, actions }) {
+  const profile = await fetch(`/users/${event.payload.id}`, { signal }).then((r) => r.json());
+  signal.throwIfAborted();
+  actions.setProfile?.(profile);                       // ← lands in the store
+
+  const orgs = await fetch(`/users/${event.payload.id}/orgs`, { signal }).then((r) => r.json());
+  signal.throwIfAborted();                             // ← if aborted *here*…
+  actions.setOrgs?.(orgs);
+}
+```
+
+If the user clicks user A then user B before the orgs response arrives, the store ends up with **A's profile** and **B's everything else**. The fix depends on what you want:
+
+- **All-or-nothing**: collect into locals, dispatch all actions only after the last `await`. (See [Async handlers → Sequential awaits](/guide/async/async-handlers/#sequential-awaits-with-interleaved-checks).)
+- **Per-key versioning**: include `event.payload.id` in every action payload, and let reactors discard stale writes if the id no longer matches the current context.
+- **Switch strategy**: `queue` makes the writes sequential. The user sees A complete before B starts.
+
+The right answer is scenario-specific. The wrong answer is to pretend the problem doesn't exist because `take-latest` "cancelled" the previous run.
+
+## Common pitfall: using `queue` to deduplicate
+
+`queue` does not deduplicate. Three rapid clicks on a "save" button under `queue` produce three sequential PATCHes. If you want at-most-one-pending-save:
+
+```ts
+createTrigger<Schema>({
+  id: 'save-note',
+  events: ['save-clicked'],
+  concurrency: 'take-latest',          // ← coalesces in-flight requests
+  async handler({ event, signal, actions }) {
+    const body = collectFormBody();
+    await fetch(`/notes/${event.payload.id}`, { method: 'PATCH', body, signal });
+    signal.throwIfAborted();
+    actions.markSaved?.({ id: event.payload.id, ts: Date.now() });
+  },
+});
+```
+
+Or debounce the **action** that fires the event:
+
+```tsx
+const fireSave = useEvent(saveTrigger, 'save-clicked');
+useEffect(() => {
+  const id = setTimeout(() => fireSave({ id: noteId }), 500);
+  return () => clearTimeout(id);
+}, [body, noteId, fireSave]);
+```
+
+`queue` is for *ordering*, not throttling.
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Cancellation"
+    description="The three sources of abort, resource cleanup patterns and AbortController interop."
+    href="/guide/async/cancellation/"
+  />
+  <LinkCard
+    title="Async handlers"
+    description="The async/await mechanics — signal propagation, throwIfAborted, and the error flow."
+    href="/guide/async/async-handlers/"
+  />
+  <LinkCard
+    title="Debouncing and throttling"
+    description="Per-action timing controls that work alongside concurrency strategies."
+    href="/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Inspector"
+    description="The ring buffer that records every abort reason, including superseded-by-latest and disposed."
+    href="/guide/advanced/inspector/"
+  />
+</CardGrid>

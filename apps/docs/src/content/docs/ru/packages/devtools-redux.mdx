@@ -1,0 +1,69 @@
+---
+title: "@triggery/devtools-redux"
+description: "Мост Redux DevTools для Triggery — middleware, который стримит события рантайма в браузерное расширение Redux DevTools."
+sidebar:
+  order: 16
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Middleware, который стримит события рантайма [Triggery](https://github.com/triggeryjs/triggery) в [браузерное расширение Redux DevTools](https://github.com/reduxjs/redux-devtools/tree/main/extension) — Redux при этом не нужен. Каждое событие `fire`, `skip`, `action-start`, `action-end`, `error` и `cascade` отображается как action в панели DevTools, а накапливающаяся история запусков идёт в качестве «state».
+
+[![npm](https://img.shields.io/npm/v/@triggery/devtools-redux?style=flat-square)](https://www.npmjs.com/package/@triggery/devtools-redux)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/devtools-redux?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/devtools-redux)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/devtools-redux" dev />
+
+Peer-зависимости: `@triggery/core`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `reduxDevtoolsMiddleware(options?)` | Фабрика middleware. Передай в `createRuntime({ middleware: [...] })`. |
+| `DevtoolsReduxOptions` | TS-тип для объекта опций. |
+
+Опции:
+
+- `name` — отображаемое имя в выпадающем списке DevTools «Inspector → Stores».
+- `historyLimit` — сколько запусков хранить как виртуальный «state» (по умолчанию 100).
+
+## Быстрый пример
+
+```ts
+import { createRuntime } from '@triggery/core';
+import { reduxDevtoolsMiddleware } from '@triggery/devtools-redux';
+
+const runtime = createRuntime({
+  middleware: import.meta.env.DEV
+    ? [reduxDevtoolsMiddleware({ name: 'My App', historyLimit: 200 })]
+    : [],
+});
+```
+
+Если расширение Redux DevTools не установлено (прод-сборки, Node, браузеры без расширения), middleware тихо деградирует до no-op.
+
+<Aside type="tip">
+  Сочетай с [`@triggery/eslint-plugin`](/ru/packages/eslint-plugin/), чтобы ловить проблемы на этапе линта, и с [`@triggery/devtools-panel`](/ru/packages/devtools-panel/), чтобы получить in-app инспектор, живущий рядом с расширением.
+</Aside>
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Рантайм, к которому подключается middleware." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/devtools-panel" description="React-компоненты in-app инспектора." href="/ru/packages/devtools-panel/" />
+  <LinkCard title="@triggery/devtools-bridge" description="Page-side мост для внешних инспекторов." href="/ru/packages/devtools-bridge/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/devtools-redux)
+- [npm](https://www.npmjs.com/package/@triggery/devtools-redux)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/devtools-redux/CHANGELOG.md)

@@ -1,0 +1,142 @@
+---
+title: "From mitt / nanoevents"
+description: "Move generic event-bus subscriptions to Triggery — adding types, scopes and rate limiting along the way."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`mitt` and `nanoevents` are tiny untyped (or loosely typed) event emitters. They scale badly the moment the same event has more than one handler, or handlers need to read state, or you want to debounce. Triggery is what you'd build if you took those problems seriously.
+
+## Mental model mapping
+
+| mitt / nanoevents | Triggery |
+|---|---|
+| `emitter.on('foo', fn)` | `useAction(trigger, 'foo', fn)` (or `useEvent` on the firing side) |
+| `emitter.emit('foo', payload)` | `fireFoo(payload)` from `useEvent(trigger, 'foo')` |
+| `emitter.off('foo', fn)` | Automatic — cleanup on component unmount |
+| Untyped payload | `Schema['events']['foo']` enforced at compile time |
+| Multiple handlers per event | Multiple reactors registering the same action; or multiple triggers listening to the same event |
+| Manual debounce/throttle around `emit` | `actions.debounce(ms).foo?.(p)` |
+| One global emitter | Scoped via `<TriggerScope id="…">` for multi-tenant trees |
+
+## Pattern 1 — basic typed bus
+
+```ts title="Before — mitt"
+import mitt from 'mitt';
+type Events = { 'cart:added': { sku: string }; 'cart:removed': string };
+export const bus = mitt<Events>();
+```
+
+```ts title="Before — usage"
+bus.on('cart:added', e => analytics.track('add', e.sku));
+bus.on('cart:added', e => sidebar.flash(e.sku));
+// somewhere else:
+bus.emit('cart:added', { sku: 'A1' });
+```
+
+```ts title="After"
+export const cartTrigger = createTrigger<{
+  events:  { 'cart:added': { sku: string }; 'cart:removed': string };
+  actions: { trackAddition: { sku: string }; flashSidebar: { sku: string } };
+}>({
+  id: 'cart-added',
+  events: ['cart:added'],
+  required: [],
+  handler({ event, actions }) {
+    actions.trackAddition?.({ sku: event.payload.sku });
+    actions.flashSidebar?.({ sku: event.payload.sku });
+  },
+});
+```
+
+```tsx title="Reactors (in their own features)"
+// analytics:
+useAction(cartTrigger, 'trackAddition', ({ sku }) => analytics.track('add', sku));
+// sidebar:
+useAction(cartTrigger, 'flashSidebar', ({ sku }) => sidebar.flash(sku));
+// producer:
+const fireAdded = useEvent(cartTrigger, 'cart:added');
+fireAdded({ sku: 'A1' });
+```
+
+The trigger file lists the *whole* fan-out in one place — no hunting `bus.on('cart:added'` across the codebase.
+
+## Pattern 2 — fan-out with conditional routing
+
+```ts title="Before"
+bus.on('cart:added', e => {
+  if (user.role === 'guest') guestAnalytics.track(e.sku);
+  else                       userAnalytics.track(user.id, e.sku);
+});
+```
+
+```ts title="After"
+createTrigger<{
+  events:     { 'cart:added': { sku: string } };
+  conditions: { user: { id: string; role: 'guest' | 'user' } };
+  actions:    { trackGuest: string; trackUser: { userId: string; sku: string } };
+}>({
+  id: 'cart-analytics',
+  events: ['cart:added'],
+  required: ['user'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.user) return;
+    if (conditions.user.role === 'guest') {
+      actions.trackGuest?.(event.payload.sku);
+    } else {
+      actions.trackUser?.({ userId: conditions.user.id, sku: event.payload.sku });
+    }
+  },
+});
+```
+
+User identity is registered once as a condition by whichever feature owns auth; the cart trigger reads it lazily.
+
+## Pattern 3 — debounce around emit
+
+```ts title="Before"
+const debouncedFlush = throttle(() => bus.emit('cart:flush'), 300);
+input.addEventListener('input', debouncedFlush);
+```
+
+```ts title="After"
+// trigger:
+createTrigger<{ events: { 'cart:flush': void }; actions: { saveCart: void } }>({
+  id: 'cart-flush',
+  events: ['cart:flush'],
+  required: [],
+  handler({ actions }) {
+    actions.debounce(300).saveCart?.();
+  },
+});
+
+// producer (no manual throttle):
+const fireFlush = useEvent(cartTrigger, 'cart:flush');
+input.addEventListener('input', () => fireFlush());
+```
+
+The runtime owns the timer. Tests can drive time deterministically with the [`fakeScheduler`](/guide/testing/fake-scheduler/).
+
+## Pattern 4 — scoping a bus per tenant
+
+mitt has no concept of scope — for multi-tenant or micro-frontend setups you usually create one bus per tenant and pass it through context. Triggery handles this with `<TriggerScope id="…">`:
+
+```tsx
+<TriggerScope id="tenant-a">
+  <CartFeature />     {/* useCondition/useAction registrations live in this scope */}
+</TriggerScope>
+<TriggerScope id="tenant-b">
+  <CartFeature />     {/* parallel, isolated */}
+</TriggerScope>
+```
+
+The trigger declaration adds `scope: 'tenant-a'` (or `'tenant-b'`) and the runtime keeps the registries separate. See [Scopes](/guide/architecture/scopes/).
+
+<CardGrid>
+  <LinkCard title="Events" description="Typed event bus entries." href="/guide/essentials/events/" />
+  <LinkCard title="Scopes" description="Per-tenant / per-feature isolation." href="/guide/architecture/scopes/" />
+  <LinkCard title="Debouncing & throttling" description="Runtime-owned timers." href="/guide/async/debouncing-throttling/" />
+  <LinkCard title="Comparisons" description="vs XState, Saga, RxJS and more." href="/migration/comparison/" />
+</CardGrid>

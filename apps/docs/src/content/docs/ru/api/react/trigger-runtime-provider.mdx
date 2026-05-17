@@ -1,0 +1,150 @@
+---
+title: "TriggerRuntimeProvider"
+description: "Инжектит кастомный рантайм через React context. Потомки используют его вместо дефолтного синглтона."
+sidebar:
+  order: 8
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+React context-провайдер, инжектящий кастомный [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) в дерево. Каждый вызов [`useEvent`](/ru/api/react/use-event/), [`useCondition`](/ru/api/react/use-condition/), [`useAction`](/ru/api/react/use-action/) и [`useInspectHistory`](/ru/api/react/use-inspect-history/) внутри провайдера использует этот рантайм вместо глобального синглтона.
+
+Используй его, когда нужна настоящая изоляция: параллельные тесты, микрофронтенды в одной вкладке, мульти-тенантные приложения, где у каждого тенанта свой граф триггеров.
+
+## Импорт
+
+```ts
+import { TriggerRuntimeProvider } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function TriggerRuntimeProvider(props: TriggerRuntimeProviderProps): JSX.Element;
+
+type TriggerRuntimeProviderProps = {
+  readonly runtime: Runtime;
+  readonly children: ReactNode;
+};
+```
+
+## Пропсы
+
+| Проп | Тип | Обязательный | Описание |
+|---|---|---|---|
+| `runtime` | [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) | да | Рантайм, который должны использовать потомки. |
+| `children` | `ReactNode` | да | Поддерево, получающее рантайм. |
+
+## Примеры
+
+### Один рантайм на корне приложения
+
+```tsx
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+### Изоляция на тест (Testing Library)
+
+```tsx
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { render } from '@testing-library/react';
+import type { ReactNode } from 'react';
+
+function renderWithRuntime(ui: ReactNode) {
+  const runtime = createRuntime();
+  const result = render(
+    <TriggerRuntimeProvider runtime={runtime}>{ui}</TriggerRuntimeProvider>,
+  );
+  return { ...result, runtime };
+}
+```
+
+### Микрофронтенды по тенантам
+
+```tsx
+import { createRuntime, type Runtime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { useMemo, type ReactNode } from 'react';
+
+const cache = new Map<string, Runtime>();
+
+function getRuntime(tenantId: string) {
+  let rt = cache.get(tenantId);
+  if (!rt) {
+    rt = createRuntime();
+    cache.set(tenantId, rt);
+  }
+  return rt;
+}
+
+export function TenantBoundary({ tenantId, children }: { tenantId: string; children: ReactNode }) {
+  const runtime = useMemo(() => getRuntime(tenantId), [tenantId]);
+  return <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>;
+}
+```
+
+### Вложенные провайдеры
+
+Побеждает внутренний:
+
+```tsx
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import type { ReactNode } from 'react';
+
+const outer = createRuntime();
+const inner = createRuntime();
+
+function App({ children }: { children: ReactNode }) {
+  return (
+    <TriggerRuntimeProvider runtime={outer}>
+      {/* Uses outer */}
+      <TriggerRuntimeProvider runtime={inner}>
+        {/* Uses inner */}
+        {children}
+      </TriggerRuntimeProvider>
+    </TriggerRuntimeProvider>
+  );
+}
+```
+
+## Замечания
+
+<Aside type="tip" title="В большинстве приложений необязателен">
+Пропусти провайдер целиком — биндинги фоллбэкнутся на [`getDefaultRuntime`](/ru/api/core/get-default-runtime/), что нормально для типичного случая с одним рантаймом. Добавляй провайдер тогда, когда изоляция реально нужна.
+</Aside>
+
+<Aside type="caution" title="Идентичность рантайма важна">
+Проп `runtime` должен быть стабильным между рендерами. Передача нового рантайма на каждом рендере сносит все регистрации и перезапускает каждый `useEffect`, что редко бывает желаемым. Конструируй рантайм вне компонента (на верхнем уровне модуля, через `useMemo` и т.д.).
+</Aside>
+
+<Aside>
+Провайдер переключает только то, что видят **хуки**. Триггеры, созданные с явным аргументом рантайма — `createTrigger(config, runtime)` — регистрируются против него независимо от того, какой провайдер оборачивает компонент.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="TriggerScope" description="Более лёгкое внутрирантаймовое разбиение по scope id." href="/ru/api/react/trigger-scope/" />
+  <LinkCard title="createRuntime" description="Сконструируй рантайм, который сюда передаёшь." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="getDefaultRuntime" description="Фоллбэк, используемый, когда провайдера нет." href="/ru/api/core/get-default-runtime/" />
+  <LinkCard title="Руководство по рантайму" description="Дефолтный vs изолированный vs скоупированный — когда какой." href="/ru/guide/essentials/runtime/" />
+</CardGrid>

@@ -1,0 +1,63 @@
+---
+title: Счётчик
+description: "Самый простой рецепт Triggery на Solid — одно событие, одно действие, один компонент."
+sidebar:
+  order: 1
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Тот же сценарий счётчика, что и в [рецепте на React](/ru/recipes/react/counter/), но через `createSignal` Solid'а. Триггер абсолютно тот же — он живёт в `@triggery/core` и не знает ни про один из фреймворков.
+
+## Триггер
+
+```ts title="src/triggers/counter.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const counterTrigger = createTrigger<{
+  events:  { increment: void; decrement: void };
+  actions: { adjust: number };
+}>({
+  id: 'counter',
+  events: ['increment', 'decrement'],
+  handler({ event, actions }) {
+    actions.adjust?.(event.name === 'increment' ? 1 : -1);
+  },
+});
+```
+
+## Компонент
+
+```tsx title="src/Counter.tsx"
+import { useAction, useEvent } from '@triggery/solid';
+import { createSignal } from 'solid-js';
+import { counterTrigger } from './triggers/counter.trigger';
+
+export function Counter() {
+  const [count, setCount] = createSignal(0);
+
+  const inc = useEvent(counterTrigger, 'increment');
+  const dec = useEvent(counterTrigger, 'decrement');
+
+  useAction(counterTrigger, 'adjust', delta => setCount(c => c + delta));
+
+  return (
+    <div>
+      <button onClick={dec}>−</button>
+      <output>{count()}</output>
+      <button onClick={inc}>+</button>
+    </div>
+  );
+}
+```
+
+Та же форма, нативная для Solid. Никакого перерендера остального дерева, когда счётчик меняется — fine-grained-реактивность Solid делает своё дело, а биндинги Triggery просто регистрируются/отписываются через `onCleanup`.
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="Версия для React" href="/ru/recipes/react/counter/" description="Тот же триггер, React-хуки." />
+  <LinkCard title="Версия для Vue" href="/ru/recipes/vue/counter/" description="Composition API." />
+  <LinkCard title="Пайплайн уведомлений (Solid)" href="/ru/recipes/solid/notification-pipeline/" description="Полный многокомпонентный сценарий." />
+  <LinkCard title="Пакет @triggery/solid" href="/ru/packages/solid/" description="Справочник по хукам." />
+</CardGrid>

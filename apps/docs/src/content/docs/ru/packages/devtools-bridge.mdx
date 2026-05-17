@@ -1,0 +1,74 @@
+---
+title: "@triggery/devtools-bridge"
+description: "Page-side мост для Triggery devtools — транслирует события рантайма через window.postMessage."
+sidebar:
+  order: 18
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Page-side мост, делающий рантайм Triggery наблюдаемым для внешних инструментов — Chrome-расширения, будущей standalone веб-панели, кастомных инспекторов, всего, что умеет слушать `window.postMessage`. Framework-agnostic, без рантайм-зависимостей, возвращает no-op в Node / SSR.
+
+[![npm](https://img.shields.io/npm/v/@triggery/devtools-bridge?style=flat-square)](https://www.npmjs.com/package/@triggery/devtools-bridge)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/devtools-bridge?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/devtools-bridge)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/devtools-bridge" />
+
+Peer-зависимости: `@triggery/core`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `installDevtoolsBridge(runtime)` | Подключает page-side мост к рантайму. Возвращает обратный вызов `dispose()`. |
+
+## Быстрый пример
+
+```ts
+import { createRuntime } from '@triggery/core';
+import { installDevtoolsBridge } from '@triggery/devtools-bridge';
+
+const runtime = createRuntime();
+
+if (import.meta.env.DEV) {
+  installDevtoolsBridge(runtime);
+}
+```
+
+И всё. Мост:
+
+1. Выставляет discovery-handle на `window.__triggery_devtools__`, чтобы инструменты могли обнаружить рантайм.
+2. Транслирует `postMessage` `triggery:hello` с текущим `graph()` и буфером инспектора.
+3. Подписывается на рантайм и шлёт `triggery:snapshot` на каждый новый запуск.
+4. По `dispose()` удаляет discovery-handle и транслирует `triggery:bye`.
+
+В Node / SSR `installDevtoolsBridge` возвращает no-op-disposer.
+
+## Wire-формат
+
+```ts
+{ source: 'triggery-devtools', type: 'triggery:hello',    runtimeId, graph, buffer, at }
+{ source: 'triggery-devtools', type: 'triggery:snapshot', runtimeId, snapshot,     at }
+{ source: 'triggery-devtools', type: 'triggery:bye',      runtimeId,               at }
+```
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Рантайм, к которому подключается мост." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/devtools-panel" description="React-компоненты in-app инспектора." href="/ru/packages/devtools-panel/" />
+  <LinkCard title="@triggery/devtools-redux" description="Стримит события рантайма в расширение Redux DevTools." href="/ru/packages/devtools-redux/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/devtools-bridge)
+- [npm](https://www.npmjs.com/package/@triggery/devtools-bridge)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/devtools-bridge/CHANGELOG.md)

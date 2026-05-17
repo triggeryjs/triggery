@@ -1,0 +1,248 @@
+---
+title: "Modal stack"
+description: "Open, close and cascade modals across unrelated features by firing events — no shared modal context, no prop drilling, no z-index war."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Every non-trivial app eventually grows a modal mess: "Confirm delete" opens "Resolve conflict" opens "Reauthenticate" — all from different features, none of them wanting to know about each other. Triggery turns this into a one-liner per feature: fire `modal:open`, fire `modal:close`, listen if you care. Per-route stacks come for free with `<TriggerScope>`.
+
+<StackBlitzButton path="examples/vite-react-modal-stack" label="Open in StackBlitz" />
+
+## Scenario
+
+1. **Any feature can request a modal** by firing `modal:open` with a payload.
+2. **A single modal host renders the stack** — top of stack is on top of the z-index.
+3. **Closing one modal can open another** (cascade): e.g. "Delete account" closes itself and opens "Are you really sure?".
+4. **Routes get their own stacks** via `<TriggerScope id="dialog/account">` — switching screens never strands a modal from a different feature.
+
+## File layout
+
+<FileTree>
+- src/
+  - triggers/
+    - **modal.trigger.ts** stack mutations
+  - features/
+    - modal/
+      - ModalHost.tsx reactor: renders the stack
+      - DeleteAccountModal.tsx producer of the cascade
+      - ConfirmModal.tsx generic confirm UI
+    - account/
+      - AccountSettings.tsx producer: opens the first modal
+  - stores/
+    - modal-stack.ts plain store
+</FileTree>
+
+## 1. The trigger
+
+```ts title="src/triggers/modal.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type ModalDescriptor =
+  | { kind: 'confirm';        id: string; title: string; body: string; okEvent: string }
+  | { kind: 'delete-account'; id: string }
+  | { kind: 'reauth';         id: string; reason: string };
+
+export const modalTrigger = createTrigger<{
+  events: {
+    'modal:open':       ModalDescriptor;
+    'modal:close':      string;       // id of the modal to close
+    'modal:close-all':  void;
+  };
+  actions: {
+    push:    ModalDescriptor;
+    remove:  string;
+    clear:   void;
+  };
+}>({
+  id: 'modal-stack',
+  events: ['modal:open', 'modal:close', 'modal:close-all'],
+  handler({ event, actions }) {
+    if (event.name === 'modal:open')      actions.push?.(event.payload);
+    else if (event.name === 'modal:close') actions.remove?.(event.payload);
+    else                                   actions.clear?.();
+  },
+});
+```
+
+That's the entire coordination layer for an arbitrarily complex modal system. Every feature in the app talks to the stack through these three events.
+
+## 2. The store + the host
+
+A tiny plain store holds the ordered stack. The host renders the top item (or all of them, if you want overlapping).
+
+```ts title="src/stores/modal-stack.ts"
+import { create } from 'zustand';
+import type { ModalDescriptor } from '../triggers/modal.trigger';
+
+type State = {
+  stack: readonly ModalDescriptor[];
+  push:   (descriptor: ModalDescriptor) => void;
+  remove: (id: string) => void;
+  clear:  () => void;
+};
+
+export const useModalStack = create<State>(set => ({
+  stack: [],
+  push:   d  => set(s => ({ stack: [...s.stack, d] })),
+  remove: id => set(s => ({ stack: s.stack.filter(m => m.id !== id) })),
+  clear:  () => set({ stack: [] }),
+}));
+```
+
+```tsx title="src/features/modal/ModalHost.tsx"
+import { useAction } from '@triggery/react';
+import { modalTrigger } from '../../triggers/modal.trigger';
+import { useModalStack } from '../../stores/modal-stack';
+import { ConfirmModal } from './ConfirmModal';
+import { DeleteAccountModal } from './DeleteAccountModal';
+import { ReauthModal } from './ReauthModal';
+
+export function ModalHost() {
+  const stack = useModalStack(s => s.stack);
+  const push  = useModalStack(s => s.push);
+  const remove = useModalStack(s => s.remove);
+  const clear  = useModalStack(s => s.clear);
+
+  useAction(modalTrigger, 'push',   push);
+  useAction(modalTrigger, 'remove', remove);
+  useAction(modalTrigger, 'clear',  clear);
+
+  return (
+    <>
+      {stack.map((m, i) => {
+        const onTop = i === stack.length - 1;
+        switch (m.kind) {
+          case 'confirm':         return <ConfirmModal        key={m.id} {...m} active={onTop} />;
+          case 'delete-account':  return <DeleteAccountModal  key={m.id} {...m} active={onTop} />;
+          case 'reauth':          return <ReauthModal         key={m.id} {...m} active={onTop} />;
+        }
+      })}
+    </>
+  );
+}
+```
+
+The host is the *only* component that imports `useModalStack`. Every feature talks to the stack via events.
+
+## 3. Producers
+
+Any component can request a modal. None of them know about the host, the store, or the stack.
+
+```tsx title="src/features/account/AccountSettings.tsx"
+import { useEvent } from '@triggery/react';
+import { modalTrigger } from '../../triggers/modal.trigger';
+
+export function AccountSettings() {
+  const open = useEvent(modalTrigger, 'modal:open');
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        open({ kind: 'delete-account', id: 'delete-account-1' })
+      }
+    >
+      Delete account…
+    </button>
+  );
+}
+```
+
+## 4. Cascading modals
+
+When "Delete account" is confirmed, it should close itself and open a re-auth modal. The first modal fires *two* events; the trigger maps each one to the right stack mutation.
+
+```tsx title="src/features/modal/DeleteAccountModal.tsx"
+import { useEvent } from '@triggery/react';
+import { modalTrigger } from '../../triggers/modal.trigger';
+
+export function DeleteAccountModal({ id, active }: { id: string; active: boolean }) {
+  const open  = useEvent(modalTrigger, 'modal:open');
+  const close = useEvent(modalTrigger, 'modal:close');
+
+  return (
+    <dialog open={active}>
+      <h2>Delete account</h2>
+      <p>This cannot be undone. We'll ask you to re-enter your password to be sure.</p>
+      <menu>
+        <button type="button" onClick={() => close(id)}>Cancel</button>
+        <button
+          type="button"
+          onClick={() => {
+            close(id);
+            open({
+              kind: 'reauth',
+              id: 'reauth-1',
+              reason: 'Confirm your password to delete the account.',
+            });
+          }}
+        >
+          Continue
+        </button>
+      </menu>
+    </dialog>
+  );
+}
+```
+
+The cascade is two `fire` calls. The trigger runs once per event, the store updates twice, the host re-renders with the new top. No `onConfirm={...}` prop chain.
+
+<Aside type="tip">
+Cascades are bounded — the runtime caps cascade depth at 3 by default (configurable via `createRuntime({ maxCascadeDepth })`). If you accidentally wire a modal that re-opens itself, you'll get a development-mode warning instead of a stack overflow.
+</Aside>
+
+## 5. Per-route stacks with `<TriggerScope>`
+
+If multiple routes each need their *own* modal stack — e.g. "settings has its own dialogs, dashboard has its own, switching routes must dismiss the previous screen's dialogs" — declare the trigger with a `scope` and wrap each route in a `<TriggerScope>` with the matching id.
+
+```ts title="src/triggers/modal.trigger.ts (scoped variant)"
+export const modalTrigger = createTrigger<{ /* …same schema… */ }>({
+  id: 'modal-stack',
+  scope: 'dialog',           // 1. declare the trigger as scoped
+  events: ['modal:open', 'modal:close', 'modal:close-all'],
+  handler({ event, actions }) { /* …same body… */ },
+});
+```
+
+```tsx title="src/App.tsx"
+import { TriggerScope } from '@triggery/react';
+import { ModalHost } from './features/modal/ModalHost';
+import { AccountSettings } from './features/account/AccountSettings';
+import { Dashboard } from './features/dashboard/Dashboard';
+
+export function App({ route }: { route: 'account' | 'dashboard' }) {
+  return (
+    <TriggerScope id="dialog">
+      {/* Both routes share the same scope id, but only ONE is rendered at a time —
+          unmounting the route's TriggerScope subtree also unregisters its modal host,
+          which atomically drops the stack. */}
+      {route === 'account'   && <AccountSettings />}
+      {route === 'dashboard' && <Dashboard />}
+      <ModalHost />
+    </TriggerScope>
+  );
+}
+```
+
+For *parallel* per-route stacks (e.g. modals embedded inside a multi-pane layout), give each pane a unique scope id (`dialog/account`, `dialog/dashboard`) and create a separate trigger per scope — registrations and triggers see only their matching bucket.
+
+## What this buys you
+
+| | Before (prop drilling / context-of-modals) | With Triggery |
+|---|---|---|
+| **Adding a new modal kind** | Update context provider, every consumer, every renderer | One case in the host's switch |
+| **Opening a modal from a deep nested component** | Drill the open handler, or grab the global setter | `useEvent(modalTrigger, 'modal:open')` |
+| **Cascading "confirm → reauth"** | Custom callback wiring, ref to the manager | Two `fire` calls |
+| **Per-route isolation** | Manual unmount choreography | `<TriggerScope>` subtree |
+| **Testing the stack rules** | Render React, drive a tree | Pure unit test on the trigger |
+
+## Variations / Related
+
+<CardGrid>
+  <LinkCard title="Scopes" href="/guide/architecture/scopes/" description="How TriggerScope partitions a single runtime." />
+  <LinkCard title="Cascade" href="/guide/architecture/cascade/" description="How action → fireEvent → action chains are bounded." />
+</CardGrid>

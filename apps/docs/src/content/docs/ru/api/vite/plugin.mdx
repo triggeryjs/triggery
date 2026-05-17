@@ -1,0 +1,131 @@
+---
+title: "triggery (плагин Vite)"
+description: "Автообнаружение файлов *.trigger.ts и экспорт через `virtual:triggery-registry`."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Плагин Vite, который на этапе сборки прогоняет glob по всем файлам `*.trigger.{ts,tsx,js,jsx}` в проекте и генерирует виртуальный модуль — `virtual:triggery-registry` — импортирующий их все. Импортни этот виртуальный модуль один раз в точке входа приложения, и каждый триггер сам зарегистрируется в рантайме; без ручной разводки, без построчных `import './foo.trigger'`.
+
+HMR-осведомлён: правка существующего файла триггера переиспполняет его вызов `createTrigger(...)`, а last-mount-wins в рантайме заменяет старую регистрацию. Добавление, удаление или переименование файла триггера инвалидирует виртуальный модуль, так что список импортов пересобирается при следующем запросе.
+
+## Импорт
+
+```ts
+import triggery from '@triggery/vite';
+// or
+import { triggery } from '@triggery/vite';
+```
+
+## Сигнатура
+
+```ts
+function triggery(options?: TriggeryViteOptions): Plugin;
+
+type TriggeryViteOptions = {
+  readonly glob?: string | readonly string[];
+};
+```
+
+## Опции
+
+| Поле | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `glob` | `string \| readonly string[]` | `'src/**/*.trigger.{ts,tsx,js,jsx}'` | Паттерн(ы) для файлов триггеров. Разрешаются относительно корня проекта, который сообщает Vite. |
+
+## Примеры
+
+### По умолчанию — добавить в vite.config
+
+```ts
+import { defineConfig } from 'vite';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [triggery()],
+});
+```
+
+Затем в точке входа приложения:
+
+```ts
+// src/main.tsx
+import 'virtual:triggery-registry';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);
+```
+
+### Кастомный glob
+
+```ts
+import { defineConfig } from 'vite';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [
+    triggery({
+      glob: 'src/features/**/*.trigger.ts',
+    }),
+  ],
+});
+```
+
+### Несколько globs
+
+```ts
+import { defineConfig } from 'vite';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [
+    triggery({
+      glob: ['src/**/*.trigger.ts', 'packages/*/src/**/*.trigger.ts'],
+    }),
+  ],
+});
+```
+
+### Типизация виртуального модуля
+
+Добавь в глобальный `.d.ts`, чтобы TypeScript перестал жаловаться на bare-string импорт:
+
+```ts
+declare module 'virtual:triggery-registry' {
+  export {};
+}
+```
+
+## Замечания
+
+<Aside type="tip">
+Виртуальный модуль сортируется по пути файла в алфавитном порядке — порядок регистрации детерминирован между сборками и машинами. Last-mount-wins в рантайме — это tiebreaker, если у двух триггеров совпадает id (стоит починить, но не упадёт).
+</Aside>
+
+<Aside type="caution" title="Side-effect-импорты">
+Каждый матч glob'а импортируется ради **side-эффектов**, не ради экспортов. Убедись, что каждый файл `*.trigger.ts` зовёт `createTrigger(...)` на уровне модуля — ленивая инициализация внутри функции не будет подхвачена.
+</Aside>
+
+<Aside type="caution" title="Порядок pre-bundle">
+Плагин ставит `enforce: 'pre'`, чтобы виртуальный модуль резолвился до пользовательских импортов. Если ты стакаешь плагины, которые тоже используют `enforce: 'pre'`, порядок определяется тем, во что превратит зависимостный граф Vite — обычно совпадает с порядком в массиве `plugins:`.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="Конструктор, который зовёт каждый файл `*.trigger.ts`." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="createRuntime" description="Триггеры по умолчанию регистрируются против дефолтного рантайма." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="Руководство по структуре проекта Vite" description="Конвенции организации файлов триггеров." href="/ru/guide/getting-started/" />
+  <LinkCard title="CLI: scaffold trigger" description="Сгенерировать новый `*.trigger.ts` из терминала." href="/ru/api/cli/create/" />
+</CardGrid>

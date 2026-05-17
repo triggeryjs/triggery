@@ -1,0 +1,159 @@
+---
+title: "TriggerScope"
+description: "Скоупит регистрации условий и действий на поддерево. Легче, чем TriggerRuntimeProvider."
+sidebar:
+  order: 9
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Передаёт id скоупа потомкам. Вызовы `useCondition` и `useAction` внутри этого поддерева регистрируются со скоупом, и только триггеры, объявленные с таким же `scope` в `createTrigger(...)`, их увидят. Рантайм, инспектор, планировщик и middleware остаются общими — `TriggerScope` это более лёгкое внутрирантаймовое разделение по сравнению с `<TriggerRuntimeProvider>`.
+
+Используй его, когда один рантайм — это правильно, но нужно, чтобы две половины дерева регистрировали независимых провайдеров для одного и того же условия или действия.
+
+## Импорт
+
+```ts
+import { TriggerScope } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function TriggerScope(props: TriggerScopeProps): JSX.Element;
+
+type TriggerScopeProps = {
+  readonly id: string;
+  readonly children: ReactNode;
+};
+```
+
+## Пропсы
+
+| Проп | Тип | Обязательный | Описание |
+|---|---|---|---|
+| `id` | `string` | да | Id скоупа. Должен совпадать с полем `scope` триггера, чтобы связаться. |
+| `children` | `ReactNode` | да | Поддерево, в котором регистрации помечаются `id`. |
+
+## Примеры
+
+### Два инстанса чата на одной странице
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { TriggerScope, useAction, useCondition, useEvent } from '@triggery/react';
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { author: string; text: string } };
+  conditions: { activeChannelId: string };
+  actions: { showToast: { title: string } };
+}>({
+  id: 'chat:new-message',
+  scope: 'chat',
+  events: ['new-message'],
+  required: ['activeChannelId'],
+  handler({ event, conditions, actions }) {
+    if (event.payload.author === conditions.activeChannelId) return;
+    actions.showToast?.({ title: event.payload.author });
+  },
+});
+
+function ChatA() {
+  useCondition(messageTrigger, 'activeChannelId', () => 'a', []);
+  useAction(messageTrigger, 'showToast', t => console.log('toast A', t.title));
+  return null;
+}
+function ChatB() {
+  useCondition(messageTrigger, 'activeChannelId', () => 'b', []);
+  useAction(messageTrigger, 'showToast', t => console.log('toast B', t.title));
+  return null;
+}
+
+function Page() {
+  return (
+    <>
+      <TriggerScope id="chat">
+        <ChatA />
+      </TriggerScope>
+      <TriggerScope id="chat">
+        {/* Second scope — registrations from ChatB would override ChatA's
+            but they're in a different boundary. Use distinct ids if you want
+            truly independent buckets. */}
+        <ChatB />
+      </TriggerScope>
+    </>
+  );
+}
+```
+
+### Независимые скоупы для двух инстансов триггеров
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { TriggerScope, useCondition } from '@triggery/react';
+
+const triggerLeft = createTrigger<{
+  events: { ping: void };
+  conditions: { value: number };
+}>({ id: 'left', scope: 'left', events: ['ping'], required: ['value'], handler() {} });
+
+const triggerRight = createTrigger<{
+  events: { ping: void };
+  conditions: { value: number };
+}>({ id: 'right', scope: 'right', events: ['ping'], required: ['value'], handler() {} });
+
+function Layout() {
+  return (
+    <>
+      <TriggerScope id="left">
+        <Provider t={triggerLeft} v={1} />
+      </TriggerScope>
+      <TriggerScope id="right">
+        <Provider t={triggerRight} v={2} />
+      </TriggerScope>
+    </>
+  );
+}
+
+function Provider({ t, v }: { t: ReturnType<typeof createTrigger>; v: number }) {
+  useCondition(t, 'value', () => v, [v]);
+  return null;
+}
+```
+
+### Вложенные скоупы
+
+Внутренний `id` побеждает для всего, что внутри него:
+
+```tsx
+import { TriggerScope } from '@triggery/react';
+
+<TriggerScope id="outer">
+  {/* registrations here tagged "outer" */}
+  <TriggerScope id="inner">
+    {/* registrations here tagged "inner" */}
+  </TriggerScope>
+</TriggerScope>
+```
+
+## Замечания
+
+<Aside type="caution" title="Скоуп должен совпадать точно">
+Триггер, созданный со `scope: 'chat'`, видит только регистрации, сделанные внутри `<TriggerScope id="chat">`. Глобальный триггер (без `scope`) видит только регистрации, сделанные **вне** любого `TriggerScope`. Несовпадения — это тихие no-op в рантайме, но единожды логируется DEV-предупреждение, чтобы ты заметил.
+</Aside>
+
+<Aside type="tip">
+Для полной изоляции — отдельный инспектор, планировщик, middleware — используй [`<TriggerRuntimeProvider>`](/ru/api/react/trigger-runtime-provider/). `TriggerScope` для более лёгкого случая: один рантайм, но два независимых бакета регистраций на имя условия/действия.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="TriggerRuntimeProvider" description="Тяжёлая изоляция — отдельный рантайм на поддерево." href="/ru/api/react/trigger-runtime-provider/" />
+  <LinkCard title="createTrigger" description="Где ты объявляешь поле `scope`." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="useCondition" description="Регистрации внутри скоупа наследуют его id." href="/ru/api/react/use-condition/" />
+  <LinkCard title="Руководство по скоупам" description="Паттерны для multi-instance UI." href="/ru/guide/architecture/scopes/" />
+</CardGrid>

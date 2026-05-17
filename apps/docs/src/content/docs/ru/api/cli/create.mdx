@@ -1,0 +1,152 @@
+---
+title: "triggery create"
+description: "Заскаффолдить новый Triggery-проект из стартового шаблона. На базе giget."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Скачивает стартовый шаблон Triggery в новую директорию. Шаблоны живут в `templates/<name>` репозитория Triggery, поэтому версии остаются в шаге с `@triggery/core`. Сама загрузка идёт через [giget](https://github.com/unjs/giget) — `degit`-подобный tar-фетчер поверх endpoint'а GitHub archive, с офлайновым кэшем после первого прогона. Никаких `git clone`, никакого shell-out из Node.
+
+Доступно как CLI-команда `triggery create` и как программный API `createProject`.
+
+## Импорт (программный API)
+
+```ts
+import { createProject, isKnownTemplate, type TemplateName } from '@triggery/cli';
+```
+
+## Сигнатура
+
+```ts
+function createProject(options: CreateProjectOptions): Promise<CreateProjectResult>;
+
+type TemplateName = 'vite-react' | 'next-app' | 'react-native';
+
+interface CreateProjectOptions {
+  readonly directory: string;
+  readonly template: TemplateName;
+  readonly cwd?: string;
+  readonly force?: boolean;
+}
+
+interface CreateProjectResult {
+  readonly directory: string; // absolute path
+  readonly source: string;    // giget source spec
+}
+```
+
+## Использование в CLI
+
+```
+triggery create <directory> [--template <name>] [--force]
+```
+
+| Флаг | По умолчанию | Описание |
+|---|---|---|
+| `--template <name>` | `vite-react` | Один из `vite-react`, `next-app`, `react-native`. |
+| `--force` | `false` | Перезаписать существующую директорию вместо ошибки. |
+
+## Шаблоны
+
+| Шаблон | Стек |
+|---|---|
+| `vite-react` | Vite 5 + React 18 + TypeScript + `@triggery/react` + `@triggery/vite`. По умолчанию — самый быстрый путь к рабочему dev-серверу. |
+| `next-app` | Next.js 15 (App Router) + `@triggery/react`. Triggery подвязан в `<TriggerRuntimeProvider>` внутри `app/providers.tsx`. |
+| `react-native` | Expo + React Native + `@triggery/react`. Реестр триггеров импортируется из `App.tsx`. |
+
+## Примеры
+
+### CLI — шаблон по умолчанию
+
+```
+triggery create my-chat
+```
+
+Вывод:
+
+```
+Scaffolded github:triggeryjs/triggery/templates/vite-react#main → /Users/you/my-chat
+```
+
+### CLI — Next.js стартер
+
+```
+triggery create my-shop --template next-app
+```
+
+### CLI — перезаписать существующую директорию
+
+```
+triggery create my-chat --force
+```
+
+### Программно
+
+```ts
+import { createProject } from '@triggery/cli';
+
+const { directory, source } = await createProject({
+  directory: './apps/playground',
+  template: 'vite-react',
+});
+
+console.log('scaffolded', source, '→', directory);
+```
+
+### Программно — guard шаблонов
+
+`isKnownTemplate` — это type-предикат, который CLI использует, чтобы отбраковать неизвестные значения:
+
+```ts
+import { createProject, isKnownTemplate, type TemplateName } from '@triggery/cli';
+
+function safeTemplate(input: string): TemplateName {
+  if (!isKnownTemplate(input)) {
+    throw new Error(`Unknown template: ${input}`);
+  }
+  return input;
+}
+
+await createProject({
+  directory: 'experiment',
+  template: safeTemplate(process.env.TRIGGERY_TEMPLATE ?? 'vite-react'),
+});
+```
+
+## Что внутри шаблонов
+
+Каждый шаблон поставляет:
+
+- Рабочую команду dev-сервера / сборки (`npm run dev` / `npm run build`).
+- Папку `src/triggers/` с одним примером триггера и парным к нему компонентом.
+- Релевантные пакеты `@triggery/*`, уже зафиксированные в `package.json`.
+- `@triggery/vite`, настроенный в `vite.config.ts` (шаблоны Vite / Next), чтобы автообнаружение `*.trigger.ts` работало из коробки.
+- `tsconfig.json` со strict-режимом и разрешёнными путями `@triggery/*`.
+
+## Замечания
+
+<Aside type="tip">
+`createProject` — async: на первом прогоне shell-out в сетевой fetch giget'а, потом кэширует tarball локально. Последующие прогоны на тот же `(template, branch)` мгновенны.
+</Aside>
+
+<Aside type="caution" title="Перезаписи деструктивны">
+`--force` прокидывается в giget, который удаляет существующую директорию перед распаковкой. Не наводи его на проект, который тебе дорог.
+</Aside>
+
+<Aside>
+Сам CLI — тонкая обёртка. Если нужен пининг по веткам / коммитам, своя forge-хостинг или кастомный реестр, зови `downloadTemplate` из giget напрямую — Triggery ничего специфичного сверху не добавляет.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="Плагин Vite" description="Автообнаружение — в комплекте шаблона vite-react." href="/ru/api/vite/plugin/" />
+  <LinkCard title="createTrigger" description="Точка старта для каждого файла триггера в шаблонах." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="Руководство по getting started" description="Ручная настройка проекта, если хочешь пропустить scaffold." href="/ru/guide/getting-started/" />
+  <LinkCard title="ESLint-пресет recommended" description="Добавь для trigger-aware линтинга." href="/ru/api/eslint-plugin/recommended/" />
+</CardGrid>

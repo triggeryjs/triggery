@@ -1,0 +1,219 @@
+---
+title: Auto-discovery
+description: "Use @triggery/vite to register every *.trigger.ts file via one virtual import. HMR semantics, monorepo layout, and the no-plugin fallback."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+A trigger only matters once `createTrigger(...)` has run — that's the call that registers it with the runtime. The convention in Triggery is one trigger per file, suffixed `.trigger.ts`. As soon as you have more than a couple of them, you stop wanting to maintain an `import './triggers/foo.trigger'` ladder by hand. `@triggery/vite` makes that import list disappear.
+
+## What the plugin does
+
+`@triggery/vite` adds one virtual module to your Vite build: `virtual:triggery-registry`. At build / dev-server time the plugin globs every `*.trigger.{ts,tsx,js,jsx}` matching your configured pattern and generates a module that bare-imports each one:
+
+```ts title="virtual:triggery-registry (generated)"
+import "/abs/path/src/features/chat/chat.trigger.ts";
+import "/abs/path/src/features/notifications/notifications.trigger.ts";
+import "/abs/path/src/triggers/analytics.trigger.ts";
+export {};
+```
+
+You import the virtual module **once** at the entry point of your app. That side-effect import runs every trigger file's top-level `createTrigger(...)`, which registers the trigger with the default runtime.
+
+## Install
+
+<PackageManagers pkg="@triggery/vite" dev />
+
+Then wire it into `vite.config.ts`:
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [
+    react(),
+    triggery({ glob: 'src/**/*.trigger.ts' }),
+  ],
+});
+```
+
+And import the virtual module exactly once, as early as possible:
+
+```ts title="src/main.tsx"
+import 'virtual:triggery-registry';
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+That's it. Every `*.trigger.ts` file is now live the moment your app boots — no more per-feature import list.
+
+<Aside type="tip">
+The import line is a side-effect import; the file has no exports to bind. Don't be tempted to delete it because "nothing uses it" — your linter may suggest that. Configure ESLint to allow `virtual:triggery-registry` as a side-effect import, or add an inline disable comment.
+</Aside>
+
+## TypeScript: ambient declaration for the virtual module
+
+Add this once so TypeScript stops complaining about the import:
+
+```ts title="src/triggery-virtual.d.ts"
+declare module 'virtual:triggery-registry';
+```
+
+A more complete declaration is unnecessary — the module exports nothing.
+
+## Plugin options
+
+The plugin takes a small options object. Today it has one field; more arrive in V1.1 as the table below indicates.
+
+```ts
+triggery({
+  glob: 'src/**/*.trigger.ts',  // or an array of globs
+});
+```
+
+| Option   | Default                                | Description |
+|----------|----------------------------------------|-------------|
+| `glob`   | `'src/**/*.trigger.{ts,tsx,js,jsx}'`   | One pattern or an array. Anything [`tinyglobby`](https://github.com/SuperchupuDev/tinyglobby) accepts. Patterns are resolved relative to the Vite project root. |
+
+<Aside type="caution" title="Planned for V1.1">
+Two more options ship in V1.1: `runtime` (point auto-discovery at a non-default runtime, e.g. for multi-tenant apps) and `hmr: false` (skip the HMR invalidator if you wire your own). They are listed in the [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md). The V1 plugin works with the default runtime and always handles HMR.
+</Aside>
+
+### Multiple globs
+
+A monorepo often wants to discover triggers across packages, not just `src/`:
+
+```ts
+triggery({
+  glob: [
+    'src/**/*.trigger.ts',
+    'packages/*/src/**/*.trigger.ts',
+    '!**/node_modules/**',
+  ],
+});
+```
+
+Patterns are matched in order; negation patterns (`!**/...`) exclude. The plugin sorts the final file list deterministically so the generated module is stable across machines — friendly to long-term Vite caches.
+
+## HMR — what happens when a trigger file changes
+
+The plugin distinguishes between two kinds of edit:
+
+| Edit | What happens |
+|------|--------------|
+| You edit an existing `*.trigger.ts` file | Vite re-runs the file. Its `createTrigger(...)` call runs again with the same `id`. The runtime treats this as **last-mount-wins**: it replaces the previous registration, aborts any in-flight handler run via `signal.aborted = true`, and indexes the new trigger. |
+| You add, rename or delete a `*.trigger.ts` file | The plugin invalidates `virtual:triggery-registry` so its import list rebuilds, then Vite re-runs the virtual module. The new file's top-level `createTrigger(...)` runs; deleted files unregister automatically when the old module's HMR cleanup runs. |
+
+The result: edit a handler, the page doesn't reload, the next event uses the new code, **and the inspector keeps its history** — snapshots are stored on the runtime, not on the trigger object. You can watch a bug in flight, edit the handler, fire again, and compare the two runs in the same panel.
+
+<Aside type="tip">
+If you're using a non-default runtime *and* the V1 plugin, the auto-discovered triggers register on whatever `getDefaultRuntime()` returns the first time `createTrigger` is called. The V1.1 `runtime: customRuntime` option will let you point auto-discovery elsewhere. For now: don't mix custom runtimes with auto-discovery in V1.
+</Aside>
+
+## Without the plugin: `import.meta.glob`
+
+If you're not on Vite, or you want a no-plugin escape, Vite ships an equivalent feature out of the box. `import.meta.glob(pattern, { eager: true })` evaluates every match at boot time:
+
+```ts title="src/main.tsx"
+// Importing for side effects only. Each module's createTrigger() call registers it.
+import.meta.glob('./triggers/**/*.trigger.ts', { eager: true });
+
+import { createRuntime } from '@triggery/core';
+// …
+```
+
+This is exactly what the plugin does, with two differences:
+
+- You have to repeat the glob in every entry file that needs the registrations.
+- HMR works as Vite's normal module-graph HMR (no virtual module to invalidate). For a single entry point this is fine; for a monorepo it gets verbose.
+
+For non-Vite tools, the equivalent at build time is:
+
+- **Webpack** — `require.context('./triggers', true, /\.trigger\.ts$/)`.
+- **Rspack** — same as Webpack.
+- **esbuild / tsup standalone** — generate the import list with a small build script. We ship one as `@triggery/cli generate-registry` (see the [`@triggery/cli`](/packages/cli/) page).
+
+## Why this matters for monorepos and lazy routes
+
+Two specific shapes benefit the most.
+
+### Monorepos
+
+In a workspace with `packages/chat`, `packages/billing`, `packages/notifications`, each package owns triggers about its own scenarios. Auto-discovery means a consuming app *imports the registry once* and gets all three packages' triggers wired without knowing the file layout. New trigger in `packages/chat`? It shows up at boot, no consumer-side change needed.
+
+Combine with a glob that walks workspace packages:
+
+```ts title="apps/web/vite.config.ts"
+triggery({
+  glob: [
+    'src/**/*.trigger.ts',
+    '../../packages/*/src/**/*.trigger.ts',
+  ],
+});
+```
+
+### Lazy routes
+
+A common reflex is to lazy-load triggers next to the route they belong to: "Show this toast only when the `/chat` route is loaded." Don't.
+
+Triggers are passive — registering one costs nothing until an event fires. The whole registry is a few kilobytes of metadata after tree-shaking. **Register all of them up-front**, then let `required` and `scope` decide which ones run at any moment. This is what auto-discovery is designed for; lazy-loaded triggers are an anti-pattern that re-introduces the "who owns this rule" question we're trying to remove.
+
+The exception: very large chunks of code inside the handler itself (e.g. a PDF generator). In that case, leave the trigger registered eagerly and `await import('./pdf-generator')` *inside* the handler.
+
+## Verifying the wiring
+
+A four-line sanity check at the entry point catches the most common foot-gun ("I imported the virtual module too late, the triggers register after their producers"):
+
+```ts title="src/main.tsx"
+import 'virtual:triggery-registry'; // ← line 1, before anything else
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime();
+if (import.meta.env.DEV) {
+  console.log('[triggery] discovered triggers:', runtime.graph().triggers.map((t) => t.id));
+}
+```
+
+`runtime.graph()` returns a JSON-friendly snapshot of the registry (id, scope, events, required, schedule, concurrency, enabled). Empty list? Either no `*.trigger.ts` files were matched, or the import order is wrong.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Inspector"
+    description="Inspect what auto-discovered triggers are actually doing at runtime."
+    href="/guide/advanced/inspector/"
+  />
+  <LinkCard
+    title="Inline triggers"
+    description="The escape hatch when a *.trigger.ts file is overkill — keep the rule next to the component."
+    href="/guide/advanced/inline-triggers/"
+  />
+  <LinkCard
+    title="@triggery/vite"
+    description="API reference for the plugin and its planned V1.1 options."
+    href="/packages/vite/"
+  />
+  <LinkCard
+    title="Scopes"
+    description="Per-feature isolation that pairs naturally with auto-discovered triggers."
+    href="/guide/architecture/scopes/"
+  />
+</CardGrid>

@@ -1,0 +1,144 @@
+---
+title: "@triggery/testing"
+description: "Testing utilities for Triggery — isolated runtime, fake scheduler, mock conditions and actions. Works with Vitest, Jest, and node:test."
+sidebar:
+  order: 5
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Testing utilities for [Triggery](https://github.com/triggeryjs/triggery). **Zero runtime dependencies, framework-agnostic** — works the same in React, Solid, Vue tests, Node, or a worker; compatible with Vitest, Jest, and `node:test`.
+
+The same trigger code you ship runs in tests without React, JSDOM, or a host framework. You test scenarios, not components.
+
+[![npm](https://img.shields.io/npm/v/@triggery/testing?style=flat-square)](https://www.npmjs.com/package/@triggery/testing)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/testing?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/testing)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/testing" dev />
+
+Peer deps: `@triggery/core`. Test-runner agnostic — no dependency on `vi.useFakeTimers()` / `jest.useFakeTimers()`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `createTestRuntime({ triggers? })` | Isolated runtime per test. No global state pollution. |
+| `mockCondition(trigger, name, value \| getter)` | Supply a condition without rendering a component. |
+| `mockAction(trigger, name, fn)` | Register an action handler — typically `vi.fn()` / `jest.fn()`. |
+| `flushMicrotasks()` | Drain the default microtask scheduler before asserting. |
+| `createFakeScheduler()` | Controllable virtual clock for `actions.debounce` / `throttle` / `defer`. |
+
+`createFakeScheduler()` exposes:
+
+- `install()` / `uninstall()` swap `globalThis.setTimeout` / `clearTimeout` for a controlled implementation.
+- `advance(ms)` runs every timer due within the window and drains microtasks.
+- `flushAll()` runs every pending timer regardless of scheduled time.
+
+## Quick example
+
+A trigger that gates on a `user.isMod` condition and fires two actions:
+
+```ts title="message.test.ts"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, test, vi } from 'vitest';
+
+test('mod with notifications shows toast and plays sound', () => {
+  const rt = createTestRuntime();
+
+  const t = createTrigger<{
+    events:     { 'new-message': string };
+    conditions: { user: { isMod: boolean } };
+    actions:    { showToast: string; playSound: 'beep' | 'mod-alert' };
+  }>(
+    {
+      id: 'msg',
+      events: ['new-message'],
+      required: ['user'],
+      handler: ({ event, conditions, actions, check }) => {
+        if (!check.is('user', (u) => u.isMod)) return;
+        actions.showToast?.(event.payload);
+        actions.playSound?.('mod-alert');
+      },
+    },
+    rt,
+  );
+
+  rt.mockCondition(t, 'user', { isMod: true });
+  const showToast = vi.fn();
+  const playSound = vi.fn();
+  rt.mockAction(t, 'showToast', showToast);
+  rt.mockAction(t, 'playSound', playSound);
+
+  rt.fireSync('new-message', 'hi');
+
+  expect(showToast).toHaveBeenCalledWith('hi');
+  expect(playSound).toHaveBeenCalledWith('mod-alert');
+});
+```
+
+No DOM, no provider, no `act()`. The trigger is exercised directly.
+
+## Fake scheduler — testing debounce
+
+```ts
+import { createTestRuntime, createFakeScheduler } from '@triggery/testing';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+
+let clock: ReturnType<typeof createFakeScheduler>;
+beforeEach(() => { clock = createFakeScheduler(); clock.install(); });
+afterEach(()  => { clock.uninstall(); });
+
+test('actions.debounce(200) collapses bursts', () => {
+  const rt = createTestRuntime();
+  const search = vi.fn();
+  rt.mockAction(searchTrigger, 'search', search);
+
+  rt.fireSync('input', 'a');
+  rt.fireSync('input', 'ab');
+  rt.fireSync('input', 'abc');
+
+  clock.advance(199);
+  expect(search).not.toHaveBeenCalled();
+
+  clock.advance(1);            // total = 200 ms
+  expect(search).toHaveBeenCalledTimes(1);
+  expect(search).toHaveBeenCalledWith('abc');
+});
+```
+
+## Async handlers — `take-latest`
+
+```ts
+test('take-latest cancels stale runs', async () => {
+  const rt = createTestRuntime();
+  rt.fire('search', 'a');      // gets cancelled
+  rt.fire('search', 'ab');     // gets cancelled
+  await rt.fire('search', 'abc'); // wins
+
+  expect(rt.inspect()?.outcome).toBe('completed');
+});
+```
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Same runtime, just instantiated via createTestRuntime." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="Component-level testing with the React testing library on top." href="/packages/react/" />
+  <LinkCard title="@triggery/solid" description="Solid testing via @solidjs/testing-library." href="/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Vue testing via @vue/test-utils." href="/packages/vue/" />
+  <LinkCard title="@triggery/eslint-plugin" description="Static checks that catch issues tests can miss." href="/packages/eslint-plugin/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/testing)
+- [npm](https://www.npmjs.com/package/@triggery/testing)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/testing/CHANGELOG.md)

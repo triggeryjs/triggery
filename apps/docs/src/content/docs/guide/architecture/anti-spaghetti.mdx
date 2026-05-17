@@ -1,0 +1,350 @@
+---
+title: Anti-spaghetti
+description: "When a trigger is the right tool, when it isn't, and how to keep handler files readable as specs."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery is good at orchestration. It is *not* good at "any side effect, anywhere". The same `createTrigger` that crisply expresses **"new message + notifications on + not the active channel ⇒ toast + bleep + badge"** turns into noise when you use it for **"increment a counter when the button is clicked"**. This page is the boundary.
+
+## The litmus test
+
+Before you reach for `createTrigger`, ask three questions in order.
+
+1. Does the side effect cross **feature boundaries** — does some other team's component own the inputs or outputs?
+2. Is it scenario-shaped — would a non-engineer recognise it as *one rule*, in product-speak?
+3. If you wrote it with hooks instead, would it spread across **three or more** `useEffect`s in **three or more** components?
+
+If you answered *yes* to all three: it is a trigger.
+If you answered *no* to any: stay with `useState` + `useEffect` (or your store's equivalent). You will spend less time, the trigger registry will stay legible, and your `*.trigger.ts` files will still read like specifications when you do open one.
+
+<Aside type="tip">
+The cheapest rule of thumb in code review: *can the diff of this `.trigger.ts` file alone explain the behaviour change you shipped?* If yes, the trigger pulls its weight. If the diff is one line and the real change is in three components, the trigger was a costume.
+</Aside>
+
+## What "scenario-shaped" actually means
+
+A scenario has at least one of each of these shapes:
+
+- **Multiple inputs from unrelated places.** Settings live in one feature, the active channel in another, the current user in a third. The rule needs all of them.
+- **Multiple outputs in unrelated places.** A toast in the layout root, a bleep in the audio system, a number in the sidebar.
+- **A reason for skipping.** "Unless the user is already looking at the channel." Scenarios collect *reasons*, not just *steps*.
+
+A counter is none of those things. It is one input (the click), one output (the count), zero conditions for skipping. A `useState` is exactly the right size.
+
+## Trigger vs. useEffect: a worked comparison
+
+```tsx title="In-feature: keep it as useEffect"
+function Counter() {
+  const [n, setN] = useState(0);
+
+  // One input, one output, in this component. Triggery would only add
+  // ceremony — a file, an id, a registry entry, a runtime hop.
+  useEffect(() => {
+    document.title = `${n} unread`;
+  }, [n]);
+
+  return <button type="button" onClick={() => setN(x => x + 1)}>+1</button>;
+}
+```
+
+```ts title="Cross-feature: trigger pays off"
+// src/triggers/notification.trigger.ts
+export const notificationTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null; currentUserId: string };
+  actions:    { showToast: ToastPayload; playSound: 'beep'; incrementBadge: string };
+}>({
+  id: 'notification-on-message',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (event.payload.authorId === conditions.currentUserId) return;
+
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+    if (check.is('settings', s => s.sound && !s.dnd)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+    actions.incrementBadge?.(event.payload.channelId);
+  },
+});
+```
+
+The first one has no business being a trigger. The second has no business being three `useEffect`s.
+
+## DEV warn heuristics
+
+Triggery's defaults assume scenarios stay legible. Two ESLint rules from [`@triggery/eslint-plugin`](/packages/eslint-plugin/) catch the most common ways a `*.trigger.ts` slowly turns into a script.
+
+### `max-handler-size`
+
+```js title="eslint.config.js"
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  {
+    plugins: { '@triggery': triggery },
+    rules: {
+      // recommended: warn at 50 top-level statements
+      '@triggery/max-handler-size': ['warn', { max: 50 }],
+      // strict preset goes to 30
+    },
+  },
+];
+```
+
+Counts **top-level statements** in the handler body (control-flow blocks are one statement each). If your handler is 50+ statements you are either expressing two scenarios in one trigger or doing computation that belongs in a regular function and should be imported.
+
+### `max-ports-per-trigger`
+
+```js
+'@triggery/max-ports-per-trigger': ['warn', {
+  maxEvents: 8,
+  maxConditions: 8,
+  maxTotal: 12,
+}],
+```
+
+Caps the port count. A trigger that reacts to 12 different events is no longer a scenario — it is an event broker, and your team will start hesitating to touch the file. Split it.
+
+### `prefer-named-hook`
+
+```js
+'@triggery/prefer-named-hook': ['warn', { threshold: 4 }],
+```
+
+Once a file makes four or more port calls, the named-hook ergonomics (`useNewMessageEvent` instead of `useEvent(trigger, 'new-message')`) start to dominate. The rule nudges you towards them — see [Named hooks](/guide/advanced/named-hooks/) for the mechanics.
+
+## Splitting a fat trigger
+
+When `max-handler-size` or `max-ports-per-trigger` start firing, the cure is rarely "raise the limit". It is "this is two scenarios, give them two ids".
+
+### The shape that splits
+
+```ts title="Before — one trigger, two scenarios"
+export const messageTrigger = createTrigger<{
+  events: { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null; analyticsConsent: boolean };
+  actions: {
+    showToast:      ToastPayload;
+    playSound:      'beep';
+    incrementBadge: string;
+    trackImpression: AnalyticsEvent;
+    trackDelivery:   AnalyticsEvent;
+  };
+}>({
+  id: 'message-arrived',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    // ── Notification scenario ───────────────────────────────────────
+    if (event.payload.channelId !== conditions.activeChannelId) {
+      if (check.is('settings', s => s.notifications)) {
+        actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+      }
+      if (check.is('settings', s => s.sound && !s.dnd)) {
+        actions.debounce(800).playSound?.('beep');
+      }
+      actions.incrementBadge?.(event.payload.channelId);
+    }
+    // ── Analytics scenario ──────────────────────────────────────────
+    if (check.is('analyticsConsent', granted => granted)) {
+      actions.trackDelivery?.({ name: 'message:delivered', channelId: event.payload.channelId });
+      if (event.payload.channelId !== conditions.activeChannelId) {
+        actions.trackImpression?.({ name: 'message:notified', channelId: event.payload.channelId });
+      }
+    }
+  },
+});
+```
+
+```ts title="After — two triggers, one event"
+// src/triggers/notification.trigger.ts
+export const notificationTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions:    { showToast: ToastPayload; playSound: 'beep'; incrementBadge: string };
+}>({
+  id: 'notification-on-message',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+    if (check.is('settings', s => s.sound && !s.dnd)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+    actions.incrementBadge?.(event.payload.channelId);
+  },
+});
+
+// src/triggers/message-analytics.trigger.ts
+export const messageAnalyticsTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { activeChannelId: string | null; analyticsConsent: boolean };
+  actions:    { trackImpression: AnalyticsEvent; trackDelivery: AnalyticsEvent };
+}>({
+  id: 'analytics-on-message',
+  events: ['new-message'],
+  required: ['analyticsConsent'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.analyticsConsent) return;
+    actions.trackDelivery?.({ name: 'message:delivered', channelId: event.payload.channelId });
+    if (event.payload.channelId !== conditions.activeChannelId) {
+      actions.trackImpression?.({ name: 'message:notified', channelId: event.payload.channelId });
+    }
+  },
+});
+```
+
+Both triggers react to the same event. Neither knows about the other. The notification scenario can be paused with a feature flag without touching analytics. Analytics can be replaced wholesale (Segment to PostHog) without re-reading the notification rule.
+
+<Aside type="tip" title="Codemod">
+`@triggery/codemod`'s `extract-trigger` recipe takes a handler section delimited by a block comment and lifts it into a sibling `.trigger.ts` file with the right schema slice, the right `required` array, and the right component-side updates. See [Codemods](/packages/codemod/) for the invocation.
+</Aside>
+
+## Anti-patterns and the right fix
+
+### Anti-pattern: "trigger does everything in one feature"
+
+```ts title="Symptom"
+// counter.trigger.ts
+export const counterTrigger = createTrigger<{
+  events:     { 'increment': void };
+  conditions: { count: number };
+  actions:    { setCount: number };
+}>({
+  id: 'counter',
+  events: ['increment'],
+  required: ['count'],
+  handler({ conditions, actions }) {
+    actions.setCount?.((conditions.count ?? 0) + 1);
+  },
+});
+```
+
+This is a `useState` wearing eight pieces of jewellery. The feature owns its input and its output; nothing else cares. Fix:
+
+```tsx title="Fix"
+function Counter() {
+  const [n, setN] = useState(0);
+  return <button onClick={() => setN(x => x + 1)}>+1 ({n})</button>;
+}
+```
+
+Triggers are not state. Don't make them play state on a feature that has no co-actors.
+
+### Anti-pattern: "three triggers fire in sequence to do one thing"
+
+```ts title="Symptom"
+// validate.trigger.ts        — fires 'form:validated'
+// save.trigger.ts            — listens to 'form:validated', fires 'form:saved'
+// toast.trigger.ts           — listens to 'form:saved', shows toast
+```
+
+You wrote a pipeline. Triggery can carry it via cascades (see [Cascades](/guide/architecture/cascade/)), but a three-step chain is just a function in disguise — and the file-level cohesion is gone. Fix: consolidate into one trigger and call the steps inline.
+
+```ts title="Fix"
+export const formSubmitTrigger = createTrigger<{
+  events:     { 'form:submit': FormPayload };
+  conditions: { user: User };
+  actions:    { showToast: ToastPayload; persist: FormPayload };
+}>({
+  id: 'form-submit',
+  events: ['form:submit'],
+  required: ['user'],
+  async handler({ event, conditions, actions, signal }) {
+    const errors = validate(event.payload);
+    if (errors.length > 0) {
+      actions.showToast?.({ title: 'Check the form', body: errors[0]! });
+      return;
+    }
+    actions.persist?.(event.payload);
+    actions.showToast?.({ title: 'Saved', body: `as ${conditions.user.name}` });
+  },
+});
+```
+
+Reserve cascades for *fan-out across features*, not for "step A then step B".
+
+### Anti-pattern: "trigger reads from another trigger's output via a global store"
+
+```ts title="Symptom"
+// trigger-a — fires 'something' and writes `lastSomethingAt` to Zustand
+// trigger-b — reads `lastSomethingAt` as a condition and does work
+```
+
+You are shipping a covert channel. Trigger B no longer reacts to anything legible; it reacts to a store mutation that Trigger A happened to make on the side, and the wiring lives in neither file. Fix: make the cascade explicit.
+
+```ts title="Fix — trigger A emits a cascade event"
+export const somethingTrigger = createTrigger<{
+  events:  { 'request:something': RequestPayload };
+  actions: { acknowledge: void };
+}>({
+  id: 'request-something',
+  events: ['request:something'],
+  required: [],
+  handler({ actions }) {
+    // No store side-channel. Just emit the next event explicitly.
+    actions.acknowledge?.();
+    runtime.fire('something-acknowledged');
+  },
+});
+
+// trigger B listens to 'something-acknowledged' as a real event.
+```
+
+Cascades show up in the inspector with a parent runId. Store side-channels don't. The latter make the cross-feature wiring un-traceable; the former make it a one-grep job.
+
+## Where Triggery's responsibility ends
+
+Don't reach for a trigger when:
+
+- **The side effect is local to one component.** A `useEffect` is shorter and clearer.
+- **You need a state machine.** XState models legal transitions; Triggery models scenarios. Use both — handlers can invoke services.
+- **You need a stream pipeline.** RxJS gives you operators over time. Wrap its outputs as conditions.
+- **You need cross-tab / cross-window orchestration.** That is `BroadcastChannel` + (eventually) `@triggery/server` territory.
+- **The "scenario" is one input, one output, no skipping.** No file in the registry is worth zero conditions and zero alternatives.
+
+## Reviewer checklist
+
+When you review a PR that introduces a trigger, this is the diff worth pausing on.
+
+- [ ] The trigger id reads as a **scenario name** (`notification-on-message`), not an event name (`new-message`).
+- [ ] At least one `required` condition or at least one *reason for skipping* in the handler — otherwise the handler runs on every fire.
+- [ ] No `useEvent` call inside a `useAction` body in the same file (the `no-event-cascade` rule will catch it, but eyes are faster).
+- [ ] Handler body is under the project's `max-handler-size`. If it isn't, ask: is this *one* scenario or *two*?
+- [ ] Schema generic is **inline** in the `createTrigger<{...}>` call, not extracted into a remote `type` (extracting it is harmless, but it makes the file harder to skim end-to-end).
+- [ ] Port surface is small enough that you can name every event, condition and action out loud in one breath.
+
+If you reject the PR, the most useful one-line review comment is: *"Which third feature reads or writes this? If the answer is none, keep it in the component."*
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Cascades"
+    description="When one trigger's action fires another event — depth limits, cycle detection, the inspector cascade tree."
+    href="/guide/architecture/cascade/"
+  />
+  <LinkCard
+    title="Scopes"
+    description="Multiple instances of the same trigger logic running side by side without cross-pollination."
+    href="/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Ownership"
+    description="Two providers, one condition — what last-mount-wins means in practice and how to override it in tests."
+    href="/guide/architecture/ownership/"
+  />
+  <LinkCard
+    title="ESLint plugin"
+    description="The full ruleset — no-dynamic-id, no-event-cascade, max-handler-size, max-ports-per-trigger, prefer-named-hook."
+    href="/packages/eslint-plugin/"
+  />
+</CardGrid>

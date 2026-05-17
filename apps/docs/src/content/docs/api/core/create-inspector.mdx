@@ -1,0 +1,118 @@
+---
+title: "createInspector"
+description: "Build a ring-buffer inspector. Exposed for custom runtime composition and devtools experiments."
+sidebar:
+  order: 6
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Constructs the ring-buffer inspector the runtime uses to record snapshots. The runtime calls this for you when you pass `inspectorBufferSize` to [`createRuntime`](/api/core/create-runtime/); you only need `createInspector` directly when building custom runtime infrastructure (e.g. a devtools bridge that wants direct access to `record` / `subscribe`).
+
+The implementation is allocation-free on the hot path: O(1) `record`, fixed slot array, wrap-around index. `getBuffer()` materializes a newest-first array on demand.
+
+## Import
+
+```ts
+import { createInspector } from '@triggery/core';
+```
+
+## Signature
+
+```ts
+function createInspector(bufferSize: number): InspectorImpl;
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `bufferSize` | `number` | Number of snapshots to keep. Clamped to a minimum of 1. |
+
+## Returns
+
+An `InspectorImpl` object:
+
+| Method | Signature | Description |
+|---|---|---|
+| `record(snapshot)` | `(s: TriggerInspectSnapshot) => void` | Push a snapshot. Wraps around the buffer. Notifies subscribers. |
+| `getBuffer()` | `() => readonly TriggerInspectSnapshot[]` | Newest-first array of the last N records. |
+| `getLastForTrigger(id)` | `(triggerId: string) => Snapshot \| undefined` | Most recent snapshot per trigger id. |
+| `subscribe(fn)` | `(fn) => () => void` | Listener fired on every `record`. Returns an unsubscribe. |
+| `clear()` | `() => void` | Empty the buffer and the per-trigger map. |
+
+## Examples
+
+### Build a custom devtools bridge
+
+```ts twoslash
+import { createInspector, type TriggerInspectSnapshot } from '@triggery/core';
+
+const inspector = createInspector(200);
+
+inspector.subscribe((snapshot: TriggerInspectSnapshot) => {
+  globalThis.postMessage(
+    { source: 'triggery-bridge', snapshot },
+    '*',
+  );
+});
+
+// Feed it manually — the example assumes you wired up your own dispatch
+// recording. The runtime created via `createRuntime` calls `record` for you.
+inspector.record({
+  triggerId: 'demo',
+  runId: '1',
+  eventName: 'ping',
+  status: 'fired',
+  durationMs: 0.2,
+  executedActions: ['log'],
+  snapshotKeys: [],
+});
+```
+
+### Tap into latest-per-trigger
+
+```ts twoslash
+import { createInspector } from '@triggery/core';
+
+const inspector = createInspector(50);
+const latest = inspector.getLastForTrigger('chat:new-message');
+console.log(latest?.status);
+```
+
+### Subscribe and unsubscribe
+
+```ts twoslash
+import { createInspector } from '@triggery/core';
+
+const inspector = createInspector(50);
+
+const unsubscribe = inspector.subscribe(snapshot => {
+  console.log(snapshot.triggerId, snapshot.status);
+});
+
+// Later, when the panel unmounts:
+unsubscribe();
+```
+
+## Notes
+
+<Aside type="tip">
+The inspector is the single source of truth for `runtime.subscribe`, `runtime.getInspectorBuffer`, `trigger.inspect()`, and the React `useInspect` / `useInspectHistory` hooks. Replacing the standard inspector is rare — usually you want the standard one and a custom `Middleware` that mirrors writes to your own buffer.
+</Aside>
+
+<Aside type="caution">
+The inspector has no awareness of which runtime it belongs to. If you reuse one inspector across multiple runtimes you'll get interleaved snapshots — devtools panels typically want one inspector per runtime.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createRuntime" description="Pass `inspectorBufferSize` to control the standard inspector." href="/api/core/create-runtime/" />
+  <LinkCard title="useInspectHistory" description="React hook over the inspector buffer." href="/api/react/use-inspect-history/" />
+  <LinkCard title="TriggerInspectSnapshot" description="Snapshot shape." href="/api/core/types/trigger-schema/" />
+  <LinkCard title="Inspector guide" description="What the inspector tracks and how to render it." href="/guide/advanced/inspector/" />
+</CardGrid>

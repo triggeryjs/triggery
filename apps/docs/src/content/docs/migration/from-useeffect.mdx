@@ -1,0 +1,131 @@
+---
+title: "From useEffect"
+description: "Mapping common useEffect side-effect patterns to Triggery's event → conditions → actions model."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`useEffect` is React's general-purpose escape hatch — and most apps end up using it for jobs it wasn't designed for: orchestrating side effects across feature boundaries. This page is the field guide for moving those `useEffect`s into Triggery, one shape at a time.
+
+## Mental model mapping
+
+| `useEffect` shape | Triggery counterpart |
+|---|---|
+| Effect body | Handler body |
+| `useEffect(fn, [deps])` re-running on dep change | A `useCondition` getter — pulled lazily, no re-run |
+| `return () => cleanup()` | `signal.addEventListener('abort', …)` for async handlers; sync handlers don't need cleanup |
+| `setTimeout` inside the effect | `actions.debounce(ms).foo(p)` — runtime owns the timer |
+| Subscribing to an external source | `useDomEvent` / `useSocketIoEvent` / `useWebSocketEvent` from adapters |
+| `if (cond) doThing()` inside the effect | `check.is('cond', …)` inside the handler |
+| Calling a Zustand/Redux/Jotai action | `actions.someAction?.(payload)` |
+
+## Pattern 1 — useEffect with cleanup (subscribe / unsubscribe)
+
+```tsx title="Before"
+useEffect(() => {
+  const handler = (msg: Message) => onMessage(msg);
+  socket.on('new-message', handler);
+  return () => socket.off('new-message', handler);
+}, [onMessage]);
+```
+
+```tsx title="After"
+const fireMessage = useEvent(messageTrigger, 'new-message');
+useSocketIoEvent(socket, 'new-message', fireMessage);
+```
+
+The `@triggery/socket` adapter handles `on` / `off` and gives `fireMessage` stable identity. Closure-captured callbacks disappear.
+
+## Pattern 2 — useEffect chasing dependencies
+
+```tsx title="Before"
+useEffect(() => {
+  if (!user || !settings.notifications) return;
+  if (channelId === activeChannelId) return;
+  showToast({ title: msg.author, body: msg.text });
+}, [user, settings, channelId, activeChannelId, msg]);
+```
+
+The dep array balloons; missing one entry is a silent bug. With Triggery the rule lives in a single handler and the *providers* don't re-render anyone:
+
+```ts title="After (handler)"
+handler({ event, conditions, actions, check }) {
+  if (event.payload.channelId === conditions.activeChannelId) return;
+  if (!check.is('settings', s => s.notifications)) return;
+  actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+}
+```
+
+Every value the handler reads comes from a `useCondition` somewhere else — none of those components re-render when the event fires.
+
+## Pattern 3 — useEffect calling a store action
+
+```tsx title="Before"
+const increment = useBadgeStore(s => s.increment);
+useEffect(() => {
+  if (msg && msg.authorId !== currentUserId) increment(msg.channelId);
+}, [msg, currentUserId, increment]);
+```
+
+```ts title="After"
+// trigger handler:
+if (event.payload.authorId !== conditions.currentUserId) {
+  actions.incrementBadge?.(event.payload.channelId);
+}
+
+// reactor (in the badge feature):
+useAction(messageTrigger, 'incrementBadge', channelId => increment(channelId));
+```
+
+The store doesn't leak into the trigger file — the reactor that owns the badge state owns the dispatch.
+
+## Pattern 4 — useEffect listening to a socket
+
+```tsx title="Before — split between Chat.tsx and NotificationLayer.tsx"
+// Chat.tsx
+useEffect(() => {
+  socket.on('new-message', msg => {
+    setMessages(m => [...m, msg]);
+  });
+  return () => socket.off('new-message');
+}, []);
+
+// NotificationLayer.tsx — second listener for the same event
+useEffect(() => {
+  socket.on('new-message', msg => {
+    if (settings.notifications) toast(msg.author);
+  });
+  return () => socket.off('new-message');
+}, [settings]);
+```
+
+Two listeners, two cleanups, two dep arrays, one event. Replace with one `fireMessage` and many `useAction` reactors — see [the notification pipeline recipe](/recipes/react/notification-pipeline/) for the full version.
+
+## Codemod
+
+`@triggery/codemod` ships [`extract-trigger`](/packages/codemod/), which pulls the first `useEffect(() => { … }, [])` out of a file into a sibling `*.trigger.ts` stub and rewrites the component to call `useEvent(...)`. It is intentionally mechanical — schema typing, condition extraction and cleanup logic stay your job.
+
+```bash
+npx triggery-codemod extract-trigger --name new-message src/Chat.tsx --dry-run
+```
+
+For anything more involved (effects with conditional deps, multiple effects sharing state, custom hooks) the codemod doesn't help — but the patterns above tell you what to do by hand.
+
+## When to keep `useEffect`
+
+Triggery is not a replacement for every `useEffect`. Keep it when:
+
+- The side effect is purely local to one component and never grows ("toggle a class on click").
+- You're subscribing to a browser API that only the component cares about (e.g. a `ResizeObserver` whose result is rendered by the same component).
+- You're synchronising with refs (`ref.current?.focus()` after a state change).
+
+Anything that crosses a feature boundary is what Triggery is for.
+
+<CardGrid>
+  <LinkCard title="From RTK listenerMiddleware" description="One listener → one trigger, codemod-assisted." href="/migration/from-rtk-listener/" />
+  <LinkCard title="From Redux Saga" description="Map watchers and put/select." href="/migration/from-redux-saga/" />
+  <LinkCard title="Anti-spaghetti" description="When NOT to make a trigger, and how to keep handlers short." href="/guide/architecture/anti-spaghetti/" />
+  <LinkCard title="Codemod CLI" description="extract-trigger and friends." href="/packages/codemod/" />
+</CardGrid>

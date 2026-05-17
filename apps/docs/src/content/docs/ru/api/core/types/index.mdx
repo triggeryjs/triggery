@@ -1,0 +1,59 @@
+---
+title: Типы
+description: "Публичные TypeScript-типы, экспортируемые `@triggery/core` — контракты, на которых стоит весь API."
+sidebar:
+  order: 100
+  label: Типы
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Все публичные типы `@triggery/core` экспортируются из корневого энтрипоинта. У самых востребованных есть отдельная страница; остальные задокументированы инлайн в [`packages/core/src/types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts).
+
+## Топ-левел
+
+<CardGrid>
+  <LinkCard
+    title="TriggerSchema"
+    description="Generic-вход для createTrigger. Описывает события, условия и действия в одной форме."
+    href="/ru/api/core/types/trigger-schema/"
+  />
+  <LinkCard
+    title="TriggerCtx"
+    description="Контекст обработчика: event, conditions, actions, check, signal, meta. Сумка всего что получает триггер-handler."
+    href="/ru/api/core/types/trigger-ctx/"
+  />
+  <LinkCard
+    title="RuntimeOptions"
+    description="Опции createRuntime: тоггл инспектора, цепочка миддлвэров, глубина каскада, размер буфера."
+    href="/ru/api/core/types/runtime-options/"
+  />
+  <LinkCard
+    title="Middleware"
+    description="Интерфейс из семи lifecycle-хуков для трейсинга, devtools, персистенса, кастомной телеметрии."
+    href="/ru/api/core/types/middleware/"
+  />
+</CardGrid>
+
+## Остальные экспортируемые типы
+
+Стабильные, но описаны инлайн в исходниках, без отдельной страницы. Открой ссылку чтобы прыгнуть прямо к декларации.
+
+| Тип | Где |
+|---|---|
+| `Runtime` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — экземпляр рантайма который возвращает `createRuntime` |
+| `Trigger<S>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — значение, возвращаемое `createTrigger` |
+| `TriggerHandler<S, R>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — сигнатура `config.handler` |
+| `ConcurrencyStrategy` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — `'take-latest' \| 'take-every' \| 'take-first' \| 'queue' \| 'exhaust' \| 'sync'` |
+| `SchedulerStrategy` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — `'microtask' \| 'sync'` |
+| `CheckCtx<C>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — типизированный `check.is` / `check.all` / `check.any` |
+| `MetaCtx` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — `triggerId`, `runId`, `cascadeId`, `scheduledAt` |
+| `TriggerInspectSnapshot` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — одна запись кольцевого буфера |
+| `FireContext` / `MatchContext` / `SkipContext` / `ActionContext` / `CascadeContext` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — payload-ы middleware-хуков |
+| `RegistrationToken` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — возвращается каждым `runtime.register*` |
+| `EmptyRecord` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — `Record<string, never>` для схем без actions/conditions |
+| `EventMap<S>` / `ConditionMap<S>` / `ActionMap<S>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — sub-map'ы схемы |
+| `EventKey<S>` / `ConditionKey<S>` / `ActionKey<S>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — union имён внутри каждого sub-map |
+| `NamedHooks<S>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — результат `createNamedHooks` |
+
+Если хочешь чтобы какой-то тип получил отдельную страницу — [открой issue](https://github.com/triggeryjs/triggery/issues/new), это дёшево добавить.

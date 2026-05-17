@@ -1,0 +1,31 @@
+---
+title: Recipes
+description: "Copy-pasteable solutions for common scenarios — per framework."
+---
+
+The same scenario, written for the framework you actually use.
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard
+    title="React recipes"
+    description="The flagship binding. Notification pipelines, modal stacks, debounced search, WebSocket sync, …"
+    href="/recipes/react/counter/"
+  />
+  <LinkCard
+    title="Solid recipes"
+    description="Identical hook API, native to Solid's reactivity. Same scenarios, native ergonomics."
+    href="/recipes/solid/counter/"
+  />
+  <LinkCard
+    title="Vue recipes"
+    description="The Vue 3 binding (Composition API). Provide/inject, onScopeDispose, all the right hooks."
+    href="/recipes/vue/counter/"
+  />
+  <LinkCard
+    title="Migration recipes"
+    description="From Redux Saga, RTK listenerMiddleware, redux-observable, and bare useEffect."
+    href="/migration/from-redux-saga/"
+  />
+</CardGrid>

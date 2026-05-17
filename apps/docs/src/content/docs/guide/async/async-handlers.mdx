@@ -1,0 +1,328 @@
+---
+title: Async handlers
+description: "Write async trigger handlers, propagate the AbortSignal, handle errors and avoid zombie network calls."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+A trigger handler can be either `sync` or `async`. Async handlers exist for one reason: the scenario has to wait for something — a `fetch`, an IndexedDB read, a chunked file parse, a worker message. Everything else (set state, dispatch an action, fire a follow-up event) should stay synchronous.
+
+Async also changes the lifecycle. A sync handler runs to completion in one tick; an async handler has a *duration*, can be *superseded* by a newer run, and owns an `AbortSignal` for the entire window between the first `await` and `return`.
+
+## When to use an async handler
+
+Use it when the scenario can't decide what to do without waiting for an I/O result.
+
+```ts title="src/triggers/search.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Hit = { id: string; title: string };
+
+export const searchTrigger = createTrigger<{
+  events:     { 'query-changed': { q: string } };
+  conditions: { apiBase: string };
+  actions:    { showResults: readonly Hit[]; showError: { message: string } };
+}>({
+  id: 'search-query',
+  events: ['query-changed'],
+  required: ['apiBase'],
+  async handler({ event, conditions, actions, signal }) {
+    if (!conditions.apiBase) return;
+    const url = `${conditions.apiBase}/search?q=${encodeURIComponent(event.payload.q)}`;
+    const res = await fetch(url, { signal });
+    const hits = (await res.json()) as readonly Hit[];
+    actions.showResults?.(hits);
+  },
+});
+```
+
+The handler is `async`, the `fetch` is given `{ signal }`, and the action runs only after the network returns. That's the entire pattern — 13 lines, no extra primitives.
+
+## When not to use an async handler
+
+Don't make a handler `async` if it doesn't `await` anything. Three reasons:
+
+1. The whole run becomes a promise, which the runtime treats as in-flight, which interacts with `concurrency`. A sync scenario suddenly behaves like an async one.
+2. Errors thrown inside `async` are caught as rejections, not synchronous throws. The behaviour is identical (see [Error flow](#error-flow)), but you give up the simpler stack traces.
+3. The handler appears "in flight" for one microtask, which can mask bugs where you expected `concurrency: 'take-first'` to skip the next run.
+
+Rule of thumb: if you don't have an `await`, drop the `async` keyword.
+
+## Receiving and propagating the signal
+
+The `ctx.signal` is an [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal). The runtime owns it, flips it under three conditions (covered in [Cancellation](/guide/async/cancellation/)), and **never** swallows your handler's errors when it does.
+
+Pass `signal` to every async API that accepts one:
+
+```ts
+async handler({ event, signal, actions }) {
+  const res = await fetch(event.payload.url, { signal });
+  const blob = await res.blob();
+  // Some APIs accept signal directly:
+  const bitmap = await createImageBitmap(blob);
+  actions.show?.({ bitmap });
+}
+```
+
+`fetch`, `Request`, `Response.body.getReader().read()`, `setTimeout` (via `AbortSignal.timeout`), `Worker.postMessage` with `AbortSignal`-aware wrappers, most database clients, and almost every modern stream API accept an `AbortSignal`. Use it everywhere.
+
+<Aside type="tip">
+If you need to combine the trigger's signal with one of your own (e.g. a per-fetch timeout), use [`AbortSignal.any`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/any_static):
+
+```ts
+const composite = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+const res = await fetch(event.payload.url, { signal: composite });
+```
+
+`AbortSignal.any` ships in all evergreen browsers as of 2024 and in Node 20.3+.
+</Aside>
+
+## The `signal.throwIfAborted()` idiom
+
+Between `await` boundaries the runtime cannot interrupt your code — JavaScript is single-threaded. The check is your responsibility. The cheapest, most idiomatic way is `signal.throwIfAborted()` placed right after every `await`:
+
+```ts
+async handler({ event, conditions, actions, signal }) {
+  const profile = await fetchProfile(event.payload.userId, { signal });
+  signal.throwIfAborted();
+
+  const friends = await fetchFriends(profile.id, { signal });
+  signal.throwIfAborted();
+
+  const enriched = friends.map((f) => ({ ...f, viewerId: profile.id }));
+  actions.showFriends?.(enriched);
+}
+```
+
+The throw is caught by the runtime, recognised as an abort (because `signal.aborted` is true), and the run is marked `aborted` in the inspector — **not** `errored`. No `console.error`, no middleware `onError` call. See [Error flow](#error-flow).
+
+Why throw rather than `if (signal.aborted) return`? The throw short-circuits any work after it without forcing you to track an early-return path through every helper you call. With several awaits chained, the `if/return` ladder gets noisy. `throwIfAborted` is one line.
+
+## The relationship between handler return value and the run lifecycle
+
+The run is considered finished **when the handler's returned promise settles**. There is no other end-of-run signal. Three corollaries:
+
+- **Don't fire-and-forget.** If you call `fetch(...)` and don't await it, the run resolves before the request finishes; the runtime won't abort that orphan request when the next event arrives. You'll see "zombie" network calls in the Network tab.
+- **Don't store the promise outside the handler closure.** Anything that outlives the handler also outlives the `signal`.
+- **Return value is ignored.** A handler returns `void | Promise<void>`. Returning anything else is a TS error.
+
+Concretely, this is broken:
+
+```ts
+async handler({ event, signal, actions }) {
+  // ✗ — orphan request. `signal` does not propagate, and the run ends now.
+  fetch(`/log?event=${event.name}`);
+
+  const res = await fetch(event.payload.url, { signal });
+  actions.show?.(await res.json());
+}
+```
+
+The fix is one line:
+
+```ts
+async handler({ event, signal, actions }) {
+  // ✓ — request is owned by the run; aborted with it.
+  await fetch(`/log?event=${event.name}`, { signal }).catch(() => {});
+
+  const res = await fetch(event.payload.url, { signal });
+  actions.show?.(await res.json());
+}
+```
+
+Or, if the log is truly best-effort and you don't want to block on it: fire it from a separate trigger with `concurrency: 'take-every'`, so the run completes immediately and the log goes through its own lifecycle.
+
+## Error flow
+
+The runtime distinguishes three terminal statuses for a run, recorded in the inspector and routed to middleware:
+
+| Status | When | Middleware hook |
+|---|---|---|
+| `'fired'` | The handler returns / resolves normally. | `onActionEnd` for each action |
+| `'aborted'` | The handler rejects **and** `signal.aborted === true`. | (none — silent) |
+| `'errored'` | The handler rejects **and** `signal.aborted === false`. | `onError` |
+
+The difference between `'aborted'` and `'errored'` is the one thing the runtime decides for you. Everything else — what to log, whether to retry, how to report to the user — lives in middleware and action handlers.
+
+```ts title="custom error middleware"
+import type { Middleware } from '@triggery/core';
+
+export const errorReporter: Middleware = {
+  name: 'error-reporter',
+  onError({ triggerId, runId, error, actionName }) {
+    // Only real errors reach this hook — aborts are silently dropped.
+    sentry.captureException(error, {
+      tags: { triggerId, runId, actionName },
+    });
+  },
+};
+```
+
+<Aside type="caution">
+The runtime **never** silently swallows handler errors. A handler that throws *and is not aborted* always:
+
+1. Writes a snapshot with `status: 'errored'` and the stringified error as `reason`.
+2. Calls `console.error('[triggery] handler "<id>" failed:', error)` as a last line of defence.
+3. Invokes `onError` on every registered middleware.
+
+If you don't want a particular error to escape, catch it inside the handler. The runtime treats an uncaught throw as a real problem worth reporting.
+</Aside>
+
+## Sequential awaits with interleaved checks
+
+The clearest async handler reads top-to-bottom: each `await` is followed by an immediate abort check. No nested promise chains, no `.then`.
+
+```ts title="src/triggers/onboarding.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type CurrentUser = { id: string };
+
+export const onboardingTrigger = createTrigger<{
+  events:     { 'user-signed-in': { userId: string } };
+  conditions: { apiBase: string; currentUser: CurrentUser };
+  actions:    {
+    setProfile: { name: string; email: string };
+    setOrgs:    readonly { id: string; name: string }[];
+    setBilling: { plan: string; trialEndsAt: number };
+    markReady:  void;
+  };
+}>({
+  id: 'onboarding-load',
+  events: ['user-signed-in'],
+  required: ['apiBase', 'currentUser'],
+  concurrency: 'take-latest',
+  async handler({ event, conditions, actions, signal }) {
+    if (!conditions.apiBase || !conditions.currentUser) return;
+    const base = conditions.apiBase;
+
+    const profile = await fetch(`${base}/users/${event.payload.userId}`, { signal }).then((r) =>
+      r.json(),
+    );
+    signal.throwIfAborted();
+    actions.setProfile?.(profile);
+
+    const orgs = await fetch(`${base}/users/${event.payload.userId}/orgs`, { signal }).then((r) =>
+      r.json(),
+    );
+    signal.throwIfAborted();
+    actions.setOrgs?.(orgs);
+
+    const billing = await fetch(`${base}/orgs/${orgs[0]?.id}/billing`, { signal }).then((r) =>
+      r.json(),
+    );
+    signal.throwIfAborted();
+    actions.setBilling?.(billing);
+
+    actions.markReady?.();
+  },
+});
+```
+
+If the user signs out mid-load, the next event aborts this run between any two awaits. The partial state (profile, maybe orgs) is already in your store via the action handlers — and that's *correct*. The trigger documented exactly what each await commits.
+
+If you want the *whole* sequence to be atomic ("either everything lands or nothing does"), collect into locals and dispatch the actions only after the last await:
+
+```ts
+async handler({ event, conditions, actions, signal }) {
+  const [profile, orgs] = await Promise.all([
+    fetch(`${conditions.apiBase}/users/${event.payload.userId}`, { signal }).then((r) => r.json()),
+    fetch(`${conditions.apiBase}/users/${event.payload.userId}/orgs`, { signal }).then((r) => r.json()),
+  ]);
+  signal.throwIfAborted();
+  const billing = await fetch(`${conditions.apiBase}/orgs/${orgs[0]?.id}/billing`, { signal }).then((r) =>
+    r.json(),
+  );
+  signal.throwIfAborted();
+
+  actions.setProfile?.(profile);
+  actions.setOrgs?.(orgs);
+  actions.setBilling?.(billing);
+  actions.markReady?.();
+}
+```
+
+Two trade-offs: the first version surfaces partial progress earlier (UX win); the second version is atomic but feels slower. Pick per scenario.
+
+## Common pitfall: forgetting to pass `signal` to `fetch`
+
+This is the single most common async bug. The handler looks correct, the types compile, the happy path works — and then under load the user sees stale results from a request that was supposed to have been cancelled three keystrokes ago.
+
+```ts
+// ✗ Broken — works but leaks.
+async handler({ event, actions }) {
+  const res = await fetch(`/search?q=${event.payload.q}`);
+  actions.show?.(await res.json());
+}
+```
+
+```ts
+// ✓ Fixed.
+async handler({ event, signal, actions }) {
+  const res = await fetch(`/search?q=${event.payload.q}`, { signal });
+  signal.throwIfAborted();
+  actions.show?.(await res.json());
+}
+```
+
+What you'll observe with the broken version under `take-latest`:
+
+- 5 keystrokes → 5 network requests, all in flight.
+- The runtime aborts the first 4 handlers via `signal.aborted = true`, but the `fetch` calls never see the signal — they keep running.
+- All 5 `await fetch(...)` eventually resolve. The first 4 throw `AbortError` from `signal.throwIfAborted()` if you have one. Without it, all 5 call `actions.show`, in arrival order, **not** keystroke order.
+- The user sees flickering results, sometimes ending on the wrong query.
+
+The `@triggery/eslint-plugin` ships an opt-in rule (`fetch-signal`) that flags `fetch()` calls inside async handlers that don't pass `{ signal }`.
+
+## Common pitfall: catching `AbortError` and continuing
+
+```ts
+async handler({ event, signal, actions }) {
+  try {
+    const res = await fetch(event.payload.url, { signal });
+    actions.show?.(await res.json());
+  } catch (err) {
+    // ✗ Swallows abort — turns a clean cancellation into a noisy error path.
+    console.error('failed', err);
+    actions.showError?.({ message: 'failed' });
+  }
+}
+```
+
+`AbortError` is *not* an error in your scenario — it means the runtime cancelled this run. Re-throw it so the runtime classifies the run as `'aborted'`, not `'errored'`:
+
+```ts
+async handler({ event, signal, actions }) {
+  try {
+    const res = await fetch(event.payload.url, { signal });
+    actions.show?.(await res.json());
+  } catch (err) {
+    if (signal.aborted) throw err;             // let the runtime handle it
+    actions.showError?.({ message: String(err) });
+  }
+}
+```
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Concurrency strategies"
+    description="The five strategies (take-latest, take-every, take-first, exhaust, queue) and when to pick which."
+    href="/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Cancellation"
+    description="Where the abort signal comes from, how to clean up resources and how to interop with your own controllers."
+    href="/guide/async/cancellation/"
+  />
+  <LinkCard
+    title="Debouncing and throttling"
+    description="The actions.debounce / throttle / defer proxy chains for scheduling individual side effects."
+    href="/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Handlers"
+    description="The complete ctx reference — event, conditions, actions, check, signal, meta."
+    href="/guide/essentials/handlers/"
+  />
+</CardGrid>

@@ -15,3 +15,6 @@ coverage
 brainstorm.md
 *.local.md
 .scratch/
+
+# Playwright MCP scratch
+.playwright-mcp/

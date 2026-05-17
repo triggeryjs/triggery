@@ -69,6 +69,10 @@ useMobxCondition<S, K>(
 
 `read` is a plain function. Use `.get()` on boxes, dot-access on `observable.object`, etc. — exactly as you'd read MobX state anywhere else.
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/mobx/](https://triggeryjs.github.io/packages/mobx/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.

@@ -1,0 +1,286 @@
+---
+title: "Runtime"
+description: "createRuntime — the registry, the dispatcher, the inspector. Defaults, lifecycle, isolation."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+A `Runtime` is the single object that owns everything that's "alive" in Triggery: the trigger registry, the event index, the schedulers, the middleware chain, the inspector ring buffer, and the in-flight controllers for async runs.
+
+You usually create exactly one runtime per app. You can create more — for tests, for micro-frontends, for multi-tenant isolation — and each one is independent.
+
+## `createRuntime(options?)`
+
+```ts
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  middleware:          [tracing, analytics],
+  maxCascadeDepth:     3,
+  inspectorBufferSize: 50,
+  inspector:           true,               // or { dev: true, prod: false }
+});
+```
+
+Every option is optional. The defaults are tuned for the common case:
+
+| Option                | Default                            | What it does                                                                                            |
+| --------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `middleware`          | `[]`                               | Array of [`Middleware`](/guide/advanced/middleware/) objects applied to every trigger.                  |
+| `maxCascadeDepth`     | `3`                                | How deep cross-trigger fanout can recurse before the runtime emits `onCascade({ kind: 'overflow' })`.   |
+| `inspectorBufferSize` | `50`                               | Ring buffer size for the inspector. Ignored when the inspector is disabled.                             |
+| `inspector`           | `undefined` (auto: DEV on, PROD off) | `true` / `false` / `{ dev?, prod? }`. Controls the per-run snapshot allocation and `subscribe()` payloads. |
+
+Inspector defaults are worth highlighting: DEV gets snapshots, PROD doesn't. With it off, the hot path skips the per-run snapshot allocation entirely — roughly 30-40% extra dispatch throughput. Bridges like `@triggery/devtools-redux` and the React `useInspectHistory` hook detect a disabled inspector and surface a one-time DEV warning if you forgot to turn it on.
+
+`createRuntime` returns a `Runtime` object:
+
+```ts
+type Runtime = {
+  readonly id:                string;
+  readonly inspectorEnabled:  boolean;
+
+  fire(eventName: string, payload?: unknown):     void;
+  fireSync(eventName: string, payload?: unknown): void;
+
+  subscribe(listener: (snap) => void):  RegistrationToken;
+  getInspectorBuffer():                 readonly TriggerInspectSnapshot[];
+  getTrigger(triggerId: string):        Trigger | undefined;
+  graph():                              RuntimeGraph;
+  dispose():                            void;
+
+  // internal-public: bindings call these, not application code
+  registerTrigger(config):              RegistrationToken;
+  registerCondition(triggerId, name, getter, options?): RegistrationToken;
+  registerAction(triggerId, name, handler, options?):   RegistrationToken;
+};
+```
+
+Most fields are observational; the ones you'll reach for from app code are `fire`, `fireSync`, `subscribe`, `getInspectorBuffer`, and `dispose`.
+
+## The default runtime
+
+If you don't pass a runtime explicitly anywhere, Triggery uses a lazy global singleton:
+
+```ts
+import { getDefaultRuntime, setDefaultRuntime, createRuntime } from '@triggery/core';
+
+// Lazily created on first access.
+getDefaultRuntime().fire('app:ready');
+
+// Replace the default — e.g. in a setup file.
+setDefaultRuntime(createRuntime({ inspector: false }));
+```
+
+The default runtime is what `createTrigger(config)` registers into when no runtime is passed. It's also what the framework providers fall back to if you mount components without `<TriggerRuntimeProvider>` — handy for prototyping, less ideal for tests and SSR.
+
+For apps with a single runtime, ignore the default and pass a runtime explicitly via the provider. For libraries, accept a runtime argument or fall back to `getDefaultRuntime()` so consumers can override.
+
+## Provider wiring
+
+Every binding ships a provider component that publishes the runtime to descendant hooks:
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/main.tsx"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimeProvider } from '@triggery/react';
+    import { StrictMode } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { App } from './App';
+
+    const runtime = createRuntime();
+
+    createRoot(document.getElementById('root')!).render(
+      <StrictMode>
+        <TriggerRuntimeProvider runtime={runtime}>
+          <App />
+        </TriggerRuntimeProvider>
+      </StrictMode>,
+    );
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/index.tsx"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimeProvider } from '@triggery/solid';
+    import { render } from 'solid-js/web';
+    import { App } from './App';
+
+    const runtime = createRuntime();
+
+    render(
+      () => (
+        <TriggerRuntimeProvider runtime={runtime}>
+          <App />
+        </TriggerRuntimeProvider>
+      ),
+      document.getElementById('root')!,
+    );
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```ts title="src/main.ts"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimePlugin } from '@triggery/vue';
+    import { createApp } from 'vue';
+    import App from './App.vue';
+
+    const runtime = createRuntime();
+
+    createApp(App).use(TriggerRuntimePlugin, { runtime }).mount('#root');
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+Hooks resolve the runtime by walking up: the nearest provider wins; if none is mounted, the default runtime is used. That fallback exists so a single missing provider doesn't break the app — instead you see all your hooks talking to the global default, which is *probably* what you wanted anyway.
+
+## When to create more than one runtime
+
+A few situations warrant additional runtimes:
+
+**Tests.** Each test gets its own runtime so triggers, conditions and actions registered in one test don't leak into the next. `@triggery/testing` exposes `createTestRuntime()` which wraps `createRuntime` with a fake scheduler suitable for synchronous assertions.
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+
+test('shows toast when settings.notifications is true', () => {
+  const runtime = createTestRuntime();
+  // …mount components / register triggers against this runtime…
+  runtime.fireSync('new-message', { /* … */ });
+  // …assert
+  runtime.dispose();
+});
+```
+
+**Micro-frontends.** Two independently-shipped React apps mounted on the same page should not share a trigger registry by default — they might define the same trigger id with different schemas, or assume different middleware. Each MFE creates its own runtime; the host page decides whether to bridge events between them with a top-level middleware.
+
+**Multi-tenant.** A SaaS dashboard that runs multiple tenant sandboxes side-by-side gives each sandbox its own runtime. Triggers, conditions and inspector entries stay isolated; the tenant's debug panel only sees that tenant's runs.
+
+**SSR & RSC.** Per-request isolation matters on the server. Create a runtime per request, mount the React tree against it, dispose at the end. See [Server-side rendering](/guide/ssr/server-side-rendering/).
+
+## `fire` vs `fireSync`
+
+Both fire an event through the runtime's event index. The difference is **scheduling**:
+
+- `runtime.fire(name, payload)` — respects the trigger's `schedule` (`'microtask'` by default). The fire returns immediately; handlers run in a future tick.
+- `runtime.fireSync(name, payload)` — bypasses the per-trigger scheduler entirely; the handler runs before the call returns.
+
+```ts
+runtime.fire('new-message',     msg);   // handler runs at next microtask
+runtime.fireSync('new-message', msg);   // handler runs before this line returns
+```
+
+Use `fire` for almost everything. Use `fireSync` in tests and inside very tight benchmarks where you need to assert a side effect in the same call frame. Production code rarely needs it — the microtask scheduler is cheap and prevents render-loop foot-guns.
+
+## `subscribe` and the inspector buffer
+
+`subscribe` registers a listener that receives every `TriggerInspectSnapshot` the inspector records:
+
+```ts
+const token = runtime.subscribe((snapshot) => {
+  console.log(snapshot.triggerId, snapshot.status, snapshot.executedActions);
+});
+// …later
+token.unregister();
+```
+
+`getInspectorBuffer()` returns the most recent N snapshots (`inspectorBufferSize`), newest-first. Both methods are no-ops when the inspector is disabled.
+
+This is the substrate every devtools panel sits on. The React `useInspectHistory(limit)` hook is a thin layer on top — it `subscribe`s, slices the buffer, and re-renders. See [Inspector](/guide/advanced/inspector/).
+
+## Middleware
+
+`runtime.use(...)` is not in the V1 API — middleware is set at construction time and immutable for the runtime's lifetime. The reason is performance: the dispatch hot path caches `hasMiddleware` and `trackTiming` flags once, then skips entire branches when no middleware is attached. Mutating middleware mid-flight would invalidate that.
+
+For dynamic enable/disable, write a middleware with its own toggle:
+
+```ts
+const tracing: Middleware = {
+  name: 'tracing',
+  onActionEnd(ctx) {
+    if (!tracingEnabled) return;
+    metrics.histogram('action.duration', ctx.durationMs, { actionName: ctx.actionName });
+  },
+};
+
+const runtime = createRuntime({ middleware: [tracing] });
+```
+
+Late attachment lives on the V1.1 roadmap once the runtime cost is benchmarked against your apps. See [Middleware](/guide/advanced/middleware/) for the full hook list (`onFire`, `onBeforeMatch`, `onSkip`, `onActionStart`, `onActionEnd`, `onError`, `onCascade`).
+
+## Cascade safety
+
+Cascading is when an action or handler fires another event. Two hazards exist:
+
+1. **Unbounded depth** — `A → B → C → D → …` spirals. The runtime stops at `maxCascadeDepth` (default `3`) and emits `onCascade({ kind: 'overflow' })`.
+2. **Cycles** — `A → B → A`. The runtime walks the parent-dispatch chain (a linked list, not a set, so it's allocation-free) and skips the offending fire with `onCascade({ kind: 'cycle' })`.
+
+Adjust the depth limit when your domain genuinely needs it:
+
+```ts
+const runtime = createRuntime({ maxCascadeDepth: 5 });
+```
+
+But: think twice before raising it. Deep cascades are almost always a sign that the rule should be split into a smaller graph, not a deeper one.
+
+See [Cascade](/guide/architecture/cascade/).
+
+## Inspecting the graph
+
+`runtime.graph()` returns a JSON-friendly snapshot of the registered triggers and the event index — stable shape, safe to log or send over `postMessage`:
+
+```ts
+const g = runtime.graph();
+// g.triggers:   [{ id, events, required, schedule, concurrency, enabled, scope }, …]
+// g.eventIndex: { 'new-message': ['message-received', 'analytics:new-message'], … }
+```
+
+The CLI's `triggery graph` command uses this to render a dependency diagram of which events feed which triggers across the app. The devtools panel uses it to render the registry tree.
+
+## Disposal
+
+`runtime.dispose()` is a graceful shutdown:
+
+- Every in-flight async run is aborted via its `AbortController`.
+- Every pending debounce / defer timer is cleared.
+- The trigger registry is emptied; the event index is cleared.
+- The inspector buffer is cleared.
+
+Existing references to `Trigger` objects continue to exist as JS values — they're just no longer attached to a runtime. Calling `.fire(...)` after `dispose()` is a no-op (the event index has no matches).
+
+For SSR per-request isolation, `dispose()` at the end of request handling is the right call. For tests, do it in `afterEach`. For long-running apps, you'll never call it.
+
+## Lifecycle notes
+
+**Dev mode.** The inspector is on, last-mount-wins collisions emit a one-time warning per `(triggerId, name)`, scope mismatches emit a one-time warning. None of these are errors — they're signals you read in DevTools.
+
+**React StrictMode.** The mount → unmount → mount cycle is safe. Registration is on a stack; unmounting pops the latest registration; the next mount pushes again. The runtime treats each push as the new top of stack.
+
+**SSR.** Create one runtime per request, mount your tree against it, await any in-flight async runs (if you have them), dispose at the end. See [Server-side rendering](/guide/ssr/server-side-rendering/) for the streaming / hydration story.
+
+**Test mode.** Combine `createTestRuntime` (from `@triggery/testing`) with `fireSync` for fully synchronous assertions. The fake scheduler advances on demand for microtask-based assertions. See [Unit testing](/guide/testing/unit-testing/).
+
+<CardGrid>
+  <LinkCard
+    title="Scopes"
+    description="Per-feature isolation inside a single runtime — TriggerScope and the scope match rule."
+    href="/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Inspector"
+    description="The ring buffer, subscribe(), useInspectHistory, and the devtools bridges."
+    href="/guide/advanced/inspector/"
+  />
+  <LinkCard
+    title="Middleware"
+    description="onFire, onSkip, onActionStart/End, onError, onCascade — what each hook receives."
+    href="/guide/advanced/middleware/"
+  />
+  <LinkCard
+    title="Server-side rendering"
+    description="Per-request runtimes, hydration, streaming React Server Components."
+    href="/guide/ssr/server-side-rendering/"
+  />
+</CardGrid>

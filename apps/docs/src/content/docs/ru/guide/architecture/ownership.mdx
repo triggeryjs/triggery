@@ -1,0 +1,259 @@
+---
+title: Владение
+description: "Два провайдера, одно условие — что значит last-mount-wins на практике, как переопределить в тестах и почему дефолт именно такой."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+У триггера один слот на каждое имя условия и один слот на каждое имя действия. Когда два компонента регистрируют одно и то же имя на одном и том же триггере, только один из них может быть "тем" провайдером. Дефолтный ответ Triggery — **last-mount-wins**: самая свежесмонтированная регистрация — живая; когда она размонтируется, слот возвращается к предыдущей.
+
+Это политика на одну строку с несколькими последствиями. Эта страница разбирает последствия.
+
+## Дефолт: last-mount-wins
+
+Внутри рантайм держит **стек** на пару `(trigger, name)` и для условий, и для действий. `useCondition` пушит свой геттер на стек на маунте и попает на размонтировании. Верх стека — "тот" провайдер; диспетчер читает только верх.
+
+```text
+register useCondition('user', () => alice)   →  стек: [alice]               top: alice
+register useCondition('user', () => bob)     →  стек: [alice, bob]          top: bob
+unregister bob                                →  стек: [alice]               top: alice
+unregister alice                              →  стек: []                    top: ⊥ (отсутствует)
+```
+
+Рантайм никогда не мерджит значения. У слота один обитатель. Когда слот пуст, диспетчер ведёт себя так, будто условие никогда не регистрировалось — для `required` условия это значит, что обработчик **пропускается** с reason `missing-required-condition:<name>`, записанным инспектором и эмитированным через `Middleware.onSkip`.
+
+<Aside type="tip">
+Цикл mount → unmount → mount в StrictMode пушит, попает и пушит снова — стек в итоге в том же состоянии. То же для любого другого паттерна "double-mount"; политика структурная, не эвристическая.
+</Aside>
+
+## DEV warn-once на коллизии
+
+Когда вторая регистрация приходит, пока первая ещё жива, рантайм эмитит одноразовое предупреждение на пару `(label, triggerId, name)`:
+
+```text
+[triggery] multiple condition registrations for "user" on trigger "session-bootstrap" — last-mount-wins.
+To compose values from several sources, register through a single hook.
+```
+
+Та же форма для действий. Предупреждение происходит **один раз на пару за время жизни рантайма** — re-render'ы не пере-варнят, и цикл маунта StrictMode его не триггерит (первая регистрация уже попана к моменту монтирования второй). Если предупреждение происходит в твоём приложении, типичный фикс — один из:
+
+1. **Выбери одного провайдера.** Два смонтированных `<SettingsPanel>` редко интенциональны; подними состояние выше и рендери ровно один.
+2. **Мердж до регистрации.** Скомпонуй значение в хуке и зарегистрируй один раз.
+3. **Заскоупь.** Если ты реально хочешь N параллельных экземпляров, дай каждому свой [`<TriggerScope>`](/ru/guide/architecture/scopes/) — warn-once per scope, и слоты per scope.
+
+## Почему такой дефолт
+
+Три свойства делают last-mount-wins правильным дефолтом для UI-оркестрации.
+
+1. **Совпадает с ментальной моделью оверлеев.** Когда модалка монтирует свою панель настроек, ты ожидаешь, что эта панель — каноничный источник, пока она открыта, а не мерджится с фоновой панелью. Когда модалка закрывается, фоновая панель восстанавливает владение.
+2. **Детерминирован и восстанавливаем.** Push/pop — это стек; нет правила приоритета, зашитого в хеш-мап, и нет "first-wins, но если не выставлен `priority: 'high'`". Тесты бегут в порядке маунта. Hot reload ведёт себя предсказуемо.
+3. **Хорошо взаимодействует с тестами.** Тест монтирует компоненты, потом зовёт `rt.mockCondition(...)`, чтобы переопределить, что компоненты зарегистрировали — mock самый свежий push, побеждает. Никакого флага `replace: true`, никакой математики приоритетов.
+
+Альтернативные дефолты (first-wins, strict-throw, stackable-merge) ломают одно из них. Они приедут как **opt-in стратегии** рядом с last-mount-wins; они не заменят его как дефолт. См. "Будущие стратегии" ниже.
+
+## Разбор примера: две SettingsPanel
+
+Представь планшетное приложение с боковой панелью настроек, плюс модалку "preferences", переиспользующую тот же `<SettingsPanel>` со слегка другим видом. Обе панели регистрируют условие `settings` на триггере уведомлений.
+
+```ts title="src/triggers/notification.trigger.ts"
+export const notificationTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings };
+  actions:    { showToast: ToastPayload };
+}>({
+  id: 'notification-on-message',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+```tsx title="src/features/SettingsPanel.tsx"
+export function SettingsPanel({ settings }: { settings: Settings }) {
+  useCondition(notificationTrigger, 'settings', () => settings, [settings]);
+  // …UI редактора…
+  return null;
+}
+```
+
+```tsx title="src/App.tsx"
+<>
+  <SettingsPanel settings={sidebarSettings} />        {/* монтируется первой, пушит свой геттер */}
+  {modalOpen && (
+    <SettingsPanel settings={modalSettings} />        {/* монтируется второй, побеждает до размонтирования */}
+  )}
+</>
+```
+
+Пока модалка открыта, триггер уведомлений читает `modalSettings`. Когда модалка закрывается, геттер сайдбара снова наверху и триггер читает `sidebarSettings`. DEV-варн происходит один раз при монтировании модалки (и только один раз за время жизни рантайма).
+
+Если это *не* то, что ты хочешь — скажем, ты хочешь, чтобы сайдбар всегда побеждал — сделай проводку явной:
+
+```tsx title="Один провайдер, два потребителя"
+export function SettingsProvider() {
+  const settings = useMergedSettings(sidebarSettings, modalSettings);    // твоё правило мерджа
+  useCondition(notificationTrigger, 'settings', () => settings, [settings]);
+  return null;
+}
+```
+
+Теперь только одна регистрация. Два `<SettingsPanel>` становятся чистым UI; владение — у одного компонента.
+
+## Как этим пользуются тесты
+
+Поскольку заглушки — это просто регистрации в рантайме, тест, зовущий `rt.mockCondition(...)` **после** регистраций, отрендеренных компонентами, получает last-mount-wins бесплатно. Нет API `mockOverride` — есть просто стэкинг, и вызов теста — самый свежий.
+
+```ts title="src/tests/notification.test.ts"
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { render } from '@testing-library/react';
+
+test('notification fires when settings are on', async () => {
+  const rt = createTestRuntime();
+  // …рендерим компоненты, регистрирующие реальный геттер `settings`…
+  render(
+    <TriggerRuntimeProvider runtime={rt}>
+      <SettingsPanel settings={{ notifications: true }} />
+    </TriggerRuntimeProvider>,
+  );
+
+  // Переопределяем геттер компонента взглядом теста на мир.
+  const toast = vi.fn();
+  rt.mockAction(notificationTrigger, 'showToast', toast);
+  rt.mockCondition(notificationTrigger, 'settings', { notifications: true });
+
+  rt.fireSync('new-message', { author: 'a', text: 'b', channelId: 'c' });
+  expect(toast).toHaveBeenCalled();
+});
+```
+
+Две вещи важны:
+
+1. `mockCondition`/`mockAction` зовутся **после** `render(...)`. Компоненты уже запушили свои геттеры; тест пушит новый верх.
+2. `rt.fireSync` запускает диспетчер синхронно — тесту не нужно `await flushMicrotasks()` между `mockCondition` и ассертом.
+
+Порядок важен; если подменишь первым и отрендеришь вторым, геттер компонента — новый верх, а твой подмена застрял под ним. Тест ещё проходит, когда компонент случайно регистрирует то же значение, и тонко ломается, когда нет. Считай "подмены идут после render" жёстким правилом. См. [Модульные тесты](/ru/guide/testing/unit-testing/).
+
+## Владение и скоупы
+
+Скоупы меняют *в какой* слот идёт регистрация; они не меняют политику внутри слота. Внутри одного скоупа — last-mount-wins. Между скоупами слоты независимы.
+
+```tsx title="Один триггер, два скоупа, четыре регистрации — две коллизии"
+<TriggerScope id="chat-panel">
+  <ChatPanel id="general" />   {/* регистрирует useCondition('activeChannelId', …) в 'chat-panel' */}
+  <ChatPanel id="random" />    {/* вторая регистрация в 'chat-panel' — коллизия, warn-once */}
+</TriggerScope>
+
+<TriggerScope id="chat-panel">
+  <ChatPanel id="hiring" />    {/* всё ещё скоуп 'chat-panel' — тот же слот продолжается, warn уже был */}
+</TriggerScope>
+```
+
+Если три панели реально независимые экземпляры, каждая должна быть обёрнута в **свой id скоупа** — `chat-panel:general`, `chat-panel:random`, `chat-panel:hiring`. `scope: 'chat-panel'` триггера — одно объявление; id скоупа на React-стороне — то, что нарезает слоты.
+
+См. [Скоупы](/ru/guide/architecture/scopes/) для полной истории; владение и скоупы компонуются ортогонально.
+
+## Семантика disposal
+
+Две вещи могут поп'нуть регистрацию:
+
+- **Компонент, который её зарегистрировал, размонтируется.** Стандартный React effect cleanup; запускается `RegistrationToken.unregister()` рантайма.
+- **Триггер пере-регистрируется** с тем же id. Last-mount-wins применяется и к триггерам — re-registration триггера дропает каждый прогон в полёте, отменяет каждый таймер, и новый триггер стартует со свежим стеком. Это в основном кейс hot-reload'а; в проде ты редко зовёшь `createTrigger` более одного раза на тот же id.
+
+Рантайм *не* отвечает за popping условий / действий, когда их владеющий триггер заменён — замена стартует с пустым стеком, и компоненты пере-регистрируются на своём цикле эффектов. Если компонент пропустит свой effect-цикл целиком (необычный hot-reload edge), его регистрация пропадёт. Это намеренно: делает hot reload предсказуемым, а не "умным".
+
+## Будущие стратегии (opt-in, post-V1)
+
+V1 поставляется с одной стратегией: last-mount-wins. В роадмапе три opt-in альтернативы. Они здесь набросаны, чтобы ты мог читать API, когда оно приедет.
+
+### `stackable`
+
+Регистрация предоставляет значение или partial; рантайм мерджит стек user-provided комбайнером.
+
+```ts title="Набросок — V1.1+"
+useCondition(trigger, 'flags', () => ({ beta: true }), [], {
+  strategy: 'stackable',
+  combine: (a, b) => ({ ...a, ...b }),
+});
+```
+
+Use case: feature-флаги, собранные из нескольких источников, telemetry-теги, аккумулированные из feature-уровневых провайдеров, и т.п. Сегодня правильная форма — "мердж до регистрации"; см. пример `SettingsProvider` выше.
+
+### `first-wins`
+
+Первая регистрация на паре `(trigger, name)` остаётся; последующие регистрации — no-op (всё ещё с DEV-варном).
+
+```ts title="Набросок — V1.1+"
+useCondition(trigger, 'flags', () => flags, [flags], { strategy: 'first-wins' });
+```
+
+Use case: app shell, который хочет, чтобы его провайдер был каноничным, даже когда суб-фичи пытаются переопределить.
+
+### `strict`
+
+Вторая регистрация бросает синхронно. Полезно в тестах, где два смонтированных провайдера одновременно — всегда баг.
+
+```ts title="Набросок — V1.1+"
+useCondition(trigger, 'flags', () => flags, [flags], { strategy: 'strict' });
+```
+
+Сегодня приближай это в тестах кастомной `Middleware.onSkip`-проверкой или ассерти, что DEV-варн не был эмитирован.
+
+## Антипаттерны
+
+### Антипаттерн: полагаться на порядок регистрации
+
+```tsx
+<ContextA><SettingsPanel /></ContextA>
+<ContextB><SettingsPanel /></ContextB>
+{/* что окажется "позже" — побеждает, но это порядок рендера, а не визуальный порядок */}
+```
+
+Если правильный ответ зависит от порядка рендера — это хрупко. Подними решение вверх и выбери одного провайдера. Исход по порядку рендера **детерминирован** для данного дерева, но это *не* то, что большинство читателей угадают по JSX.
+
+### Антипаттерн: re-mounting для "освежить" значение
+
+```tsx
+{key && <SettingsPanel key={key} settings={fresh} />}
+```
+
+`useCondition` уже читает через свой геттер при каждом вызове — кеша нет. Re-mounting для рефреша — no-op для семантики владения (новый mount становится верхом, но значение и так бы обновилось, потому что геттер замыкает свежее состояние через `deps`). Если ты пере-key'ишь для этой причины, массив `deps` геттера, скорее всего, неверный.
+
+### Антипаттерн: глушить DEV-варн
+
+Warn-once — это одна строка в консоли. Если ты "фиксишь" это, останавливая второе монтирование `if`'ом — это правильный фикс. Если "фиксишь", добавив `console.warn = noop` в test setup — варн вернётся для следующей коллизии, и ты потеряешь сигнал, что *эта* коллизия существует.
+
+## Чек-лист ревьюера
+
+- [ ] Если видишь DEV-варн `multiple ... registrations`, обе регистрации должны быть живы одновременно — или одна из них забытый mount?
+- [ ] Для тестов: тест зовёт `rt.mockCondition` / `rt.mockAction` **после** `render(...)`? Если зовёт до — геттер компонента наверху, и подмена затенён.
+- [ ] Для мульти-инстанс UI: каждый инстанс обёрнут в свой `<TriggerScope>`, чтобы слоты не коллидили?
+- [ ] Для `required` условий app-shell: ровно **один** компонент отвечает за их регистрацию?
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Скоупы"
+    description="Режь реестр на именованные бакеты — независимые слоты на id скоупа."
+    href="/ru/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Условия"
+    description="Pull-only снепшоты мира, required-гейты и контракт геттера."
+    href="/ru/guide/essentials/conditions/"
+  />
+  <LinkCard
+    title="Модульные тесты"
+    description="Mock условий, mock действий, fire синхронно, ассерт без React."
+    href="/ru/guide/testing/unit-testing/"
+  />
+  <LinkCard
+    title="Рантайм"
+    description="createRuntime, провайдеры, инспектор, middleware."
+    href="/ru/guide/essentials/runtime/"
+  />
+</CardGrid>

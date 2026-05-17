@@ -1,0 +1,150 @@
+---
+title: "TriggerSchema"
+description: "The generic shape passed to createTrigger. Three optional maps: events, conditions, actions."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+`TriggerSchema` is the single generic parameter you pass to [`createTrigger`](/api/core/create-trigger/). It describes the complete typed surface of a trigger — every event it reacts to, every condition it can read, and every action it can call. All three keys are optional; an empty schema (`{}`) is valid for triggers that have no inputs and no outputs.
+
+## Import
+
+```ts
+import type { TriggerSchema } from '@triggery/core';
+```
+
+## Definition
+
+```ts
+type TriggerSchema = {
+  events?:     Record<string, unknown>;  // payload type per event name
+  conditions?: Record<string, unknown>;  // value type per condition name
+  actions?:    Record<string, unknown>;  // payload type per action name
+};
+```
+
+## Fields
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `events` | `Record<string, unknown>` | optional | Map of `eventName → payloadType`. Use `void` for events with no payload. |
+| `conditions` | `Record<string, unknown>` | optional | Map of `conditionName → valueType`. Values flow pull-only (runtime calls the getter at fire-time). |
+| `actions` | `Record<string, unknown>` | optional | Map of `actionName → payloadType`. Use `void` for parameter-less actions. |
+
+## Naming conventions
+
+The library doesn't enforce a casing convention — any string is a valid key. Common practice in the Triggery ecosystem:
+
+- **Events**: kebab-case verbs scoped by domain — `'new-message'`, `'cta:click'`, `'session-expired'`.
+- **Conditions**: camelCase nouns — `user`, `activeChannelId`, `featureFlags`.
+- **Actions**: camelCase verbs — `showToast`, `playSound`, `setUser`.
+
+This pairs cleanly with the [`createNamedHooks`](/api/react/create-named-hooks/) helper, which converts kebab/camel keys to PascalCase hook names (`'new-message'` → `useNewMessageEvent`).
+
+## Examples
+
+### Empty schema
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{}>({
+  id: 'demo:empty',
+  events: [],
+  handler() {
+    // No events, conditions or actions — useful for triggers driven by side
+    // channels (timers, external callbacks) where the dispatch keeps a heartbeat.
+  },
+});
+```
+
+### Events-only schema
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { tick: number; tock: void };
+}>({
+  id: 'clock',
+  events: ['tick', 'tock'],
+  handler({ event }) {
+    if (event.name === 'tick') {
+      console.log('tick payload', event.payload); // typed number
+    } else {
+      console.log('tock'); // typed void
+    }
+  },
+});
+```
+
+### Full schema with all three maps
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+type User = { id: string; name: string };
+
+createTrigger<{
+  events:     { 'new-message': { text: string; channelId: string } };
+  conditions: { user: User | null; activeChannelId: string | null };
+  actions:    { showToast: { title: string; body: string }; playSound: 'beep' | 'chime' };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    actions.showToast?.({
+      title: conditions.user?.name ?? '',
+      body:  event.payload.text,
+    });
+    actions.playSound?.('beep');
+  },
+});
+```
+
+### Discriminated event union
+
+The `event` field in the handler context is a discriminated union over `S['events']`:
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { open: { id: string }; close: { id: string; reason: 'ok' | 'cancel' } };
+}>({
+  id: 'modal',
+  events: ['open', 'close'],
+  handler({ event }) {
+    if (event.name === 'close') {
+      // narrowed: event.payload is { id; reason } here
+      console.log('closed', event.payload.reason);
+    }
+  },
+});
+```
+
+## Notes
+
+<Aside type="tip">
+The schema generic is never inferred — always pass it explicitly. The trigger's id, event list and required-conditions list are inferred separately, but the value types in `events / conditions / actions` only exist as type-level information you provide.
+</Aside>
+
+<Aside type="caution">
+`required: [...]` does not narrow `conditions.<name>` to `NonNullable<…>` inside the handler in V1 — use `check.is / all / any` for the narrowing, or an early guard.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="The constructor that consumes this schema." href="/api/core/create-trigger/" />
+  <LinkCard title="TriggerCtx" description="The handler context — built from the schema." href="/api/core/types/trigger-ctx/" />
+  <LinkCard title="Trigger anatomy guide" description="Field-by-field walkthrough." href="/guide/essentials/trigger-anatomy/" />
+  <LinkCard title="createNamedHooks" description="Generate PascalCase hooks from the schema." href="/api/react/create-named-hooks/" />
+</CardGrid>

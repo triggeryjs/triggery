@@ -1,0 +1,100 @@
+---
+title: "@triggery/dom"
+description: "DOM-адаптеры для Triggery — направляй addEventListener, ResizeObserver и IntersectionObserver в триггеры."
+sidebar:
+  order: 14
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+DOM-мосты для Triggery — направляй обратные вызовы `addEventListener`, `ResizeObserver` и `IntersectionObserver` в события триггеров. Все три хука цепляются в `useEffect` (commit-фаза, безопасны для StrictMode) и отцепляются при unmount.
+
+[![npm](https://img.shields.io/npm/v/@triggery/dom?style=flat-square)](https://www.npmjs.com/package/@triggery/dom)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/dom?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/dom)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/dom" />
+
+Peer-зависимости: `react >= 18.0.0`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `useDomEvent(trigger, eventName, target, domEventName, options?)` | Пробрасывает DOM-событие из элемента, window/document или React-ref. |
+| `useResizeObserver(trigger, eventName, ref, options?)` | Пробрасывает записи `ResizeObserver` по ref'у элемента. |
+| `useIntersectionObserver(trigger, eventName, ref, options?)` | Пробрасывает записи `IntersectionObserver` по ref'у элемента. |
+
+`target` может быть `EventTarget` (например, `window`), React-ref или `null` / `undefined` (no-op, пока не передан реальный target).
+
+## Быстрый пример
+
+```tsx
+import { useRef } from 'react';
+import {
+  useDomEvent,
+  useResizeObserver,
+  useIntersectionObserver,
+} from '@triggery/dom';
+
+function Input() {
+  const ref = useRef<HTMLInputElement>(null);
+  useDomEvent(chatTrigger, 'submit', ref, 'keydown', {
+    mapPayload: (e) => ({ key: (e as KeyboardEvent).key }),
+    listenerOptions: { passive: true },
+  });
+  return <input ref={ref} />;
+}
+
+function GlobalEscapeWatcher() {
+  useDomEvent(uiTrigger, 'escape', window, 'keydown', {
+    mapPayload: (e) => (e as KeyboardEvent).key,
+  });
+  return null;
+}
+
+function Panel() {
+  const ref = useRef<HTMLDivElement>(null);
+  useResizeObserver(layoutTrigger, 'panel-resized', ref, {
+    mapPayload: (e) => ({
+      width:  e.contentRect.width,
+      height: e.contentRect.height,
+    }),
+  });
+  return <div ref={ref}>...</div>;
+}
+
+function VirtualRow() {
+  const ref = useRef<HTMLLIElement>(null);
+  useIntersectionObserver(virtualTrigger, 'row-visible', ref, {
+    rootMargin: '200px',
+    mapPayload: (e) => ({ visible: e.isIntersecting, ratio: e.intersectionRatio }),
+  });
+  return <li ref={ref}>...</li>;
+}
+```
+
+## Как это работает
+
+Идентичность слушателя стабильна между рендерами, пока `mapPayload` / `listenerOptions` / `target` фактически не изменились, — поэтому React не пересоздаёт подписку на каждом рендере. Тип события в триггере определяет, что должен возвращать `mapPayload`. Если `mapPayload` опущен, исходное DOM-событие или запись observer'а пробрасывается как есть.
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Экспортирует Trigger<S>." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="Это React-хуки." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/socket" description="Альтернативный источник событий: socket.io и нативный WebSocket." href="/ru/packages/socket/" />
+  <LinkCard title="@triggery/query" description="Сочетай DOM-события с чтением кеша TanStack Query." href="/ru/packages/query/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/dom)
+- [npm](https://www.npmjs.com/package/@triggery/dom)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/dom/CHANGELOG.md)

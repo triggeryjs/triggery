@@ -1,0 +1,138 @@
+---
+title: "RuntimeOptions"
+description: "Configuration accepted by createRuntime — inspector, middleware, cascade depth, buffer size."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+The options bag passed to [`createRuntime`](/api/core/create-runtime/). Every field is optional; omitting the argument constructs a runtime with all defaults.
+
+## Import
+
+```ts
+import type { RuntimeOptions } from '@triggery/core';
+```
+
+## Definition
+
+```ts
+type RuntimeOptions = {
+  middleware?:          readonly Middleware[];
+  maxCascadeDepth?:     number;
+  inspectorBufferSize?: number;
+  inspector?:           boolean | { dev?: boolean; prod?: boolean };
+};
+```
+
+## Fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `middleware` | `readonly Middleware[]` | `[]` | Chain applied to every trigger in this runtime. Order matters for `onFire` / `onSkip` / `onActionStart` / `onActionEnd` / `onError` / `onCascade`. |
+| `maxCascadeDepth` | `number` | `3` | Maximum depth for `action → fireEvent → …` chains. Runs above this are skipped with `'overflow'`. |
+| `inspectorBufferSize` | `number` | `50` | Ring-buffer size for the inspector. Ignored when the inspector is disabled. |
+| `inspector` | `boolean \| { dev?: boolean; prod?: boolean }` | DEV `true`, PROD `false` (auto) | Per-run inspector switch. See below. |
+
+### `inspector` semantics
+
+| Value | Effect |
+|---|---|
+| `undefined` (default) | Auto — on when `process.env.NODE_ENV !== 'production'`, off otherwise. |
+| `true` | Always on, regardless of environment. |
+| `false` | Always off — hot path drops the snapshot allocation entirely (~30-40% extra throughput). |
+| `{ dev?, prod? }` | Per-environment override. Unset fields fall back to the auto default. |
+
+When disabled, `runtime.subscribe` callbacks never fire, `runtime.getInspectorBuffer()` returns `[]`, and `trigger.inspect()` returns `undefined`. Devtools — `@triggery/devtools-redux`, `@triggery/devtools-bridge`, the React `useInspectHistory` hook — depend on the inspector being on.
+
+## Examples
+
+### Defaults are fine for most apps
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime(); // inspector auto, cascade=3, buffer=50, no middleware
+```
+
+### Tighten cascade depth
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({ maxCascadeDepth: 1 });
+// Now `action → fireEvent → trigger` is allowed but `action → fireEvent → trigger → action → fireEvent → …` is not.
+```
+
+### Larger inspector buffer
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({ inspectorBufferSize: 500 });
+// Helpful for long-running e2e tests that need to see runs from many minutes ago.
+```
+
+### Per-env inspector override
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+// On in dev, also on in prod (e.g. for an opt-in beta where you want telemetry).
+const runtime = createRuntime({ inspector: { dev: true, prod: true } });
+```
+
+### Hot-path benchmark mode
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({ inspector: false });
+// `getInspectorBuffer()` returns a shared frozen `[]`; `subscribe` is a noop.
+```
+
+### Middleware chain
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const tracing: Middleware = {
+  name: 'tracing',
+  onFire({ eventName }) { console.debug('[fire]', eventName); },
+  onActionEnd({ actionName, durationMs }) {
+    console.debug(`[action] ${actionName} ${durationMs.toFixed(2)}ms`);
+  },
+};
+
+const audit: Middleware = {
+  name: 'audit',
+  onError({ triggerId, actionName, error }) {
+    console.error(`[${triggerId}] ${actionName} failed`, error);
+  },
+};
+
+const runtime = createRuntime({ middleware: [tracing, audit] });
+```
+
+## Notes
+
+<Aside type="tip">
+The inspector is the single observability surface — turning it off disables `runtime.subscribe`, the buffer, and `trigger.inspect()`. For deliberate, high-volume production telemetry, leave the inspector on and pair it with a `Middleware` that mirrors snapshots to your monitoring backend.
+</Aside>
+
+<Aside type="caution">
+`maxCascadeDepth` is an absolute cap, not a per-trigger override. Triggers that legitimately need deep chains should be reviewed — usually the right answer is to break the cascade with an action that resolves the work directly instead of firing another event.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createRuntime" description="The constructor that consumes this type." href="/api/core/create-runtime/" />
+  <LinkCard title="Middleware" description="Hook shape of every middleware in the chain." href="/api/core/types/middleware/" />
+  <LinkCard title="createInspector" description="The ring-buffer implementation." href="/api/core/create-inspector/" />
+  <LinkCard title="Cascade limits guide" description="Why max-depth defaults to 3." href="/guide/essentials/runtime/" />
+</CardGrid>

@@ -1,0 +1,286 @@
+---
+title: "Рантайм"
+description: "createRuntime — реестр, диспетчер, инспектор. Умолчания, жизненный цикл, изоляция."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+`Runtime` — это единственный объект, который владеет всем, что «живо» в Triggery: реестром триггеров, индексом событий, планировщиками, цепочкой middleware, кольцевым буфером инспектора и контроллерами незавершённых async-прогонов.
+
+Обычно создаётся ровно один рантайм на приложение. Можно создать больше — для тестов, для микрофронтендов, для мультитенант-изоляции — и каждый будет независимым.
+
+## `createRuntime(options?)`
+
+```ts
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  middleware:          [tracing, analytics],
+  maxCascadeDepth:     3,
+  inspectorBufferSize: 50,
+  inspector:           true,               // или { dev: true, prod: false }
+});
+```
+
+Каждый параметр опционален. Умолчания подобраны под распространённый сценарий:
+
+| Параметр              | По умолчанию                       | Что делает                                                                                              |
+| --------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `middleware`          | `[]`                               | Массив [`Middleware`](/ru/guide/advanced/middleware/) объектов, применяемых к каждому триггеру.         |
+| `maxCascadeDepth`     | `3`                                | Насколько глубоко может рекурсивно расходиться кросс-триггерный fanout, пока рантайм не выдаст `onCascade({ kind: 'overflow' })`. |
+| `inspectorBufferSize` | `50`                               | Размер кольцевого буфера инспектора. Игнорируется при отключённом инспекторе.                            |
+| `inspector`           | `undefined` (auto: DEV on, PROD off) | `true` / `false` / `{ dev?, prod? }`. Управляет аллокацией снимка на прогон и payload'ом `subscribe()`. |
+
+Стоит подчеркнуть умолчания инспектора: в DEV снимки есть, в PROD — нет. С выключенным инспектором горячий путь полностью пропускает аллокацию снимка на прогон — это ~30-40% дополнительной пропускной способности диспатча. Мосты типа `@triggery/devtools-redux` и React-хук `useInspectHistory` детектят выключенный инспектор и выдают одноразовый DEV-варн, если ты забыл его включить.
+
+`createRuntime` возвращает объект `Runtime`:
+
+```ts
+type Runtime = {
+  readonly id:                string;
+  readonly inspectorEnabled:  boolean;
+
+  fire(eventName: string, payload?: unknown):     void;
+  fireSync(eventName: string, payload?: unknown): void;
+
+  subscribe(listener: (snap) => void):  RegistrationToken;
+  getInspectorBuffer():                 readonly TriggerInspectSnapshot[];
+  getTrigger(triggerId: string):        Trigger | undefined;
+  graph():                              RuntimeGraph;
+  dispose():                            void;
+
+  // internal-public: их зовут биндинги, не код приложения
+  registerTrigger(config):              RegistrationToken;
+  registerCondition(triggerId, name, getter, options?): RegistrationToken;
+  registerAction(triggerId, name, handler, options?):   RegistrationToken;
+};
+```
+
+Большая часть полей — наблюдательные; из кода приложения тебе пригодятся `fire`, `fireSync`, `subscribe`, `getInspectorBuffer` и `dispose`.
+
+## Рантайм по умолчанию
+
+Если ты нигде явно не передаёшь рантайм, Triggery использует ленивый глобальный синглтон:
+
+```ts
+import { getDefaultRuntime, setDefaultRuntime, createRuntime } from '@triggery/core';
+
+// Создаётся лениво при первом обращении.
+getDefaultRuntime().fire('app:ready');
+
+// Заменить умолчание — например, в setup-файле.
+setDefaultRuntime(createRuntime({ inspector: false }));
+```
+
+В рантайм по умолчанию `createTrigger(config)` регистрирует триггер, если рантайм не передан. Туда же фреймворковые провайдеры падают, если ты разместил компоненты без `<TriggerRuntimeProvider>` — удобно для прототипов, менее идеально для тестов и SSR.
+
+Для приложений с одним рантаймом игнорируй умолчание и пробрасывай рантайм явно через провайдер. Для библиотек принимай аргумент-рантайм или фолбэчься на `getDefaultRuntime()`, чтобы потребители могли переопределять.
+
+## Подключение через провайдер
+
+Каждый биндинг поставляет компонент-провайдер, публикующий рантайм для дочерних хуков:
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/main.tsx"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimeProvider } from '@triggery/react';
+    import { StrictMode } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { App } from './App';
+
+    const runtime = createRuntime();
+
+    createRoot(document.getElementById('root')!).render(
+      <StrictMode>
+        <TriggerRuntimeProvider runtime={runtime}>
+          <App />
+        </TriggerRuntimeProvider>
+      </StrictMode>,
+    );
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/index.tsx"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimeProvider } from '@triggery/solid';
+    import { render } from 'solid-js/web';
+    import { App } from './App';
+
+    const runtime = createRuntime();
+
+    render(
+      () => (
+        <TriggerRuntimeProvider runtime={runtime}>
+          <App />
+        </TriggerRuntimeProvider>
+      ),
+      document.getElementById('root')!,
+    );
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```ts title="src/main.ts"
+    import { createRuntime } from '@triggery/core';
+    import { TriggerRuntimePlugin } from '@triggery/vue';
+    import { createApp } from 'vue';
+    import App from './App.vue';
+
+    const runtime = createRuntime();
+
+    createApp(App).use(TriggerRuntimePlugin, { runtime }).mount('#root');
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+Хуки разрешают рантайм, поднимаясь вверх по дереву: побеждает ближайший провайдер; если ни одного не смонтировано — используется рантайм по умолчанию. Этот фолбэк существует, чтобы один забытый провайдер не сломал приложение — вместо этого ты увидишь, как все твои хуки общаются с глобальным умолчанием, что *скорее всего* и было нужно.
+
+## Когда создавать больше одного рантайма
+
+Несколько ситуаций оправдывают дополнительные рантаймы:
+
+**Тесты.** Каждому тесту — свой рантайм, чтобы триггеры, условия и действия, зарегистрированные в одном тесте, не утекали в следующий. `@triggery/testing` поставляет `createTestRuntime()`, который оборачивает `createRuntime` тестовым планировщиком, удобным для синхронных ассертов.
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+
+test('shows toast when settings.notifications is true', () => {
+  const runtime = createTestRuntime();
+  // …монтируем компоненты / регистрируем триггеры против этого рантайма…
+  runtime.fireSync('new-message', { /* … */ });
+  // …ассерты
+  runtime.dispose();
+});
+```
+
+**Микрофронтенды.** Два независимо поставляемых React-приложения, смонтированные на одну страницу, по умолчанию не должны делить реестр триггеров — они могут определять один и тот же `triggerId` с разными схемами или предполагать разный middleware. Каждый MFE создаёт свой рантайм; хост-страница решает, нужно ли мостить события между ними через top-level middleware.
+
+**Мультитенант.** SaaS-дашборд, гоняющий несколько тенант-песочниц рядом, даёт каждой свой рантайм. Триггеры, условия и записи инспектора остаются изолированными; debug-панель тенанта видит только его прогоны.
+
+**SSR и RSC.** На сервере важна изоляция на запрос. Создавай рантайм на запрос, монтируй React-дерево против него, уничтожай в конце. См. [Server-side rendering](/ru/guide/ssr/server-side-rendering/).
+
+## `fire` vs `fireSync`
+
+Оба отправляют событие через индекс событий рантайма. Разница — в **планировании**:
+
+- `runtime.fire(name, payload)` — уважает `schedule` триггера (`'microtask'` по умолчанию). Вызов возвращается сразу; обработчики запускаются в будущем тике.
+- `runtime.fireSync(name, payload)` — полностью обходит планировщик триггера; обработчик запускается до возврата вызова.
+
+```ts
+runtime.fire('new-message',     msg);   // обработчик запустится в следующий microtask
+runtime.fireSync('new-message', msg);   // обработчик запустится до возврата этой строки
+```
+
+Используй `fire` почти везде. `fireSync` — в тестах и внутри узких бенчмарков, где нужно проверить побочный эффект в том же кадре вызова. В продакшене он редко нужен — microtask-планировщик дёшев и страхует от ловушек рендер-цикла.
+
+## `subscribe` и буфер инспектора
+
+`subscribe` регистрирует слушатель, который получает каждый `TriggerInspectSnapshot`, записываемый инспектором:
+
+```ts
+const token = runtime.subscribe((snapshot) => {
+  console.log(snapshot.triggerId, snapshot.status, snapshot.executedActions);
+});
+// …позже
+token.unregister();
+```
+
+`getInspectorBuffer()` возвращает последние N снимков (`inspectorBufferSize`), новейшие сначала. Оба метода — no-op, когда инспектор выключен.
+
+Это субстрат, на котором сидит каждая devtools-панель. React-хук `useInspectHistory(limit)` — тонкая обёртка поверх: он `subscribe`-ится, слайсит буфер и перерендеривается. См. [Инспектор](/ru/guide/advanced/inspector/).
+
+## Middleware
+
+`runtime.use(...)` в V1 API нет — middleware задаётся при создании и неизменен на время жизни рантайма. Причина — производительность: горячий путь диспатча кеширует флаги `hasMiddleware` и `trackTiming` один раз, потом полностью пропускает целые ветви, когда middleware нет. Мутация middleware на лету это бы инвалидировала.
+
+Для динамического включения / выключения — пиши middleware со своим переключателем:
+
+```ts
+const tracing: Middleware = {
+  name: 'tracing',
+  onActionEnd(ctx) {
+    if (!tracingEnabled) return;
+    metrics.histogram('action.duration', ctx.durationMs, { actionName: ctx.actionName });
+  },
+};
+
+const runtime = createRuntime({ middleware: [tracing] });
+```
+
+Позднее подключение лежит в роадмапе V1.1, как только стоимость рантайма будет отбенчмаркана против твоих приложений. См. [Middleware](/ru/guide/advanced/middleware/) для полного списка хуков (`onFire`, `onBeforeMatch`, `onSkip`, `onActionStart`, `onActionEnd`, `onError`, `onCascade`).
+
+## Безопасность каскадов
+
+Каскад — это когда действие или обработчик отправляет ещё одно событие. Есть два риска:
+
+1. **Неограниченная глубина** — спирали `A → B → C → D → …`. Рантайм останавливается на `maxCascadeDepth` (по умолчанию `3`) и выдаёт `onCascade({ kind: 'overflow' })`.
+2. **Циклы** — `A → B → A`. Рантайм идёт по цепочке родительских диспатчей (это linked-list, не set, поэтому без аллокаций) и пропускает виноватый вызов с `onCascade({ kind: 'cycle' })`.
+
+Поднимай лимит глубины, когда твой домен реально этого требует:
+
+```ts
+const runtime = createRuntime({ maxCascadeDepth: 5 });
+```
+
+Но: подумай дважды перед поднятием. Глубокие каскады почти всегда — признак того, что правило надо разбить на меньший граф, а не на более глубокий.
+
+См. [Каскад](/ru/guide/architecture/cascade/).
+
+## Осмотр графа
+
+`runtime.graph()` возвращает JSON-дружественный снимок зарегистрированных триггеров и индекса событий — форма стабильная, безопасно логировать или слать через `postMessage`:
+
+```ts
+const g = runtime.graph();
+// g.triggers:   [{ id, events, required, schedule, concurrency, enabled, scope }, …]
+// g.eventIndex: { 'new-message': ['message-received', 'analytics:new-message'], … }
+```
+
+CLI-команда `triggery graph` использует это для отрисовки диаграммы зависимостей: какие события питают какие триггеры по всему приложению. Devtools-панель использует это для отрисовки дерева реестра.
+
+## Disposal
+
+`runtime.dispose()` — это graceful shutdown:
+
+- Каждый незавершённый async-прогон прерывается через свой `AbortController`.
+- Каждый ожидающий таймер debounce / defer чистится.
+- Реестр триггеров очищается; индекс событий очищается.
+- Буфер инспектора очищается.
+
+Существующие ссылки на объекты `Trigger` продолжают существовать как JS-значения — они просто больше не привязаны к рантайму. Вызов `.fire(...)` после `dispose()` — no-op (в индексе событий нет совпадений).
+
+Для SSR с изоляцией на запрос `dispose()` в конце обработки запроса — правильный вызов. Для тестов — в `afterEach`. Для долгоживущих приложений никогда не зовётся.
+
+## Заметки о жизненном цикле
+
+**Dev-режим.** Инспектор включён, last-mount-wins коллизии выдают одно предупреждение на пару `(triggerId, name)`, scope-мисматчи — одно предупреждение. Ни одно из них не ошибка, это сигналы, которые читаешь в DevTools.
+
+**React StrictMode.** Цикл mount → unmount → mount безопасен. Регистрация — на стеке; размонтирование снимает последнюю регистрацию; следующий монтаж пушит снова. Рантайм рассматривает каждый push как новый top of stack.
+
+**SSR.** Создавай один рантайм на запрос, монти своё дерево против него, дожидайся незавершённых async-прогонов (если есть), уничтожай в конце. См. [Server-side rendering](/ru/guide/ssr/server-side-rendering/) для истории про стриминг / гидрацию.
+
+**Тест-режим.** Сочетай `createTestRuntime` (из `@triggery/testing`) с `fireSync` для полностью синхронных ассертов. Тестовый планировщик продвигается по требованию для ассертов на microtask. См. [Модульные тесты](/ru/guide/testing/unit-testing/).
+
+<CardGrid>
+  <LinkCard
+    title="Скоупы"
+    description="Изоляция по фичам внутри одного рантайма — TriggerScope и правило сопоставления scope."
+    href="/ru/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Инспектор"
+    description="Кольцевой буфер, subscribe(), useInspectHistory и мосты devtools."
+    href="/ru/guide/advanced/inspector/"
+  />
+  <LinkCard
+    title="Middleware"
+    description="onFire, onSkip, onActionStart/End, onError, onCascade — что получает каждый хук."
+    href="/ru/guide/advanced/middleware/"
+  />
+  <LinkCard
+    title="Server-side rendering"
+    description="Рантаймы на запрос, гидрация, стриминг React Server Components."
+    href="/ru/guide/ssr/server-side-rendering/"
+  />
+</CardGrid>

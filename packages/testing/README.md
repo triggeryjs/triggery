@@ -56,6 +56,10 @@ test('mod with sound shows toast and plays sound', async () => {
 });
 ```
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/testing/](https://triggeryjs.github.io/packages/testing/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — `createTestRuntime` wraps `createRuntime`.

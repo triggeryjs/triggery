@@ -1,0 +1,161 @@
+---
+title: "@triggery/solid"
+description: "SolidJS bindings for Triggery — useEvent, useCondition, useAction, provider, scope. Native to signals and onCleanup."
+sidebar:
+  order: 3
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+[SolidJS](https://www.solidjs.com) bindings for [Triggery](https://github.com/triggeryjs/triggery). Same hook shape as `@triggery/react` and `@triggery/vue`, native to Solid's signals and `onCleanup` lifecycle. **Zero runtime dependencies** — a thin lifecycle layer over `@triggery/core`.
+
+[![npm](https://img.shields.io/npm/v/@triggery/solid?style=flat-square)](https://www.npmjs.com/package/@triggery/solid)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/solid?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/solid)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/solid solid-js" />
+
+Peer deps: `solid-js >= 1.8.0`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `useEvent` | Typed event emitter, stable identity across the component lifetime. |
+| `useCondition` | Register a pull-only condition getter. Reads signals naturally. |
+| `useAction` | Register an action handler. Auto-cleans on `onCleanup`. |
+| `useInlineTrigger` | One-off triggers declared inside a component. |
+| `<TriggerRuntimeProvider>` | Inject a custom runtime via Solid's context API. |
+| `<TriggerScope>` | Scope condition/action registrations to a feature subtree. |
+
+## Quick start
+
+Three small files. The trigger reads like a spec, components only know about their own port.
+
+### 1. Define the trigger
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+
+export const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string; author: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({
+      title: event.payload.author,
+      body:  event.payload.text,
+    });
+  },
+});
+```
+
+### 2. Wrap the tree
+
+```tsx title="src/index.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/solid';
+import { render } from 'solid-js/web';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+render(
+  () => (
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  ),
+  document.getElementById('root')!,
+);
+```
+
+### 3. Wire components
+
+```tsx title="src/App.tsx"
+import { createSignal, type Component } from 'solid-js';
+import { useAction, useCondition, useEvent } from '@triggery/solid';
+import { messageTrigger } from './triggers/message.trigger';
+
+const SettingsProvider: Component = () => {
+  const [settings] = createSignal({ sound: true, notifications: true });
+  useCondition(messageTrigger, 'settings', () => settings());
+  return null;
+};
+
+const Chat: Component = () => {
+  const fire = useEvent(messageTrigger, 'new-message');
+  return (
+    <button onClick={() => fire({ text: 'hi', author: 'Alice' })}>
+      send
+    </button>
+  );
+};
+
+const Toast: Component = () => {
+  useAction(messageTrigger, 'showToast', ({ title, body }) =>
+    console.log(`[${title}] ${body}`),
+  );
+  return null;
+};
+
+export const App: Component = () => (
+  <>
+    <SettingsProvider />
+    <Chat />
+    <Toast />
+  </>
+);
+```
+
+Click the button — `Toast` logs. Toggle `settings.notifications` to false — silent.
+
+## How Solid integration differs from React
+
+Solid components only run their setup once. No `useCallback`, no dependency arrays, no ref dance — just close over what you need. Condition getters that read signals automatically see the latest value at fire time because Solid signals are pure functions.
+
+```tsx
+// Compare to React: no deps array, no useCallback, no memoization.
+useCondition(trigger, 'settings', () => settings());
+```
+
+## Cleanup
+
+All composables auto-clean via `onCleanup` — they work both inside component setup and inside detached `createRoot()` scopes. No manual disposer plumbing.
+
+## Recipes
+
+<CardGrid>
+  <LinkCard title="Counter (Solid)" description="The hello-world recipe." href="/recipes/solid/counter/" />
+  <LinkCard title="Notification pipeline" description="Toast + sound + badge in three components." href="/recipes/solid/notification-pipeline/" />
+  <LinkCard title="Debounced search" description="take-latest + AbortSignal for autocomplete." href="/recipes/react/debounced-search/" />
+</CardGrid>
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="The runtime this binding wraps." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="Identical hook shape for React 18+/19." href="/packages/react/" />
+  <LinkCard title="@triggery/vue" description="Identical hook shape for Vue 3." href="/packages/vue/" />
+  <LinkCard title="@triggery/testing" description="Test the trigger without rendering Solid." href="/packages/testing/" />
+  <LinkCard title="@triggery/vite" description="Auto-discovery via virtual:triggery-registry." href="/packages/vite/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/solid)
+- [npm](https://www.npmjs.com/package/@triggery/solid)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/solid/CHANGELOG.md)

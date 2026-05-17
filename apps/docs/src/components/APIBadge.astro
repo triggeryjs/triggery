@@ -1,0 +1,56 @@
+---
+/**
+ * Stability badge for API reference pages. Wraps `<Badge>` with semantic
+ * variants so we don't end up with "danger" badges meaning two different
+ * things in different places.
+ *
+ * Localised: detects the page locale from `Astro.url.pathname` and switches
+ * the stability label + the "since …" prefix into the right language.
+ */
+import { Badge } from '@astrojs/starlight/components';
+
+type Stability = 'stable' | 'experimental' | 'deprecated' | 'internal';
+
+interface Props {
+  stability?: Stability;
+  /** Override the text. */
+  text?: string;
+  /** Optional version marker, e.g. `"since 0.1.0"` or `"0.1.0"`.
+   * If the value starts with the literal "since " (EN) or "с " (RU),
+   * the prefix is stripped before re-prefixing in the active locale. */
+  since?: string;
+}
+
+const { stability = 'stable', text, since } = Astro.props;
+
+// Pick the locale from the URL — every RU page is under `/ru/…`.
+const isRu = Astro.url.pathname.startsWith('/ru/');
+
+// Russian labels are adjective-form ("Стабильный [API]") so the badge
+// reads naturally as "the API is stable" rather than as an adverb.
+const labels: Record<
+  Stability,
+  { variant: 'note' | 'tip' | 'caution' | 'danger'; en: string; ru: string }
+> = {
+  stable: { variant: 'note', en: 'Stable', ru: 'Стабильный' },
+  experimental: { variant: 'caution', en: 'Experimental', ru: 'Экспериментальный' },
+  deprecated: { variant: 'danger', en: 'Deprecated', ru: 'Устаревший' },
+  internal: { variant: 'note', en: 'Internal', ru: 'Внутренний' },
+};
+
+const entry = labels[stability];
+const label = text ?? (isRu ? entry.ru : entry.en);
+
+// Normalise a `since` value into "since X" / "с X" without doubling the prefix.
+function formatSince(raw: string | undefined): string | null {
+  if (!raw) return null;
+  let v = raw.trim();
+  v = v.replace(/^since\s+/i, '').replace(/^с\s+/, '');
+  return isRu ? `с ${v}` : `since ${v}`;
+}
+
+const sinceText = formatSince(since);
+const labelText = sinceText ? `${label} · ${sinceText}` : label;
+---
+
+<Badge text={labelText} variant={entry.variant} size="small" />

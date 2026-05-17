@@ -1,0 +1,337 @@
+---
+title: "Handlers"
+description: "The handler context — event, conditions, actions, check, signal, meta — the centerpiece reference."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+The **handler** is the function the runtime calls when a fired event matches a trigger and the required conditions are present. It receives one argument — the `ctx` — which has six fields:
+
+```ts
+handler({ event, conditions, actions, check, signal, meta }) {
+  //         │       │           │        │      │       │
+  //         │       │           │        │      │       └─ runId, triggerId, cascade info
+  //         │       │           │        │      └─ AbortSignal — flipped on supersede / dispose
+  //         │       │           │        └─ check.is / check.all / check.any predicates
+  //         │       │           └─ actions.foo?.(payload) + actions.debounce/throttle/defer
+  //         │       └─ pull-only snapshot of registered condition getters
+  //         └─ { name, payload } — discriminated union of declared events
+}
+```
+
+The handler is plain JavaScript. No reactive graph wraps it; no proxies escape it. Each call gets a fresh `ctx`. The page below walks every field.
+
+## `event` — the discriminated union
+
+`event` is a discriminated union over every event listed in the schema. The shape is `{ readonly name: K; readonly payload: EventMap[K] }` for each `K`. Branch on `event.name` to narrow `event.payload`:
+
+```ts title="src/triggers/message.trigger.ts"
+type Message = { author: string; text: string };
+
+export const messageTrigger = createTrigger<{
+  events: {
+    'new-message':   Message;
+    'edited':        Message;
+    'channel-empty': void;
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message', 'edited', 'channel-empty'],
+  handler({ event }) {
+    switch (event.name) {
+      case 'new-message':
+        // event.payload: Message
+        console.log('new', event.payload.author);
+        break;
+      case 'edited':
+        // event.payload: Message
+        console.log('edit', event.payload.text);
+        break;
+      case 'channel-empty':
+        // event.payload: void
+        console.log('empty channel');
+        break;
+    }
+  },
+});
+```
+
+If the trigger lists exactly one event, the `event.payload` type is just that event's payload — no switch needed.
+
+## `conditions` — the typed map of getters
+
+`conditions` is a frozen snapshot of the trigger's condition values, lazily read at first access. Each entry is `T | undefined` because the registration may not exist yet. The proxy caches per run — reading the same condition twice gives the same value.
+
+```ts
+handler({ conditions, event }) {
+  // Manual guard — narrows TS.
+  if (!conditions.user)     return;
+  if (!conditions.settings) return;
+
+  // Both are non-undefined here.
+  if (!conditions.settings.notifications) return;
+  if (event.payload.channelId === conditions.activeChannelId) return;
+
+  // …proceed.
+}
+```
+
+Three things to remember:
+
+1. **Order matters for cost, not correctness.** The runtime only calls the getter when you read it. Put cheap checks first.
+2. **Read once, branch many.** `const s = conditions.settings; if (!s) return; if (!s.notifications) return; if (s.dnd) return;` is idiomatic.
+3. **There's no `.value` unwrap.** What you read is the value the getter returned, full stop.
+
+See [Conditions](/guide/essentials/conditions/) for the registration side.
+
+## `actions` — the proxy with optional members + timer chain
+
+`actions` is the side-effect surface. Every declared action is `((payload) => void) | undefined`. Plus three chainable wrappers:
+
+```ts
+handler({ actions, event }) {
+  // Plain call — no-op if not registered.
+  actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+
+  // Timer-wrapped calls.
+  actions.debounce(800).playSound?.('beep');
+  actions.throttle(2000).updateBadge?.(event.payload.channelId);
+  actions.defer(100).analytics?.({ kind: 'msg.received' });
+}
+```
+
+`debounce`, `throttle`, `defer` return a new proxy with the same shape — chainable but flat. The runtime owns the timer state per trigger and cancels on dispose.
+
+A void-payload action takes no argument: `actions.beep?.()`.
+
+See [Actions](/guide/essentials/actions/) for the registration side and the timer model.
+
+## `check` — typed predicates over conditions
+
+`check` is a tiny DSL that does three things you'd otherwise write by hand: narrow `T | undefined`, gate on a predicate, and return `false` cleanly when the condition isn't registered.
+
+### `check.is(key, predicate)`
+
+True when the condition exists and the predicate matches. The predicate receives the value typed as `NonNullable<T>`:
+
+```ts
+if (check.is('settings', (s) => s.notifications)) {
+  // Branch when settings is registered AND s.notifications is true.
+}
+
+if (!check.is('user', (u) => u.id === event.payload.authorId)) {
+  // Skip when the user is unregistered OR the predicate is false.
+}
+```
+
+This is the idiomatic shorthand for "if X is present and X.y is truthy". A manual version is fine; `check.is` is shorter and shows up nicely in the inspector's `snapshotKeys`.
+
+### `check.all(map)`
+
+Every listed condition must exist and its predicate must return true. The map keys are condition names, the values are predicates:
+
+```ts
+if (!check.all({
+  settings:      (s) => s.notifications && !s.dnd,
+  user:          (u) => u.isActive,
+  activeChannel: (c) => c.id !== event.payload.channelId,
+})) {
+  return;
+}
+// All three exist and pass — proceed.
+```
+
+A missing condition (no registered getter) causes `all` to return `false` — same as a failing predicate. There's no "partial-true" mode.
+
+### `check.any(map)`
+
+At least one of the listed conditions must exist and pass. Missing conditions are skipped (they don't count as failures):
+
+```ts
+if (check.any({
+  isPriorityChannel: (b) => b === true,
+  isMentionMe:       (b) => b === true,
+})) {
+  actions.showUrgentToast?.({ title: 'You were mentioned' });
+}
+```
+
+`any` short-circuits on the first match.
+
+### When to use which
+
+- **One condition, one check** → `check.is`.
+- **Multiple conditions, all must pass** → `check.all`.
+- **Several "escape hatch" conditions, any of which qualifies** → `check.any`.
+- **Complex combined logic** → manual `if/else` with explicit narrowing — `check` doesn't try to be a query language.
+
+## `signal` — the abort signal for this run
+
+`signal` is an `AbortSignal` the runtime flips when:
+
+- A newer run supersedes this one (under `concurrency: 'take-latest'`, the default).
+- The runtime is disposed.
+- The trigger is unregistered.
+
+For sync handlers, `signal` is academic — they return before any supersede can happen. For async handlers, pass it into your `fetch` / async iteration / event listener:
+
+```ts
+async handler({ event, signal, actions }) {
+  const res = await fetch(`/api/messages/${event.payload.channelId}`, { signal });
+  if (signal.aborted) return;
+  const data = await res.json();
+  if (signal.aborted) return;
+  actions.show?.(data);
+}
+```
+
+Two ways the signal helps:
+
+1. **`fetch(url, { signal })`** — the network layer aborts the request when the signal flips. No wasted bandwidth.
+2. **`if (signal.aborted) return;` after each `await`** — defensive, so a slow response doesn't dispatch actions for a now-stale event.
+
+Under `concurrency: 'queue'`, signals don't flip when a new run starts — runs serialize. Under `take-every`, signals also don't flip. See [Concurrency strategies](/guide/async/concurrency/).
+
+## `meta` — run identity and cascade info
+
+`meta` carries identifying information about this run:
+
+```ts
+type MetaCtx = {
+  readonly runId:           string;   // unique per run
+  readonly triggerId:       string;   // your trigger's id
+  readonly scheduledAt:     number;   // performance.now() when the run started
+  readonly cascadeDepth:    number;   // 0 for top-level, >0 when fired from another trigger
+  readonly parentRunId?:    string;   // the run that fired the event that started this run
+  readonly parentTriggerId?: string;  // the parent trigger's id
+};
+```
+
+The common use is structured logging:
+
+```ts
+handler({ event, meta, actions }) {
+  console.log(`[${meta.triggerId} / ${meta.runId}] firing for`, event.name);
+  if (meta.cascadeDepth > 0) {
+    console.log(`  cascaded from ${meta.parentTriggerId} / ${meta.parentRunId}`);
+  }
+}
+```
+
+`runId` is the same id the inspector keys entries by, so a server log and the inspector timeline correlate trivially. `cascadeDepth` and `parentRunId` are what powers the cascade chain rendering in `@triggery/devtools-redux`.
+
+## Return value
+
+The handler may return `void` or `Promise<void>`. Both are first-class:
+
+```ts
+handler({ event, actions }) {
+  if (event.name === 'new-message') actions.show?.(event.payload);
+}
+
+async handler({ event, signal, actions }) {
+  const data = await fetch('/x', { signal }).then((r) => r.json());
+  actions.show?.(data);
+}
+```
+
+If the handler throws (or rejects), the runtime catches it, marks the inspector entry as `'errored'`, and invokes the middleware `onError` hook. The trigger stays registered — the next event runs the handler normally.
+
+Returning a value other than `undefined` is ignored — the type forbids it. The handler is for side effects, not for computing.
+
+## Common patterns
+
+### Early-return on skip
+
+The most common shape — guard, then act:
+
+```ts
+handler({ event, conditions, actions, check }) {
+  if (!conditions.settings) return;
+  if (event.payload.channelId === conditions.activeChannelId) return;
+  if (!check.is('settings', (s) => s.notifications)) return;
+
+  actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+}
+```
+
+Read top-to-bottom as a spec: "skip if no settings, skip if same channel, skip if notifications off, otherwise toast." The trigger file is the spec.
+
+### Fan-out actions
+
+Several effects in one run:
+
+```ts
+handler({ event, actions, check }) {
+  if (check.is('settings', (s) => s.notifications)) {
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  }
+  if (check.is('settings', (s) => s.sound && !s.dnd)) {
+    actions.debounce(800).playSound?.('beep');
+  }
+  actions.incrementBadge?.(event.payload.channelId);
+  actions.defer(100).analytics?.({ kind: 'msg.received' });
+}
+```
+
+Each action is independent; the inspector records the `executedActions` list per run, so you can see exactly which side effects ran.
+
+### Cascade — firing another event
+
+Reach the runtime to fire a downstream event from inside the handler:
+
+```ts
+import { getDefaultRuntime } from '@triggery/core';
+
+handler({ event, meta }) {
+  if (event.name === 'user:signed-in') {
+    getDefaultRuntime().fire('preload-inbox', { userId: event.payload.userId });
+    // The new event carries cascadeDepth=1 and parentRunId=meta.runId in the next handler.
+  }
+}
+```
+
+The runtime tags the new fire as a cascade and enforces the depth limit. See [Cascade](/guide/architecture/cascade/).
+
+### Logging with `meta`
+
+For structured tracing:
+
+```ts
+import { logger } from '~/logger';
+
+handler({ event, meta }) {
+  logger.info('trigger run', {
+    triggerId:    meta.triggerId,
+    runId:        meta.runId,
+    eventName:    event.name,
+    cascadeDepth: meta.cascadeDepth,
+    parentRunId:  meta.parentRunId,
+  });
+}
+```
+
+The same fields end up in the inspector, so production logs and DEV inspector entries line up by `runId`.
+
+<CardGrid>
+  <LinkCard
+    title="Async handlers"
+    description="The full async story — awaits, signal propagation, error boundaries."
+    href="/guide/async/async-handlers/"
+  />
+  <LinkCard
+    title="Concurrency strategies"
+    description="take-latest, take-every, take-first, queue, exhaust — when each one applies."
+    href="/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Cancellation"
+    description="Reading signal correctly, passing it to fetch, aborting nested work."
+    href="/guide/async/cancellation/"
+  />
+  <LinkCard
+    title="Cascade"
+    description="Cross-trigger fanout, depth limits, cycle detection, devtools view."
+    href="/guide/architecture/cascade/"
+  />
+</CardGrid>

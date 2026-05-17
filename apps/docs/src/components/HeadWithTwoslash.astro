@@ -1,0 +1,21 @@
+---
+/**
+ * Wraps Starlight's default <Head> and adds the client-side runtime needed
+ * to make `ts twoslash` hover popovers actually appear.
+ *
+ * Nova 0.10 enables Twoslash via Shiki (which renders `<twoslash-root>` /
+ * `<twoslash-trigger>` / `<twoslash-content>` custom elements with
+ * `data-state="closed"` / `display: none` defaults), but doesn't bundle the
+ * matching client-side initializer from `shiki-twoslash-renderer/elements`.
+ * Without it, no hover ever flips the state to `open` and the popovers stay
+ * invisible. We side-effect import that module here so it ships on every
+ * page.
+ */
+import Default from '@astrojs/starlight/components/Head.astro';
+---
+
+<Default><slot /></Default>
+
+<script>
+  import 'shiki-twoslash-renderer/elements';
+</script>

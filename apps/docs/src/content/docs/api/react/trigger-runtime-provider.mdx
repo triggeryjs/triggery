@@ -1,0 +1,150 @@
+---
+title: "TriggerRuntimeProvider"
+description: "Inject a custom runtime via React context. Descendants use it instead of the default singleton."
+sidebar:
+  order: 8
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+A React context provider that injects a custom [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) into the tree. Every [`useEvent`](/api/react/use-event/), [`useCondition`](/api/react/use-condition/), [`useAction`](/api/react/use-action/), and [`useInspectHistory`](/api/react/use-inspect-history/) call inside the provider uses this runtime instead of the global singleton.
+
+Use it when you need real isolation: parallel tests, micro-frontends running in one tab, multi-tenant apps where each tenant has its own trigger graph.
+
+## Import
+
+```ts
+import { TriggerRuntimeProvider } from '@triggery/react';
+```
+
+## Signature
+
+```ts
+function TriggerRuntimeProvider(props: TriggerRuntimeProviderProps): JSX.Element;
+
+type TriggerRuntimeProviderProps = {
+  readonly runtime: Runtime;
+  readonly children: ReactNode;
+};
+```
+
+## Props
+
+| Prop | Type | Required | Description |
+|---|---|---|---|
+| `runtime` | [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) | yes | The runtime descendants should use. |
+| `children` | `ReactNode` | yes | Subtree that gets the runtime. |
+
+## Examples
+
+### One runtime at the app root
+
+```tsx
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+### Per-test isolation (Testing Library)
+
+```tsx
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { render } from '@testing-library/react';
+import type { ReactNode } from 'react';
+
+function renderWithRuntime(ui: ReactNode) {
+  const runtime = createRuntime();
+  const result = render(
+    <TriggerRuntimeProvider runtime={runtime}>{ui}</TriggerRuntimeProvider>,
+  );
+  return { ...result, runtime };
+}
+```
+
+### Per-tenant micro-frontends
+
+```tsx
+import { createRuntime, type Runtime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { useMemo, type ReactNode } from 'react';
+
+const cache = new Map<string, Runtime>();
+
+function getRuntime(tenantId: string) {
+  let rt = cache.get(tenantId);
+  if (!rt) {
+    rt = createRuntime();
+    cache.set(tenantId, rt);
+  }
+  return rt;
+}
+
+export function TenantBoundary({ tenantId, children }: { tenantId: string; children: ReactNode }) {
+  const runtime = useMemo(() => getRuntime(tenantId), [tenantId]);
+  return <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>;
+}
+```
+
+### Nested providers
+
+The inner provider wins:
+
+```tsx
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import type { ReactNode } from 'react';
+
+const outer = createRuntime();
+const inner = createRuntime();
+
+function App({ children }: { children: ReactNode }) {
+  return (
+    <TriggerRuntimeProvider runtime={outer}>
+      {/* Uses outer */}
+      <TriggerRuntimeProvider runtime={inner}>
+        {/* Uses inner */}
+        {children}
+      </TriggerRuntimeProvider>
+    </TriggerRuntimeProvider>
+  );
+}
+```
+
+## Notes
+
+<Aside type="tip" title="Optional in most apps">
+Skip the provider entirely and bindings fall back to [`getDefaultRuntime`](/api/core/get-default-runtime/) — fine for the common single-runtime case. Add the provider when you actually need isolation.
+</Aside>
+
+<Aside type="caution" title="Runtime identity matters">
+The `runtime` prop should be stable between renders. Passing a new runtime every render tears down all registrations and re-runs every `useEffect`, which is rarely what you want. Construct the runtime outside the component (module top level, `useMemo`, etc.).
+</Aside>
+
+<Aside>
+The provider only switches what the **hooks** see. Triggers created with an explicit runtime argument — `createTrigger(config, runtime)` — are registered against that runtime regardless of which provider wraps the component.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="TriggerScope" description="Lighter, in-runtime partitioning by scope id." href="/api/react/trigger-scope/" />
+  <LinkCard title="createRuntime" description="Construct the runtime you pass here." href="/api/core/create-runtime/" />
+  <LinkCard title="getDefaultRuntime" description="The fallback used when no provider is present." href="/api/core/get-default-runtime/" />
+  <LinkCard title="Runtime guide" description="Default vs isolated vs scoped — when to pick which." href="/guide/essentials/runtime/" />
+</CardGrid>

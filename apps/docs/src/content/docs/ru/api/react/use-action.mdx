@@ -1,0 +1,124 @@
+---
+title: useAction
+description: "Зарегистрировать обработчик действия для триггера. Вызывается, когда обработчик зовёт actions.<name>()."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Регистрирует обработчик действия — функцию, которую рантайм вызывает, когда обработчик триггера зовёт `actions.<name>(payload)`. Обработчики могут быть синхронными или `async`; их возвращаемое значение ожидается внутри запуска обработчика триггера.
+
+## Импорт
+
+```ts
+import { useAction } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function useAction<S extends TriggerSchema, K extends ActionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  handler: ActionMap<S>[K] extends void
+    ? () => void | Promise<void>
+    : (payload: ActionMap<S>[K]) => void | Promise<void>,
+): void;
+```
+
+Параметр `payload` обработчика типизирован из схемы действия. Действия с void-payload регистрируют обработчик вида `() => void | Promise<void>`.
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `trigger` | `Trigger<S>` | Триггер, возвращённый из [`createTrigger`](/ru/api/core/create-trigger/). |
+| `name` | `K extends ActionKey<S>` | Действие, объявленное в схеме триггера. |
+| `handler` | Function | Sync или async обработчик. Может возвращать `void` или `Promise<void>`. |
+
+## Возвращает
+
+`void`. Обработчик хранится в ref, регистрация выставляется в `useEffect` и очищается при размонтировании.
+
+## Примеры
+
+### Sync-обработчик
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useAction } from '@triggery/react';
+
+const trigger = createTrigger<{
+  events:  { 'new-message': { author: string } };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'demo',
+  events: ['new-message'],
+  handler({ event, actions }) {
+    actions.showToast?.({ title: event.payload.author, body: 'hi' });
+  },
+});
+
+function NotificationLayer() {
+  useAction(trigger, 'showToast', ({ title, body }) => {
+    // ^^^^^ payload is typed from the schema
+    console.log('toast', title, body);
+  });
+  return null;
+}
+```
+
+### Async-обработчик с AbortSignal
+
+Рантайм управляет обработчиком триггера — и, соответственно, твоим async-действием — в рамках выбранной [стратегии конкурентности](/ru/guide/async/concurrency/). Для `take-latest` AbortSignal из `ctx` обработчика триггера — это тот сигнал, который нужно прокидывать вниз; если действию нужен собственный abort, заведи отдельный контроллер.
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useAction } from '@triggery/react';
+
+const trigger = createTrigger<{
+  events: { 'submit-form': { url: string; body: unknown } };
+  actions: { post: { url: string; body: unknown } };
+}>({
+  id: 'demo',
+  events: ['submit-form'],
+  async handler({ event, actions, signal }) {
+    await actions.post?.(event.payload);
+    signal.throwIfAborted();
+  },
+});
+
+function Network() {
+  useAction(trigger, 'post', async ({ url, body }) => {
+    await fetch(url, { method: 'POST', body: JSON.stringify(body) });
+  });
+  return null;
+}
+```
+
+### Несколько реакторов
+
+Если ты смонтируешь два компонента, оба зовут `useAction(trigger, 'showToast', …)`, побеждает смонтированный последним, и в DEV логируется warn-once. При размонтировании восстанавливается предыдущий обработчик. См. [Ownership](/ru/guide/architecture/ownership/).
+
+## Замечания
+
+<Aside type="tip">
+Вызов `actions.<name>()` из обработчика триггера никогда не ререндерит компонент-реактор. Обработчик исполняется в рантайме, а не в commit-фазе React.
+</Aside>
+
+<Aside>
+Обработчик триггера зовёт действия через optional chaining: `actions.showToast?.(payload)`. `?.` обязателен, потому что у действия может ещё не быть зарегистрированного обработчика (например, реактор не смонтирован). Ранний выход, когда действия нет, — валидный паттерн.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="useEvent" description="Зажигай события от продюсеров." href="/ru/api/react/use-event/" />
+  <LinkCard title="useCondition" description="Зарегистрировать pull-only геттер условия." href="/ru/api/react/use-condition/" />
+  <LinkCard title="Руководство по действиям" description="Нарратив: debounce/throttle/queue/defer цепочки, ownership." href="/ru/guide/essentials/actions/" />
+  <LinkCard title="Стратегии конкурентности" description="Как async-обработчики чередуются под take-latest и др." href="/ru/guide/async/concurrency/" />
+</CardGrid>

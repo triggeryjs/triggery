@@ -1,0 +1,118 @@
+---
+title: "createInspector"
+description: "Создаёт инспектор на кольцевом буфере. Доступен для кастомной композиции рантайма и экспериментов с devtools."
+sidebar:
+  order: 6
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Создаёт инспектор на кольцевом буфере, которым рантайм пользуется для записи снепшотов. Рантайм вызывает его за тебя, когда ты передаёшь `inspectorBufferSize` в [`createRuntime`](/ru/api/core/create-runtime/); напрямую `createInspector` нужен только при сборке кастомной инфраструктуры рантайма (например, моста devtools, которому нужен прямой доступ к `record` / `subscribe`).
+
+Реализация не аллоцирует на горячем пути: O(1) `record`, фиксированный массив слотов, индекс с обёртыванием. `getBuffer()` материализует массив (newest-first) по требованию.
+
+## Импорт
+
+```ts
+import { createInspector } from '@triggery/core';
+```
+
+## Сигнатура
+
+```ts
+function createInspector(bufferSize: number): InspectorImpl;
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `bufferSize` | `number` | Сколько снепшотов хранить. Зажимается минимум до 1. |
+
+## Возвращает
+
+Объект `InspectorImpl`:
+
+| Метод | Сигнатура | Описание |
+|---|---|---|
+| `record(snapshot)` | `(s: TriggerInspectSnapshot) => void` | Запушить снепшот. Обёртывается по буферу. Уведомляет подписчиков. |
+| `getBuffer()` | `() => readonly TriggerInspectSnapshot[]` | Массив (newest-first) последних N записей. |
+| `getLastForTrigger(id)` | `(triggerId: string) => Snapshot \| undefined` | Самый свежий снепшот по id триггера. |
+| `subscribe(fn)` | `(fn) => () => void` | Слушатель, вызываемый на каждый `record`. Возвращает unsubscribe. |
+| `clear()` | `() => void` | Очистить буфер и карту по триггерам. |
+
+## Примеры
+
+### Сборка кастомного моста devtools
+
+```ts twoslash
+import { createInspector, type TriggerInspectSnapshot } from '@triggery/core';
+
+const inspector = createInspector(200);
+
+inspector.subscribe((snapshot: TriggerInspectSnapshot) => {
+  globalThis.postMessage(
+    { source: 'triggery-bridge', snapshot },
+    '*',
+  );
+});
+
+// Feed it manually — the example assumes you wired up your own dispatch
+// recording. The runtime created via `createRuntime` calls `record` for you.
+inspector.record({
+  triggerId: 'demo',
+  runId: '1',
+  eventName: 'ping',
+  status: 'fired',
+  durationMs: 0.2,
+  executedActions: ['log'],
+  snapshotKeys: [],
+});
+```
+
+### Подключение к latest-per-trigger
+
+```ts twoslash
+import { createInspector } from '@triggery/core';
+
+const inspector = createInspector(50);
+const latest = inspector.getLastForTrigger('chat:new-message');
+console.log(latest?.status);
+```
+
+### Подписка и отписка
+
+```ts twoslash
+import { createInspector } from '@triggery/core';
+
+const inspector = createInspector(50);
+
+const unsubscribe = inspector.subscribe(snapshot => {
+  console.log(snapshot.triggerId, snapshot.status);
+});
+
+// Later, when the panel unmounts:
+unsubscribe();
+```
+
+## Замечания
+
+<Aside type="tip">
+Инспектор — единственный источник истины для `runtime.subscribe`, `runtime.getInspectorBuffer`, `trigger.inspect()` и React-хуков `useInspect` / `useInspectHistory`. Замена стандартного инспектора — редкий случай: обычно нужен стандартный инспектор плюс кастомный `Middleware`, зеркалящий записи в свой буфер.
+</Aside>
+
+<Aside type="caution">
+Инспектор не знает, какому рантайму он принадлежит. Если переиспользовать один инспектор для нескольких рантаймов, снепшоты будут перемешаны — панели devtools обычно хотят один инспектор на рантайм.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createRuntime" description="Передай `inspectorBufferSize`, чтобы настроить стандартный инспектор." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="useInspectHistory" description="React-хук поверх буфера инспектора." href="/ru/api/react/use-inspect-history/" />
+  <LinkCard title="TriggerInspectSnapshot" description="Форма снепшота." href="/api/core/types/trigger-schema/" />
+  <LinkCard title="Руководство по инспектору" description="Что отслеживает инспектор и как это рендерить." href="/ru/guide/advanced/inspector/" />
+</CardGrid>

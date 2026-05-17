@@ -1,0 +1,175 @@
+---
+title: createTrigger
+description: "Объявление типизированного триггера и его регистрация в рантайме. Единственный конструктор в публичном API."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Единственный конструктор в Triggery. Возвращает `Trigger<Schema>`, зарегистрированный в указанном рантайме (или в рантайме по умолчанию, если параметр опущен). Большинство приложений создают один триггер на сценарий — один файл на триггер.
+
+## Импорт
+
+```ts
+import { createTrigger } from '@triggery/core';
+```
+
+## Сигнатура
+
+```ts
+function createTrigger<S extends TriggerSchema>(
+  config: CreateTriggerConfig<S>,
+  runtime?: Runtime,
+): Trigger<S>;
+```
+
+Дженерик `S` — это схема: три опциональные карты для событий, условий и действий. В обычном использовании он **никогда не выводится**, всегда передавай его явно.
+
+## Схема
+
+```ts
+type TriggerSchema = {
+  events?:     Record<string, unknown>;  // payload type per event name
+  conditions?: Record<string, unknown>;  // value type per condition name
+  actions?:    Record<string, unknown>;  // payload type per action name
+};
+```
+
+Для void-payload используй `void` (события) или `undefined` (действия). Имена могут быть любой валидной строкой; по соглашению — kebab-case-глаголы для событий, camelCase для условий и действий.
+
+## Config
+
+| Параметр | Тип | Обязательный | По умолчанию | Описание |
+|---|---|---|---|---|
+| `id` | `string` (литерал) | да | — | Уникальный ключ в реестре рантайма. Должен быть строковым литералом — см. [`no-dynamic-id`](/ru/api/eslint-plugin/recommended/). |
+| `events` | `readonly EventKey<S>[]` | да | — | Имена событий из `S['events']`, на которые реагирует триггер. |
+| `required` | `readonly ConditionKey<S>[]` | нет | `[]` | Условия, которые должны быть зарегистрированы, чтобы обработчик запустился. |
+| `schedule` | `'microtask' \| 'sync'` | нет | `'microtask'` | Когда диспатчить подходящие события. |
+| `concurrency` | [`ConcurrencyStrategy`](/ru/api/core/types/runtime-options/) | нет | `'take-latest'` | Как взаимодействуют асинхронные запуски обработчика. |
+| `scope` | `string` | нет | `''` | Ограничивает триггер поддеревом `<TriggerScope id="…">`. |
+| `handler` | [`TriggerHandler<S>`](/ru/api/core/types/trigger-ctx/) | да | — | Функция, вызываемая, когда событие совпало и условия `required` удовлетворены. |
+
+## Возвращает
+
+Объект [`Trigger<S>`](/ru/api/core/types/trigger-schema/) — стабильную идентичность, которую можно передавать в хуки React / Solid / Vue.
+
+| Метод | Описание |
+|---|---|
+| `trigger.id` | Та же строка, которую ты передал. |
+| `trigger.enable()` | Заново включить отключённый триггер. |
+| `trigger.disable()` | Пропускать будущие события (записывает `'disabled'` в инспектор). |
+| `trigger.isEnabled()` | Boolean. |
+| `trigger.inspect()` | Последний [`TriggerInspectSnapshot`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts#L-TriggerInspectSnapshot) либо `undefined`. |
+| `trigger.dispose()` | Снять регистрацию в рантайме. Редко — используется в тестах. |
+| `trigger.namedHooks()` | Бросает исключение при прямом вызове в `@triggery/core` — используй [`createNamedHooks`](/ru/api/react/create-named-hooks/) из биндинга. |
+
+## Примеры
+
+### Минимальный триггер
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+const ping = createTrigger<{
+  events: { tick: number };
+}>({
+  id: 'demo:ping',
+  events: ['tick'],
+  handler({ event }) {
+    console.log('tick', event.payload);
+  },
+});
+```
+
+### Полная схема со всеми тремя картами
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+type Message  = { author: string; text: string; channelId: string };
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { settings: Settings; activeChannelId: string | null };
+  actions:    { showToast: { title: string; body: string }; playSound: 'beep' };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (!check.is('settings', s => s.notifications)) return;
+
+    actions.debounce(800).playSound?.('beep');
+    actions.showToast?.({
+      title: event.payload.author,
+      body:  event.payload.text,
+    });
+  },
+});
+```
+
+### Асинхронный обработчик с AbortSignal
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+const fetchTrigger = createTrigger<{
+  events:  { 'fetch-user': string };
+  actions: { setUser: { id: string; name: string } };
+}>({
+  id: 'fetch-user',
+  events: ['fetch-user'],
+  concurrency: 'take-latest',
+  async handler({ event, actions, signal }) {
+    const res = await fetch(`/api/users/${event.payload}`, { signal });
+    if (signal.aborted) return;
+    actions.setUser?.(await res.json());
+  },
+});
+```
+
+### Регистрация в конкретном рантайме
+
+```ts twoslash
+import { createRuntime, createTrigger } from '@triggery/core';
+
+const runtime = createRuntime({ inspector: { dev: true, prod: false } });
+
+const trigger = createTrigger<{ events: { hi: void } }>(
+  {
+    id: 'demo:hi',
+    events: ['hi'],
+    handler() {
+      console.log('hi');
+    },
+  },
+  runtime,
+);
+```
+
+## Замечания
+
+<Aside type="caution" title="Ограничение сужения типов в V1">
+В V1 `required` проверяется только в рантайме. TypeScript не сужает типы обязательных условий внутри обработчика — `conditions.user` остаётся `User | undefined`. Используй либо ранний guard (`if (!conditions.user) return;`), либо `check.is/all/any`, которые несут NonNullable-сужение.
+
+Builder API с автоматическим сужением обязательных условий — в роадмапе на V1.1.
+</Aside>
+
+<Aside type="tip">
+Триггеры можно создавать на верхнем уровне модуля. Биндинги (`useEvent`, `useCondition`, `useAction`) находят их по стабильной идентичности — никакого поиска по имени-строке на уровне хука нет.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createRuntime" description="Контейнер, в котором живут триггеры, условия и действия." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="TriggerSchema" description="Общий тип — карты events / conditions / actions." href="/ru/api/core/types/trigger-schema/" />
+  <LinkCard title="TriggerHandler" description="Тип функции аргумента-обработчика." href="/ru/api/core/types/trigger-ctx/" />
+  <LinkCard title="Руководство по анатомии триггера" description="Пошаговый разбор полей в нарративной форме." href="/ru/guide/essentials/trigger-anatomy/" />
+</CardGrid>

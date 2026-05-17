@@ -38,6 +38,10 @@ In Node / SSR `installDevtoolsBridge` returns a no-op disposer.
 { source: 'triggery-devtools', type: 'triggery:bye',      runtimeId,               at }
 ```
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/devtools-bridge/](https://triggeryjs.github.io/packages/devtools-bridge/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.

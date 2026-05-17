@@ -1,0 +1,219 @@
+---
+title: "Автообнаружение"
+description: "Используй @triggery/vite, чтобы регистрировать каждый *.trigger.ts через один виртуальный импорт. Семантика HMR, расклад монорепо и запасной путь без плагина."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Триггер начинает что-то значить только после того, как отработал `createTrigger(...)` — именно этот вызов регистрирует его в рантайме. Конвенция Triggery: один триггер на файл, с суффиксом `.trigger.ts`. Как только их становится больше пары, желание поддерживать руками лестницу `import './triggers/foo.trigger'` пропадает. `@triggery/vite` делает так, чтобы этот список импортов исчез.
+
+## Что делает плагин
+
+`@triggery/vite` добавляет в твою Vite-сборку один виртуальный модуль: `virtual:triggery-registry`. На этапе сборки и dev-сервера плагин ищет каждый `*.trigger.{ts,tsx,js,jsx}`, попадающий под твой паттерн, и генерирует модуль, импортирующий каждый из них как side-effect:
+
+```ts title="virtual:triggery-registry (generated)"
+import "/abs/path/src/features/chat/chat.trigger.ts";
+import "/abs/path/src/features/notifications/notifications.trigger.ts";
+import "/abs/path/src/triggers/analytics.trigger.ts";
+export {};
+```
+
+Этот виртуальный модуль импортируется **один раз** в точке входа приложения. Side-effect-импорт запускает у каждого файла-триггера top-level `createTrigger(...)`, и тот регистрирует триггер в дефолтном рантайме.
+
+## Установка
+
+<PackageManagers pkg="@triggery/vite" dev />
+
+Дальше подключи его в `vite.config.ts`:
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [
+    react(),
+    triggery({ glob: 'src/**/*.trigger.ts' }),
+  ],
+});
+```
+
+И импортируй виртуальный модуль ровно один раз, как можно раньше:
+
+```ts title="src/main.tsx"
+import 'virtual:triggery-registry';
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+Всё. Каждый `*.trigger.ts` теперь живой с момента загрузки приложения — никаких пер-фичных списков импортов.
+
+<Aside type="tip">
+Эта строка импорта — side-effect-импорт; у файла нет экспортов для биндинга. Не поддавайся искушению удалить её, потому что «никто её не использует» — линтер может предложить именно это. Настрой ESLint, чтобы он разрешал `virtual:triggery-registry` как side-effect-импорт, либо повесь inline-disable-комментарий.
+</Aside>
+
+## TypeScript: ambient-декларация для виртуального модуля
+
+Добавь это один раз, чтобы TypeScript перестал ругаться на импорт:
+
+```ts title="src/triggery-virtual.d.ts"
+declare module 'virtual:triggery-registry';
+```
+
+Более полная декларация не нужна — модуль ничего не экспортирует.
+
+## Опции плагина
+
+Плагин принимает небольшой объект опций. Сегодня поле одно; в V1.1 их станет больше — см. таблицу ниже.
+
+```ts
+triggery({
+  glob: 'src/**/*.trigger.ts',  // or an array of globs
+});
+```
+
+| Опция   | По умолчанию                            | Описание |
+|----------|----------------------------------------|-------------|
+| `glob`   | `'src/**/*.trigger.{ts,tsx,js,jsx}'`   | Один паттерн или массив. Всё, что принимает [`tinyglobby`](https://github.com/SuperchupuDev/tinyglobby). Паттерны разрешаются относительно корня Vite-проекта. |
+
+<Aside type="caution" title="Запланировано на V1.1">
+В V1.1 появятся ещё две опции: `runtime` (направить автообнаружение на недефолтный рантайм, например для multi-tenant приложений) и `hmr: false` (пропустить HMR-инвалидатор, если ты подключаешь свой). Они перечислены в [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md). Плагин V1 работает с дефолтным рантаймом и всегда сам обрабатывает HMR.
+</Aside>
+
+### Несколько глобов
+
+Монорепо часто хочет обнаруживать триггеры по всем пакетам, не только в `src/`:
+
+```ts
+triggery({
+  glob: [
+    'src/**/*.trigger.ts',
+    'packages/*/src/**/*.trigger.ts',
+    '!**/node_modules/**',
+  ],
+});
+```
+
+Паттерны проверяются по порядку; отрицания (`!**/...`) исключают. Плагин сортирует итоговый список файлов детерминированно, чтобы сгенерированный модуль был стабилен между машинами — это удобно для долгоживущих Vite-кешей.
+
+## HMR — что происходит при изменении файла-триггера
+
+Плагин различает два типа правок:
+
+| Правка | Что происходит |
+|------|--------------|
+| Ты редактируешь существующий `*.trigger.ts` | Vite перезапускает файл. Его `createTrigger(...)` срабатывает снова с тем же `id`. Рантайм трактует это как **last-mount-wins**: заменяет предыдущую регистрацию, прерывает любой выполняющийся запуск обработчика через `signal.aborted = true` и индексирует новый триггер. |
+| Ты добавляешь, переименовываешь или удаляешь `*.trigger.ts` | Плагин инвалидирует `virtual:triggery-registry`, чтобы список импортов пересобрался, дальше Vite перезапускает виртуальный модуль. Top-level `createTrigger(...)` нового файла срабатывает; удалённые файлы автоматически снимаются с регистрации, когда отработает HMR-cleanup старого модуля. |
+
+Результат: правишь обработчик, страница не перезагружается, следующее событие использует новый код, **а инспектор сохраняет историю** — снимки хранятся на рантайме, а не на объекте триггера. Можно наблюдать баг в реальном времени, поправить обработчик, выстрелить снова и сравнить два запуска в одной панели.
+
+<Aside type="tip">
+Если используешь недефолтный рантайм *и* плагин V1, авто-обнаруженные триггеры регистрируются на том, что вернёт `getDefaultRuntime()` при первом вызове `createTrigger`. Опция V1.1 `runtime: customRuntime` позволит направить автообнаружение в другое место. А пока: не смешивай кастомные рантаймы с автообнаружением в V1.
+</Aside>
+
+## Без плагина: `import.meta.glob`
+
+Если ты не на Vite или хочешь обойтись без плагина, у Vite есть эквивалентная фича из коробки. `import.meta.glob(pattern, { eager: true })` оценивает каждое совпадение во время загрузки:
+
+```ts title="src/main.tsx"
+// Importing for side effects only. Each module's createTrigger() call registers it.
+import.meta.glob('./triggers/**/*.trigger.ts', { eager: true });
+
+import { createRuntime } from '@triggery/core';
+// …
+```
+
+Это ровно то, что делает плагин, с двумя отличиями:
+
+- Приходится повторять glob в каждом entry-файле, которому нужны регистрации.
+- HMR работает как обычный module-graph HMR Vite (нет виртуального модуля для инвалидации). Для одной точки входа нормально; для монорепо становится многословно.
+
+Для не-Vite-инструментов эквивалент на этапе сборки:
+
+- **Webpack** — `require.context('./triggers', true, /\.trigger\.ts$/)`.
+- **Rspack** — то же, что и в Webpack.
+- **esbuild / tsup standalone** — сгенерируй список импортов небольшим build-скриптом. Мы поставляем такой как `@triggery/cli generate-registry` (см. страницу [`@triggery/cli`](/ru/packages/cli/)).
+
+## Почему это важно для монорепо и ленивых маршрутов
+
+Особо выигрывают две формы.
+
+### Монорепо
+
+В рабочем пространстве с `packages/chat`, `packages/billing`, `packages/notifications` каждый пакет владеет триггерами своих сценариев. Автообнаружение означает, что consumer-приложение *импортирует registry один раз* и получает триггеры всех трёх пакетов, не зная их файловой раскладки. Новый триггер в `packages/chat`? Появится при загрузке без изменений на стороне consumer.
+
+Скомбинируй с глобом, обходящим пакеты воркспейса:
+
+```ts title="apps/web/vite.config.ts"
+triggery({
+  glob: [
+    'src/**/*.trigger.ts',
+    '../../packages/*/src/**/*.trigger.ts',
+  ],
+});
+```
+
+### Ленивые маршруты
+
+Частый рефлекс — лениво загружать триггеры рядом с маршрутом, к которому они относятся: «Показывать этот тост, только когда маршрут `/chat` загружен». Не надо.
+
+Триггеры пассивны — регистрация ничего не стоит, пока не сработает событие. Весь реестр — пара килобайт метаданных после tree-shaking. **Регистрируй все заранее**, дальше `required` и `scope` решают, какие в каждый момент работают. Именно для этого спроектировано автообнаружение; ленивая загрузка триггеров — антипаттерн, возвращающий вопрос «кто владеет этим правилом», который мы пытаемся убрать.
+
+Исключение: очень большие куски кода внутри самого обработчика (например, генератор PDF). В этом случае оставь триггер зарегистрированным eagerly, а `await import('./pdf-generator')` сделай *внутри* обработчика.
+
+## Проверка подключения
+
+Четырёхстрочная проверка в точке входа ловит самый частый foot-gun («я импортировал виртуальный модуль слишком поздно, триггеры регистрируются после своих продьюсеров»):
+
+```ts title="src/main.tsx"
+import 'virtual:triggery-registry'; // ← line 1, before anything else
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime();
+if (import.meta.env.DEV) {
+  console.log('[triggery] discovered triggers:', runtime.graph().triggers.map((t) => t.id));
+}
+```
+
+`runtime.graph()` возвращает JSON-дружелюбный снимок реестра (id, scope, events, required, schedule, concurrency, enabled). Пустой список? Либо ни один `*.trigger.ts` не подошёл, либо неверный порядок импортов.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Инспектор"
+    description="Посмотри, что авто-обнаруженные триггеры реально делают в рантайме."
+    href="/ru/guide/advanced/inspector/"
+  />
+  <LinkCard
+    title="Inline-триггеры"
+    description="Запасной выход, когда отдельный *.trigger.ts избыточен — держи правило рядом с компонентом."
+    href="/ru/guide/advanced/inline-triggers/"
+  />
+  <LinkCard
+    title="@triggery/vite"
+    description="API-справочник плагина и его запланированных опций V1.1."
+    href="/ru/packages/vite/"
+  />
+  <LinkCard
+    title="Скоупы"
+    description="Пер-фичная изоляция, которая естественно сочетается с авто-обнаруженными триггерами."
+    href="/ru/guide/architecture/scopes/"
+  />
+</CardGrid>

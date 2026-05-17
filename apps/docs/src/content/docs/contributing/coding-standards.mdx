@@ -1,0 +1,61 @@
+---
+title: "Coding standards"
+description: "TypeScript strict, Biome, no any, ESM-only — the conventions every package in the monorepo follows."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery is a TypeScript-first monorepo with strict settings and a small set of opinions. Follow them and your PR review will be focused on logic, not formatting.
+
+## TypeScript
+
+- **`strict: true`** is enabled at the root `tsconfig.json` and inherited everywhere. No `any`. Use `unknown` + narrowing when types are intentionally open.
+- **No non-null assertions** (`!`) without a comment explaining why the value is provably non-null at that point.
+- **No type assertions** (`as Foo`) unless interoperating with a third-party API that types things wrong; prefer a type guard.
+- **`exports` field** in `package.json` is the source of truth for entry points. Use it; do not rely on `main`/`module` heuristics.
+
+## Naming
+
+- **Files**: kebab-case — `create-trigger.ts`, `inspector-buffer.ts`. Tests sit next to the source as `*.test.ts`.
+- **Exports**: camelCase for values (`createTrigger`, `getDefaultRuntime`), PascalCase for types and React/Solid/Vue components (`TriggerSchema`, `TriggerRuntimeProvider`).
+- **Trigger ids**: kebab-case nouns describing the scenario (`message-received`, not `on-new-message`).
+- **Events**: kebab-case verbs, colon-namespaced if cross-feature (`chat:message-received`).
+- **Conditions / actions**: camelCase nouns (`activeChannelId`, `showToast`).
+
+## Module format
+
+- **ESM only**, no CommonJS. `"type": "module"` everywhere.
+- **Pure modules** — no side effects at import time. The runtime is lazily created on first use.
+- **Side-effect-free** — every `package.json` has `"sideEffects": false` (except where bundles need otherwise; rare).
+
+## Dependencies
+
+- **`@triggery/core` has zero runtime dependencies**. This is a hard constraint.
+- **Adapter packages** take their target library as a `peerDependency` (Zustand, Redux, Jotai, …). They don't bundle the host library.
+- **Framework bindings** (`@triggery/react`, etc.) take the framework as a peer.
+- Adding a new dependency to *any* package requires explicit justification in the PR description.
+
+## Formatting and lint
+
+- **Biome** is the single source of truth for formatting and basic lint. Run `pnpm format` (write) or `pnpm lint` (check).
+- The CI runs `pnpm lint` on every PR and rejects diff that doesn't match Biome output. Keep your editor's "format on save" pointed at Biome.
+- **No code comments that restate the code.** Only comment the *why* — a hidden invariant, a deliberate trade-off, a known browser quirk. Match the surrounding style.
+
+## Public API conventions
+
+The public API surface of `@triggery/core` is short — `createTrigger`, `createRuntime`, `getDefaultRuntime`, `setDefaultRuntime`, `createCheck`, `createInspector`, `createScheduler`, and a handful of types. Anything new in `core` is a public-API change and goes through the [RFC process](/contributing/rfc-process/).
+
+For framework bindings: keep parity. If a hook ships in `@triggery/react` it ships in `@triggery/solid` and `@triggery/vue` with the same signature. The "API works in three frameworks" guarantee is a marketing claim and a maintenance budget — please honour both.
+
+## Attribution
+
+Do **not** add AI-attribution trailers (`Co-Authored-By: Claude …` or similar) to commits or PRs. Attribute work to humans.
+
+<CardGrid>
+  <LinkCard title="Development setup" description="Clone, install, build, test." href="/contributing/development-setup/" />
+  <LinkCard title="Writing tests" description="Vitest, fakeScheduler, contract tests." href="/contributing/writing-tests/" />
+  <LinkCard title="Writing docs" description="Style guide for this site." href="/contributing/writing-docs/" />
+  <LinkCard title="ESLint plugin" description="The rules the codebase enforces in user code." href="/packages/eslint-plugin/" />
+</CardGrid>

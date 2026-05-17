@@ -1,0 +1,335 @@
+---
+title: Пайплайн уведомлений
+description: "Тост, звук и бейдж в трёх независимых компонентах. Флагманский сценарий Triggery."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid, TabItem, Steps, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Канонический сценарий: приходит новое сообщение в чате, и в *разных компонентах* случаются три побочных эффекта, отсечённые *пользовательским состоянием, которым владеет ещё один компонент*. Друг про друга они ничего не знают. Прочитал файл триггера — продакт-менеджер понял, что происходит; прочитал компоненты — каждый рассказывает только про свою работу.
+
+С этим сценарием в остальной документации и сравниваются альтернативы на `useEffect`, sagas и listener-middleware.
+
+<StackBlitzButton path="examples/vite-react-notifications" label="Открыть полный пример в StackBlitz" />
+
+## Сценарий
+
+По WebSocket приходит новое сообщение. Нужно:
+
+1. **Показать тост** — если пользователь сейчас не смотрит этот разговор.
+2. **Сыграть бип** — если звук включён и не активен DND. Чтобы не спамить, ставим debounce.
+3. **Увеличить счётчик непрочитанных** — если сообщение не от самого пользователя.
+
+Пользовательское состояние распределено по разным компонентам:
+
+- `<SettingsPanel>` владеет `{ sound, notifications, dnd }`.
+- `<ActiveConversation>` знает `activeChannelId`.
+- `<SessionProvider>` владеет `currentUserId`.
+
+## Раскладка по файлам
+
+<FileTree>
+- src/
+  - triggers/
+    - **message.trigger.ts** весь сценарий
+  - features/
+    - chat/
+      - Chat.tsx продьюсер (`useEvent`) и провайдер (`useCondition` для activeChannelId)
+    - session/
+      - SessionProvider.tsx провайдер (`useCondition` для currentUserId)
+    - settings/
+      - SettingsPanel.tsx провайдер (`useCondition` для settings)
+    - notifications/
+      - NotificationLayer.tsx реактор (три `useAction`)
+  - App.tsx — собирает всё вместе
+  - main.tsx оборачивает дерево в `<TriggerRuntimeProvider>`
+</FileTree>
+
+## 1. Триггер
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
+type Message  = { id: string; author: string; authorId: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events: {
+    'new-message': Message;
+  };
+  conditions: {
+    settings:        Settings;
+    activeChannelId: string | null;
+    currentUserId:   string;
+  };
+  actions: {
+    showToast:      { title: string; body: string };
+    playSound:      'beep' | 'mention';
+    incrementBadge: string;             // channelId
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    const msg = event.payload;
+
+    // Уже в этом разговоре — молчим.
+    if (msg.channelId === conditions.activeChannelId) return;
+
+    // Сообщение от самого пользователя — никогда не сообщаем ему про его же сообщение.
+    if (msg.authorId === conditions.currentUserId) return;
+
+    // Счётчик непрочитанных увеличиваем всегда.
+    actions.incrementBadge?.(msg.channelId);
+
+    // Тост — только если уведомления включены.
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({
+        title: msg.author,
+        body:  msg.text,
+      });
+    }
+
+    // Звук — только если включён и не DND. Debounce — на случай очереди сообщений.
+    if (check.is('settings', s => s.sound && !s.dnd)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+  },
+});
+```
+
+Все правила — двадцать строк, читается как спецификация и легко тестируется (без рендера React).
+
+## 2. Провайдеры
+
+Три компонента регистрируют условия. Каждый отвечает за состояние, которым уже и так владеет, и никто из них не импортирует другого.
+
+```tsx title="src/features/settings/SettingsPanel.tsx"
+import { useCondition } from '@triggery/react';
+import { useState } from 'react';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+export function SettingsPanel() {
+  const [settings, setSettings] = useState({
+    sound:         true,
+    notifications: true,
+    dnd:           false,
+  });
+
+  useCondition(messageTrigger, 'settings', () => settings, [settings]);
+
+  return (
+    <fieldset>
+      <legend>Notifications</legend>
+      <label>
+        <input
+          type="checkbox"
+          checked={settings.notifications}
+          onChange={e => setSettings(s => ({ ...s, notifications: e.target.checked }))}
+        />
+        Show toasts
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={settings.sound}
+          onChange={e => setSettings(s => ({ ...s, sound: e.target.checked }))}
+        />
+        Play sound
+      </label>
+      <label>
+        <input
+          type="checkbox"
+          checked={settings.dnd}
+          onChange={e => setSettings(s => ({ ...s, dnd: e.target.checked }))}
+        />
+        Do Not Disturb
+      </label>
+    </fieldset>
+  );
+}
+```
+
+```tsx title="src/features/session/SessionProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+export function SessionProvider({ userId, children }: { userId: string; children: React.ReactNode }) {
+  useCondition(messageTrigger, 'currentUserId', () => userId, [userId]);
+  return <>{children}</>;
+}
+```
+
+```tsx title="src/features/chat/Chat.tsx (продьюсер и провайдер для activeChannelId)"
+import { useEvent, useCondition } from '@triggery/react';
+import { useState } from 'react';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+export function Chat({ channelId }: { channelId: string | null }) {
+  useCondition(messageTrigger, 'activeChannelId', () => channelId, [channelId]);
+
+  const fireMessage = useEvent(messageTrigger, 'new-message');
+
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        fireMessage({
+          id:        crypto.randomUUID(),
+          author:    'Alice',
+          authorId:  'u-alice',
+          text:      'are you free for lunch?',
+          channelId: 'c-lunch',
+        })
+      }
+    >
+      simulate inbound message
+    </button>
+  );
+}
+```
+
+## 3. Реактор
+
+Один компонент регистрирует все три обработчика действий. Он и владеет настоящими побочными эффектами.
+
+```tsx title="src/features/notifications/NotificationLayer.tsx"
+import { useAction } from '@triggery/react';
+import { useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import { messageTrigger } from '../../triggers/message.trigger';
+import { useBadgeStore } from '../../stores/badge';
+
+export function NotificationLayer() {
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const increment = useBadgeStore(s => s.increment);
+
+  useEffect(() => {
+    audio.current = new Audio('/beep.mp3');
+  }, []);
+
+  useAction(messageTrigger, 'showToast', ({ title, body }) => {
+    toast.success(title, { description: body });
+  });
+
+  useAction(messageTrigger, 'playSound', kind => {
+    if (kind === 'mention') audio.current!.volume = 1;
+    else                    audio.current!.volume = 0.6;
+    audio.current!.play().catch(() => {});
+  });
+
+  useAction(messageTrigger, 'incrementBadge', channelId => {
+    increment(channelId);
+  });
+
+  return null;
+}
+```
+
+## 4. Сборка приложения
+
+```tsx title="src/main.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+```tsx title="src/App.tsx"
+import { useState } from 'react';
+import { Chat } from './features/chat/Chat';
+import { NotificationLayer } from './features/notifications/NotificationLayer';
+import { SessionProvider } from './features/session/SessionProvider';
+import { SettingsPanel } from './features/settings/SettingsPanel';
+
+export function App() {
+  const [activeChannel, setActiveChannel] = useState<string | null>(null);
+
+  return (
+    <SessionProvider userId="u-bob">
+      <SettingsPanel />
+      <Chat channelId={activeChannel} />
+      <NotificationLayer />
+      <button onClick={() => setActiveChannel(activeChannel === 'c-lunch' ? null : 'c-lunch')}>
+        toggle active channel
+      </button>
+    </SessionProvider>
+  );
+}
+```
+
+## Что ты от этого получаешь
+
+| | До (useEffect) | С Triggery |
+|---|---|---|
+| **Файлы, которые трогаешь, чтобы поменять правило** | Chat.tsx (и любой другой компонент с useEffect) | только `message.trigger.ts` |
+| **Тестируется без рендера** | Нет | Да |
+| **Переключение `dnd` требует** | Перерендера Chat | Одного вызова геттера в момент срабатывания |
+| **`<Chat>` перерендеривается при смене настроек** | Да | Нет |
+| **Добавить четвёртый побочный эффект (например, лог в аналитику)** | Менять Chat | Новый `useAction` в `<AnalyticsLayer>` — других файлов не трогаешь |
+
+## Тесты
+
+Полный vitest, без React:
+
+```ts title="src/triggers/message.trigger.test.ts"
+import { createTestRuntime, mockAction, mockCondition } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { messageTrigger } from './message.trigger';
+
+describe('message-received', () => {
+  it('skips when channelId matches activeChannelId', async () => {
+    const rt = createTestRuntime({ triggers: [messageTrigger] });
+    const showToast = vi.fn();
+    mockCondition(rt, messageTrigger, 'settings', { sound: true, notifications: true, dnd: false });
+    mockCondition(rt, messageTrigger, 'currentUserId', 'u-bob');
+    mockCondition(rt, messageTrigger, 'activeChannelId', 'c-lunch');
+    mockAction(rt, messageTrigger, 'showToast', showToast);
+
+    await rt.fire('new-message', {
+      id: '1', author: 'Alice', authorId: 'u-alice', text: 'hi', channelId: 'c-lunch',
+    });
+
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('shows toast when channel is different and notifications are on', async () => {
+    const rt = createTestRuntime({ triggers: [messageTrigger] });
+    const showToast = vi.fn();
+    mockCondition(rt, messageTrigger, 'settings', { sound: false, notifications: true, dnd: false });
+    mockCondition(rt, messageTrigger, 'currentUserId', 'u-bob');
+    mockCondition(rt, messageTrigger, 'activeChannelId', 'c-other');
+    mockAction(rt, messageTrigger, 'showToast', showToast);
+
+    await rt.fire('new-message', {
+      id: '1', author: 'Alice', authorId: 'u-alice', text: 'hi', channelId: 'c-lunch',
+    });
+
+    expect(showToast).toHaveBeenCalledWith({ title: 'Alice', body: 'hi' });
+  });
+});
+```
+
+## Варианты
+
+<CardGrid>
+  <LinkCard title="Тот же рецепт — Solid" href="/ru/recipes/solid/notification-pipeline/" description="Hooks API идентичен; сигналы Solid делают провайдер настроек тривиальным." />
+  <LinkCard title="Тот же рецепт — Vue" href="/ru/recipes/vue/notification-pipeline/" description="Версия на Composition API с провайдером рантайма через provide/inject." />
+  <LinkCard title="Синхронизация по WebSocket" href="/ru/recipes/react/websocket-sync/" description="Заменяем кнопку-симулятор на настоящий `socket.on('new-message', fireMessage)`." />
+  <LinkCard title="Борьба со спагетти" href="/ru/guide/architecture/anti-spaghetti/" description="Когда этот сценарий вырастает из одного триггера в два?" />
+</CardGrid>

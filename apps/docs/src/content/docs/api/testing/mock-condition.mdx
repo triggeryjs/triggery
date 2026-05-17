@@ -1,0 +1,162 @@
+---
+title: "mockCondition"
+description: "Stub a trigger condition in a test runtime. Accepts a value or a getter."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+A method on the [`TestRuntime`](/api/testing/create-test-runtime/) returned by `createTestRuntime`. Registers a condition for a trigger, accepting either a static value or a zero-argument getter.
+
+`mockCondition` is the test-time equivalent of [`useCondition`](/api/react/use-condition/) — same registration mechanism, no React.
+
+## Import
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+const rt = createTestRuntime();
+rt.mockCondition(/* ... */);
+```
+
+## Signature
+
+```ts
+mockCondition<S extends TriggerSchema, K extends ConditionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  valueOrGetter: ConditionMap<S>[K] | (() => ConditionMap<S>[K]),
+): RegistrationToken;
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `trigger` | `Trigger<S>` | The trigger whose condition you're stubbing. |
+| `name` | `K extends ConditionKey<S>` | A condition declared in the trigger's schema. |
+| `valueOrGetter` | `T \| (() => T)` | Either a static value (closed over) or a zero-arity getter. |
+
+## Returns
+
+A `RegistrationToken` with `{ unregister(): void }`. Call `unregister()` to drop the mock — useful for mid-test condition changes.
+
+## Examples
+
+### Static value
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { ping: void };
+  conditions: { user: { id: string } | null };
+}>(
+  {
+    id: 'demo',
+    events: ['ping'],
+    handler() {},
+  },
+  rt,
+);
+
+rt.mockCondition(t, 'user', { id: 'u-1' });
+```
+
+### Dynamic getter (read fresh state each fire)
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { tick: void };
+  conditions: { counter: number };
+}>(
+  {
+    id: 'demo',
+    events: ['tick'],
+    handler() {},
+  },
+  rt,
+);
+
+let counter = 0;
+rt.mockCondition(t, 'counter', () => counter);
+
+rt.fireSync('tick'); // handler sees counter=0
+counter = 5;
+rt.fireSync('tick'); // handler sees counter=5
+```
+
+### Mid-test swap
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { ping: void };
+  conditions: { flag: boolean };
+}>(
+  { id: 'demo', events: ['ping'], handler() {} },
+  rt,
+);
+
+const off = rt.mockCondition(t, 'flag', true);
+rt.fireSync('ping'); // handler sees flag=true
+
+off.unregister();
+rt.mockCondition(t, 'flag', false);
+rt.fireSync('ping'); // handler sees flag=false
+```
+
+### Function-typed condition needs explicit getter
+
+When the condition value is itself a function with zero arguments, the heuristic can mis-detect it as a getter. Pass an explicit getter:
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+type Callback = () => void;
+
+const t = createTrigger<{
+  events: { ping: void };
+  conditions: { onTick: Callback };
+}>(
+  { id: 'demo', events: ['ping'], handler() {} },
+  rt,
+);
+
+const cb: Callback = () => console.log('tick');
+// Wrap in a getter so the runtime stores `cb`, not the result of calling cb.
+rt.mockCondition(t, 'onTick', () => cb);
+```
+
+## Notes
+
+<Aside type="caution" title="Last-mock-wins">
+Stacking two `mockCondition` calls for the same `(trigger, name)` follows the runtime's last-mount-wins rule. The most recent registration is the one the handler sees; unregistering the top restores the previous one. A DEV warn-once warns when this happens unintentionally.
+</Aside>
+
+<Aside type="tip">
+For mocks that need to throw or assert call counts, store a `vi.fn()` in scope and wrap it in a getter: `rt.mockCondition(t, 'fn', () => vi.fn(...))`.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTestRuntime" description="The runtime that exposes this method." href="/api/testing/create-test-runtime/" />
+  <LinkCard title="mockAction" description="Stub an action — the other half of test wiring." href="/api/testing/mock-action/" />
+  <LinkCard title="useCondition" description="Runtime equivalent in React." href="/api/react/use-condition/" />
+  <LinkCard title="Testing guide" description="Trigger-first test patterns." href="/guide/testing/unit-testing/" />
+</CardGrid>

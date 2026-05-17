@@ -1,0 +1,31 @@
+---
+title: Рецепты
+description: "Готовые решения для типовых сценариев — по фреймворкам."
+---
+
+Один и тот же сценарий, написанный под фреймворк, которым ты реально пользуешься.
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard
+    title="Рецепты для React"
+    description="Флагманский биндинг. Пайплайны уведомлений, стек модалок, дебаунс-поиск, WebSocket-синк, ..."
+    href="/ru/recipes/react/counter/"
+  />
+  <LinkCard
+    title="Рецепты для Solid"
+    description="Тот же hook-API, нативный для реактивности Solid. Те же сценарии, нативная эргономика."
+    href="/ru/recipes/solid/counter/"
+  />
+  <LinkCard
+    title="Рецепты для Vue"
+    description="Биндинг для Vue 3 (Composition API). Provide/inject, onScopeDispose, все нужные хуки."
+    href="/ru/recipes/vue/counter/"
+  />
+  <LinkCard
+    title="Рецепты миграции"
+    description="С Redux Saga, RTK listenerMiddleware, redux-observable и голого useEffect."
+    href="/ru/migration/from-redux-saga/"
+  />
+</CardGrid>

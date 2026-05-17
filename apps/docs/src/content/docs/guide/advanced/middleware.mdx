@@ -1,0 +1,365 @@
+---
+title: Middleware
+description: "Observe and short-circuit the runtime — lifecycle hooks, the Middleware type, and composing custom stacks without breaking the dispatcher."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Middleware is the runtime's introspection surface. A middleware is a plain object with a name and up to seven lifecycle hooks; the runtime calls the ones you implemented as events fan out, handlers run, actions fire, and errors land. Middleware can also **cancel** a fire before any handler sees it.
+
+It is what the inspector subscribes to, what `@triggery/devtools-redux` ships, and how you wire structured logging or performance metrics around your triggers without touching trigger files.
+
+## The `Middleware` type
+
+```ts title="@triggery/core"
+export type Middleware = {
+  readonly name: string;
+  onFire?(ctx: FireContext): void | { cancel: true; reason: string };
+  onBeforeMatch?(ctx: MatchContext): void;
+  onSkip?(ctx: SkipContext): void;
+  onActionStart?(ctx: ActionContext): void;
+  onActionEnd?(ctx: ActionContext & { durationMs: number; result?: unknown }): void;
+  onError?(ctx: ActionContext & { error: unknown }): void;
+  onCascade?(ctx: CascadeContext): void;
+};
+```
+
+Seven hooks. Every one is optional. `name` is the only required field — it shows up in DevTools and is useful when one middleware errors and you need to know which one. The runtime keeps middleware in the order they were passed to `createRuntime` and calls each hook through all of them in that order.
+
+## Lifecycle, in order
+
+For a typical fire that matches one trigger and runs one action, the runtime invokes hooks in this sequence:
+
+```text
+runtime.fire('new-message', payload)
+  ├─ middleware.onFire             ← can short-circuit with { cancel: true }
+  │      (depth + cycle gates apply here too — see Cascades)
+  ├─ for each matching trigger:
+  │     ├─ middleware.onBeforeMatch     ← purely observational
+  │     ├─ concurrency gate (may skip — fires onSkip)
+  │     ├─ required gate     (may skip — fires onSkip)
+  │     ├─ handler runs
+  │     │     └─ actions.<name>(payload)
+  │     │           ├─ middleware.onActionStart
+  │     │           ├─ user-registered action handler runs
+  │     │           ├─ middleware.onActionEnd  (sync result or after promise resolves)
+  │     │           └─ middleware.onError      (if the action threw or rejected)
+  │     └─ (handler returns / errors / aborts)
+  └─ runtime.fire('next-event') from inside the handler
+        ├─ depth or cycle violated → middleware.onCascade({ kind: 'overflow' | 'cycle' })
+        └─ otherwise → recurse from `onFire`
+```
+
+The handler itself is opaque to middleware — there is no `onHandlerStart` / `onHandlerEnd`. The reason is deliberate: a handler is a closure you wrote, not a runtime artefact. The runtime instruments the *boundaries* (fire, match, skip, action, cascade), and a middleware that wants per-handler timing builds it by measuring between `onBeforeMatch` and the last `onActionEnd` for a given `runId`.
+
+## Each hook in detail
+
+### `onFire(ctx: FireContext)`
+
+Fires **once per fire** — top-level or cascade — before any trigger has been looked up. This is the only hook that can cancel:
+
+```ts title="src/middleware/feature-flag.ts"
+import type { Middleware } from '@triggery/core';
+
+export function makeFeatureFlagMiddleware(disabledEvents: Set<string>): Middleware {
+  return {
+    name: 'feature-flag',
+    onFire({ eventName }) {
+      if (disabledEvents.has(eventName)) {
+        return { cancel: true, reason: `event '${eventName}' is feature-flagged off` };
+      }
+    },
+  };
+}
+```
+
+`ctx` carries the event name, payload, `cascadeDepth`, and (for cascades) `parentTriggerId` / `parentRunId`. The `parentContext` field is opaque to middleware — treat it as a black box.
+
+Cancelling here stops the entire fire — no trigger is even considered. If you only want to cancel for one trigger, let `onFire` pass and let `onBeforeMatch` collect the data you need; cancelling per-trigger is not supported by design (keeps the dispatch order legible).
+
+### `onBeforeMatch(ctx: MatchContext)`
+
+Fires **once per (event, trigger) pair**, right after the dispatcher picked the trigger out of the event index — before the concurrency gate, before `required`-check, before the handler.
+
+Use it to log "which triggers were considered for this event" or to record an intent timestamp. You cannot short-circuit from here; if you need to suppress a fire, do it from `onFire`.
+
+```ts title="src/middleware/match-logger.ts"
+export const matchLogger: Middleware = {
+  name: 'match-logger',
+  onBeforeMatch({ triggerId, eventName, cascadeDepth }) {
+    console.debug(`[match] ${eventName} → ${triggerId} (depth ${cascadeDepth})`);
+  },
+};
+```
+
+### `onSkip(ctx: SkipContext)`
+
+Fires when a matched trigger is **not run**. Three reasons land here today:
+
+- `concurrency-take-first` or `concurrency-exhaust` — a previous run is in flight.
+- `missing-required-condition:<name>` — a required condition has no registered getter.
+- Any reason a custom middleware writes into the inspector via the public API.
+
+```ts title="src/middleware/skip-counter.ts"
+const skipCounts = new Map<string, number>();
+export const skipCounter: Middleware = {
+  name: 'skip-counter',
+  onSkip({ triggerId, reason }) {
+    const key = `${triggerId}:${reason}`;
+    skipCounts.set(key, (skipCounts.get(key) ?? 0) + 1);
+  },
+};
+```
+
+`onSkip` is observational. The trigger is already skipped by the time the hook runs; the middleware cannot un-skip it.
+
+### `onActionStart(ctx: ActionContext)` / `onActionEnd(ctx & { durationMs, result? })`
+
+Fires around **every action call** — including calls scheduled through `actions.debounce(...)` / `throttle(...)` / `defer(...)`. The two hooks bracket the user-registered action handler. `durationMs` measures from the call to the resolution of the returned promise (for async actions) or to the synchronous return (for sync actions).
+
+```ts title="src/middleware/perf.ts"
+export const perfTimer: Middleware = {
+  name: 'perf-timer',
+  onActionEnd({ triggerId, actionName, durationMs }) {
+    if (durationMs > 50) {
+      console.warn(`[perf] ${triggerId}/${actionName} took ${durationMs.toFixed(1)}ms`);
+    }
+  },
+};
+```
+
+The `result` field on `onActionEnd` is the action handler's return value (or the awaited promise's resolved value). Most action handlers return `void`; the field is there for actions whose `result` is meaningful (e.g. a redaction step that returns the transformed payload).
+
+<Aside type="tip">
+The runtime caches `needsTiming(middleware)` at construction. If no middleware implements `onActionStart`, `onActionEnd`, or `onError`, the dispatcher skips `performance.now()` on the hot path. You don't pay for what you don't use.
+</Aside>
+
+### `onError(ctx: ActionContext & { error: unknown })`
+
+Fires when a user-registered **action** throws or returns a rejected promise. The error never escapes the runtime — the dispatcher catches it, calls every middleware's `onError`, and continues with the next action. This is what keeps one buggy reactor from taking down the rest of a trigger's actions.
+
+```ts title="src/middleware/sentry.ts"
+import * as Sentry from '@sentry/browser';
+import type { Middleware } from '@triggery/core';
+
+export const sentryReporter: Middleware = {
+  name: 'sentry-reporter',
+  onError({ triggerId, actionName, error }) {
+    Sentry.captureException(error, {
+      tags: { triggerId, actionName, source: 'triggery' },
+    });
+  },
+};
+```
+
+If the **handler itself** throws (outside an action call), the error is logged through `console.error` by the runtime as a last-line-of-defence and the run is finalized with status `'errored'` — but `onError` is reserved for action-level errors, not handler-level errors. The inspector snapshot carries the handler error in `reason`.
+
+### `onCascade(ctx: CascadeContext)`
+
+Fires when a cascade is **dropped** — either because `cascadeDepth > maxCascadeDepth` (`kind: 'overflow'`) or because a cycle was detected (`kind: 'cycle'`). It is the observability hook for the safety belts described in [Cascades](/guide/architecture/cascade/).
+
+```ts title="src/middleware/cascade-logger.ts"
+export const cascadeLogger: Middleware = {
+  name: 'cascade-logger',
+  onCascade({ parentTriggerId, newEventName, cascadeDepth, kind }) {
+    console.warn(
+      `[cascade] ${kind} at depth ${cascadeDepth}: '${newEventName}' from ${parentTriggerId}`,
+    );
+  },
+};
+```
+
+The hook is **only** called on overflow / cycle. Legitimate cascades — within the depth limit, no cycle — do **not** call `onCascade`. To observe every cascade, use `onFire` and check `cascadeDepth > 0`.
+
+## Wiring middleware
+
+Middleware is set **at runtime construction** and is immutable for the runtime's lifetime. There is no `runtime.use(...)` in V1 — that flexibility costs an extra branch on the hot path and was deliberately left out. If you need conditional middleware, branch when you create the runtime:
+
+```ts title="src/main.ts"
+import { createRuntime } from '@triggery/core';
+import { perfTimer } from './middleware/perf';
+import { sentryReporter } from './middleware/sentry';
+import { cascadeLogger } from './middleware/cascade-logger';
+
+const isDev = import.meta.env.MODE !== 'production';
+
+const runtime = createRuntime({
+  middleware: [
+    cascadeLogger,
+    ...(isDev ? [perfTimer] : []),
+    sentryReporter,
+  ],
+});
+```
+
+For tests that need to vary the stack, create a fresh runtime per test with `createTestRuntime(options)`:
+
+```ts title="src/tests/notification.test.ts"
+import { createTestRuntime } from '@triggery/testing';
+
+const skips: string[] = [];
+const recorder: Middleware = {
+  name: 'recorder',
+  onSkip: ({ reason }) => skips.push(reason),
+};
+
+const rt = createTestRuntime({ middleware: [recorder] });
+// …test against rt…
+```
+
+See [Unit testing](/guide/testing/unit-testing/).
+
+## Order of execution
+
+For each hook, middleware runs in the **order it was passed to `createRuntime`** — index 0 first, index N-1 last. The order matters in two situations:
+
+1. **`onFire` cancellation.** The first middleware to return `{ cancel: true }` wins; subsequent middleware in the list do *not* see the fire. If you have a feature-flag middleware and a logger, put the logger first so it records the attempted fire before the cancel.
+
+   ```ts
+   middleware: [logger, featureFlag]      // ← logs every fire including cancelled ones
+   middleware: [featureFlag, logger]      // ← only logs fires that weren't cancelled
+   ```
+
+2. **Error reporting around shared state.** If two middleware mutate a shared map keyed by `runId`, write the producer before the consumer. The runtime gives you no atomicity guarantees between middleware calls (it is a synchronous for-of); two middleware that need to observe the same `onActionEnd` see it in order.
+
+`onActionEnd` and `onError` run **after** the action's promise resolves — so two middleware observing an async action's end see each other in the same microtask, but **after** any code that ran in `await`-suspended frames between `onActionStart` and the resolution.
+
+## Errors thrown from a middleware are isolated
+
+Middleware hooks run **inside a try/catch boundary inherited from the calling code**. The runtime treats a middleware that throws inside `onFire` as having returned `undefined` (no cancel) — the throw lands at the dispatcher's last-resort `console.error` boundary. Other middleware **do continue to run**, and the trigger dispatches normally.
+
+This is the right default for an introspection layer. A buggy logger should never take down a notification pipeline. It also means: if your middleware swallows its own errors, you may not notice the bug — write a unit test for the middleware, do not lean on the runtime to surface its mistakes.
+
+<Aside type="caution" title="Middleware is observational by default">
+Treat `onBeforeMatch`, `onSkip`, `onActionStart`, `onActionEnd`, `onError`, `onCascade` as **read-only**. Only `onFire`'s `{ cancel: true }` return value affects dispatch. Mutating `ctx.payload` is **undefined behaviour** — the dispatcher reads the live FireContext, not a clone, and other middleware see whatever you wrote. If you want payload redaction, redact on the way *in* (before `runtime.fire(...)`), not from inside a hook.
+</Aside>
+
+## Common middleware to write
+
+Most teams end up with the same handful. Here are the shapes; the implementations are short enough to live in your codebase.
+
+### Console logger
+
+```ts title="src/middleware/console-logger.ts"
+import type { Middleware } from '@triggery/core';
+
+export const consoleLogger: Middleware = {
+  name: 'console-logger',
+  onFire: ({ eventName, cascadeDepth }) =>
+    console.debug(`[fire] ${eventName} ${cascadeDepth > 0 ? `(cascade depth ${cascadeDepth})` : ''}`),
+  onSkip:        ({ triggerId, reason }) => console.debug(`[skip] ${triggerId}: ${reason}`),
+  onActionStart: ({ triggerId, actionName }) => console.debug(`[action]  ${triggerId}.${actionName}`),
+  onActionEnd:   ({ triggerId, actionName, durationMs }) =>
+    console.debug(`[done]   ${triggerId}.${actionName} (${durationMs.toFixed(1)}ms)`),
+  onError:       ({ triggerId, actionName, error }) =>
+    console.error(`[error] ${triggerId}.${actionName}`, error),
+};
+```
+
+### Performance timing
+
+```ts title="src/middleware/perf-timing.ts"
+import type { Middleware } from '@triggery/core';
+
+const slowMs = 50;
+
+export const perfTiming: Middleware = {
+  name: 'perf-timing',
+  onActionEnd({ triggerId, actionName, durationMs }) {
+    if (durationMs > slowMs) {
+      performance.measure(`triggery/${triggerId}/${actionName}`, {
+        start: performance.now() - durationMs,
+        duration: durationMs,
+      });
+    }
+  },
+};
+```
+
+### Payload redaction (in the producer, not the middleware)
+
+Don't try to redact inside `onFire`. The right shape is a thin wrapper around `runtime.fire`:
+
+```ts title="src/redacted-fire.ts"
+import type { Runtime } from '@triggery/core';
+
+export function redactedFire<T extends { email?: string }>(
+  runtime: Runtime,
+  eventName: string,
+  payload: T,
+) {
+  const { email, ...rest } = payload;
+  runtime.fire(eventName, { ...rest, email: email ? '[redacted]' : undefined });
+}
+```
+
+This keeps the runtime's view of the world the same as the dispatcher's view, and keeps your middleware boundary observational.
+
+### Persistence
+
+```ts title="src/middleware/persist-runs.ts"
+import type { Middleware, TriggerInspectSnapshot } from '@triggery/core';
+
+const runs: TriggerInspectSnapshot[] = [];
+
+export const persistRuns: Middleware = {
+  name: 'persist-runs',
+  onActionEnd(ctx) {
+    runs.push({
+      triggerId: ctx.triggerId,
+      runId: ctx.runId,
+      eventName: '',                       // unknown at action level
+      status: 'fired',
+      durationMs: ctx.durationMs,
+      executedActions: [ctx.actionName],
+      snapshotKeys: [],
+    });
+    if (runs.length > 200) runs.shift();
+  },
+};
+```
+
+For a real implementation, subscribe to the inspector buffer with `runtime.subscribe(listener)` — you get the full snapshot once per run, not one per action. See [Inspector](/guide/advanced/inspector/).
+
+## Packaged middlewares
+
+You don't have to write these yourself. The first-party packages each export one or more middlewares:
+
+- [**`@triggery/devtools-redux`**](/packages/devtools-redux/) — pipes every fire / skip / action through the Redux DevTools extension. Drop into `middleware: [...]` and open the Redux panel; no other wiring.
+- [**`@triggery/devtools-bridge`**](/packages/devtools-bridge/) — postMessage bridge to the standalone Triggery panel.
+- [**`@triggery/socket`**](/packages/socket/) — bridges trigger fires across `BroadcastChannel` / WebSocket; useful for multi-tab orchestration.
+
+These compose. A typical dev-time stack is `cascadeLogger`, `perfTiming`, `@triggery/devtools-redux`. A typical prod stack is empty, or just `sentryReporter`.
+
+## Reviewer checklist
+
+- [ ] Every middleware has a unique `name`. (The runtime doesn't enforce it, but devtools and logs get confusing fast if two are called `'logger'`.)
+- [ ] Hooks are **synchronous** and **fast**. Async work inside a hook does not delay dispatch, but it can leak unhandled rejections — wrap inside.
+- [ ] No middleware mutates `ctx`. If you need a derived shape, build it locally.
+- [ ] `onFire`'s `{ cancel: true }` is only used when you can articulate why the fire should be invisible to every trigger. For per-trigger gating, declare a `required` condition instead.
+- [ ] The middleware order in `createRuntime` matches the desired log / cancel order.
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Inspector"
+    description="The other half of observability — ring buffer, useInspect, DevTools bridges."
+    href="/guide/advanced/inspector/"
+  />
+  <LinkCard
+    title="Cascades"
+    description="Depth limits, cycle detection, the onCascade hook in context."
+    href="/guide/architecture/cascade/"
+  />
+  <LinkCard
+    title="Runtime"
+    description="createRuntime options, multiple runtimes for tests and micro-frontends."
+    href="/guide/essentials/runtime/"
+  />
+  <LinkCard
+    title="@triggery/devtools-redux"
+    description="Drop-in middleware for the Redux DevTools extension."
+    href="/packages/devtools-redux/"
+  />
+</CardGrid>

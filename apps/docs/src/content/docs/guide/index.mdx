@@ -1,0 +1,33 @@
+---
+title: Guide
+description: "Learn Triggery — from your first trigger to advanced runtime architecture."
+---
+
+Triggery is a declarative orchestration layer for the parts of an app that aren't UI and aren't state — the "when X and Y, do Z" logic that usually ends up scattered across `useEffect`, sagas, listener middleware and ad-hoc event buses.
+
+This guide takes you from zero to fluent. If you've used `useEffect` for side effects before, you'll find familiar shapes here; what's new is the structure that makes them readable, testable and tool-aware.
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard
+    title="Getting started"
+    description="Install the runtime, write your first trigger, fire your first event — in under five minutes."
+    href="/guide/getting-started/"
+  />
+  <LinkCard
+    title="Why Triggery"
+    description="The problem with useEffect-driven side effects, and how the event → conditions → actions split addresses it."
+    href="/guide/why-triggery/"
+  />
+  <LinkCard
+    title="Essentials"
+    description="Read this section in order: trigger anatomy, events, conditions, actions, handlers, runtime."
+    href="/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Testing"
+    description="Trigger handlers are nearly pure functions. Mock conditions, mock actions, fire events."
+    href="/guide/testing/unit-testing/"
+  />
+</CardGrid>

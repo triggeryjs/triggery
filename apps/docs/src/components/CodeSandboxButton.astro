@@ -1,0 +1,49 @@
+---
+/**
+ * "Open in CodeSandbox" CTA. Companion to StackBlitzButton for users who
+ * prefer CodeSandbox. Same path semantics.
+ */
+interface Props {
+  path: string;
+  label?: string;
+  ref?: string;
+}
+
+const { path, label = 'Open in CodeSandbox', ref = 'main' } = Astro.props;
+const href = `https://codesandbox.io/p/github/triggeryjs/triggery/${ref}/${path}`;
+---
+
+<a class="csb-btn" href={href} target="_blank" rel="noreferrer noopener">
+  <span class="csb-mark" aria-hidden="true">CSB</span>
+  <span>{label}</span>
+</a>
+
+<style>
+  .csb-btn {
+    margin-top: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: #151515;
+    color: #fff;
+    font-weight: 600;
+    border-radius: 0.4rem;
+    text-decoration: none;
+    border: 1px solid #2d2d2d;
+    transition: background 0.15s ease;
+  }
+  .csb-btn:hover {
+    background: #232323;
+    text-decoration: none;
+  }
+  .csb-mark {
+    background: linear-gradient(45deg, #fcad11, #00ff9b);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    font-size: 0.85em;
+  }
+</style>

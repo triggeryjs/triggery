@@ -1,0 +1,59 @@
+---
+title: Types
+description: "Public TypeScript types exported by @triggery/core — the contracts behind every API."
+sidebar:
+  order: 100
+  label: Types
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Every public type in `@triggery/core` is exported from its top-level entrypoint. The most-asked-about ones get their own reference page; the rest are documented inline in [`packages/core/src/types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts).
+
+## Top-level
+
+<CardGrid>
+  <LinkCard
+    title="TriggerSchema"
+    description="The generic input to createTrigger. Declares events, conditions and actions in one shape."
+    href="/api/core/types/trigger-schema/"
+  />
+  <LinkCard
+    title="TriggerCtx"
+    description="The handler context: event, conditions, actions, check, signal, meta. The everything-bag a trigger handler receives."
+    href="/api/core/types/trigger-ctx/"
+  />
+  <LinkCard
+    title="RuntimeOptions"
+    description="Options accepted by createRuntime: inspector toggle, middleware chain, cascade depth, buffer size."
+    href="/api/core/types/runtime-options/"
+  />
+  <LinkCard
+    title="Middleware"
+    description="The seven-hook lifecycle interface for tracing, devtools, persistence, custom telemetry."
+    href="/api/core/types/middleware/"
+  />
+</CardGrid>
+
+## Other exported types
+
+These are stable but documented inline in source rather than on their own pages. Open the link to jump straight to the type definition.
+
+| Type | Where |
+|---|---|
+| `Runtime` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — the runtime instance returned by `createRuntime` |
+| `Trigger<S>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — the value returned by `createTrigger` |
+| `TriggerHandler<S, R>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — function signature of `config.handler` |
+| `ConcurrencyStrategy` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — `'take-latest' \| 'take-every' \| 'take-first' \| 'queue' \| 'exhaust' \| 'sync'` |
+| `SchedulerStrategy` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — `'microtask' \| 'sync'` |
+| `CheckCtx<C>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — typed `check.is` / `check.all` / `check.any` |
+| `MetaCtx` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — `triggerId`, `runId`, `cascadeId`, `scheduledAt` |
+| `TriggerInspectSnapshot` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — one ring-buffer record |
+| `FireContext` / `MatchContext` / `SkipContext` / `ActionContext` / `CascadeContext` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — middleware hook payloads |
+| `RegistrationToken` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — returned by every `runtime.register*` |
+| `EmptyRecord` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — `Record<string, never>` for schemas with no actions/conditions |
+| `EventMap<S>` / `ConditionMap<S>` / `ActionMap<S>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — schema sub-maps |
+| `EventKey<S>` / `ConditionKey<S>` / `ActionKey<S>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — the union of names in each sub-map |
+| `NamedHooks<S>` | [`types.ts`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) — output of `createNamedHooks` |
+
+If you want a type documented on its own page, [open an issue](https://github.com/triggeryjs/triggery/issues/new) — they're cheap to add.

@@ -1,0 +1,171 @@
+---
+title: "extractTrigger"
+description: "Извлечь блок `useEffect` в выделенный файл *.trigger.ts. Программный API и CLI."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Извлекает первый `useEffect(() => { ... }, [])` в компоненте в выделенный файл `*.trigger.ts`. Исходный компонент переписывается так, чтобы зажигать новое событие вместо инлайн-исполнения эффекта. Поставляется как программный API (`extractTrigger({ ... })`) и как CLI (`triggery-codemod extract-trigger`).
+
+Это прагматичный V1 — он работает с типовой формой одного `useEffect` с понятным телом побочного эффекта. Сложные эффекты (cleanup-функции, несколько эффектов в одном файле, динамические deps) требуют ручной доводки; codemod останавливается на первом матче и отчитывается о сделанном.
+
+## Импорт
+
+```ts
+import { extractTrigger } from '@triggery/codemod';
+```
+
+## Сигнатура
+
+```ts
+function extractTrigger(options: ExtractTriggerOptions): ExtractTriggerResult;
+
+interface ExtractTriggerOptions {
+  readonly file: string;
+  readonly name: string;
+  readonly outDir?: string;
+  readonly dryRun?: boolean;
+  readonly project?: import('ts-morph').Project;
+}
+
+interface ExtractTriggerResult {
+  readonly sourceUpdated: boolean;
+  readonly triggerFilePath: string;
+  readonly triggerFileContent: string;
+  readonly originalEffectBody: string;
+}
+```
+
+## Параметры
+
+| Параметр | Тип | Обязательный | Описание |
+|---|---|---|---|
+| `file` | `string` | да | Путь к исходнику `.tsx` (или `.ts`). |
+| `name` | `string` | да | Id триггера в kebab-case. Используется для вывода имени символа (`newMessageTrigger`) и имени файла (`new-message.trigger.ts`). |
+| `outDir` | `string` | нет | Директория для сгенерированного файла триггера. По умолчанию — директория исходника. |
+| `dryRun` | `boolean` | нет | Спланировать изменения и вернуть их без записи на диск. |
+| `project` | `ts-morph.Project` | нет | Предсуществующий project. Позволяет CLI переиспользовать один tsconfig между батчами. |
+
+## Возвращает
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `sourceUpdated` | `boolean` | Был ли переписан исходный файл. |
+| `triggerFilePath` | `string` | Абсолютный путь сгенерированного файла `*.trigger.ts`. |
+| `triggerFileContent` | `string` | Содержимое нового файла триггера. |
+| `originalEffectBody` | `string` | Извлечённое тело без отступов. |
+
+## CLI
+
+```
+triggery-codemod extract-trigger --name <kebab-case> [--out-dir <path>] [--dry-run] <file>
+```
+
+| Флаг | Обязательный | Описание |
+|---|---|---|
+| `--name` | да | Id триггера в kebab-case. |
+| `--out-dir` | нет | Переопределить дефолтную выходную директорию. |
+| `--dry-run` | нет | Распечатать запланированные изменения без записи. |
+
+CLI печатает сгенерированный путь и однострочную подсказку с `import`, который нужно добавить в файл компонента (codemod намеренно не правит импорты — держит AST-изменения минимальными и предсказуемыми).
+
+## Примеры
+
+### Программно — dry run
+
+```ts
+import { extractTrigger } from '@triggery/codemod';
+
+const result = extractTrigger({
+  file: 'src/Chat.tsx',
+  name: 'new-message',
+  dryRun: true,
+});
+
+console.log(result.triggerFilePath);   // .../src/new-message.trigger.ts
+console.log(result.triggerFileContent); // generated module text
+```
+
+### Программно — запись в выделенную папку триггеров
+
+```ts
+import { extractTrigger } from '@triggery/codemod';
+
+extractTrigger({
+  file:   'src/screens/Chat.tsx',
+  name:   'new-message',
+  outDir: 'src/triggers',
+});
+// → src/triggers/new-message.trigger.ts created
+// → src/screens/Chat.tsx rewritten: useEffect block replaced with useEvent(...)
+```
+
+### CLI
+
+```
+triggery-codemod extract-trigger --name new-message src/Chat.tsx
+```
+
+Вывод:
+
+```
+Generated src/new-message.trigger.ts
+Add this import to the component file:
+  import { newMessageTrigger } from './new-message.trigger';
+```
+
+### Что генерируется
+
+Сгенерированный файл — это стартер: codemod не может вывести surface "events / conditions / actions" рантайма без твоего ввода. Он выдаёт void-payload событие и `Record<string, never>` для conditions/actions; схему ты заполняешь руками.
+
+```ts
+import { createTrigger } from '@triggery/core';
+
+/**
+ * Extracted automatically by @triggery/codemod from a useEffect block.
+ * Review the generated handler — the codemod does its best but cannot infer
+ * the runtime "events / conditions / actions" surface without your input.
+ * …
+ */
+export const newMessageTrigger = createTrigger<{
+  events: { 'new-message': void };
+  conditions: Record<string, never>;
+  actions: Record<string, never>;
+}>({
+  id: 'new-message',
+  events: ['new-message'],
+  required: [],
+  handler({ event, conditions, actions, check }) {
+    // TODO: migrated from useEffect — refactor side effects into actions.
+    /* … original effect body … */
+  },
+});
+```
+
+## Замечания
+
+<Aside type="caution" title="Только первый useEffect">
+Codemod извлекает **первый** `useEffect`, который находит в файле. Если у компонента их несколько, гоняй codemod по разу — каждый прогон берёт следующий, пока не закончатся.
+</Aside>
+
+<Aside type="caution" title="Cleanup-функции не сохраняются">
+`useEffect(() => { …; return cleanup; }, deps)` мигрирует частично — тело копируется, но cleanup никуда не подвязывается. После прогона codemod-скрипта переноси cleanup-логику в подходящий реактор `useAction` или в lifecycle компонента.
+</Aside>
+
+<Aside type="tip">
+Для более высокоуровневой миграции (Redux Toolkit `listenerMiddleware` → триггеры) используй [`migrateFromListenerMiddleware`](/ru/api/codemod/migrate-from-listener-middleware/).
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="migrateFromListenerMiddleware" description="Мигрировать RTK listenerMiddleware в триггеры." href="/ru/api/codemod/migrate-from-listener-middleware/" />
+  <LinkCard title="createTrigger" description="Конструктор, который использует сгенерированный файл." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="useEvent" description="Хук, который вызывает переписанный компонент." href="/ru/api/react/use-event/" />
+  <LinkCard title="Руководство по миграции" description="Паттерны конвертации useEffect → trigger." href="/ru/migration/from-useeffect/" />
+</CardGrid>

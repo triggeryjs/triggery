@@ -1,0 +1,161 @@
+---
+title: "@triggery/vue"
+description: "Vue 3 bindings for Triggery — same useEvent / useCondition / useAction surface as React, with provide/inject + onScopeDispose."
+sidebar:
+  order: 4
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+[Vue 3](https://vuejs.org) bindings for [Triggery](https://github.com/triggeryjs/triggery). Same `useEvent` / `useCondition` / `useAction` shape as `@triggery/react`, native to Vue's Composition API and `effectScope`. **Zero runtime dependencies** — a thin lifecycle layer over `@triggery/core`.
+
+[![npm](https://img.shields.io/npm/v/@triggery/vue?style=flat-square)](https://www.npmjs.com/package/@triggery/vue)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/vue?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/vue)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/vue vue" />
+
+Peer deps: `vue >= 3.0.0`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `useEvent` | Typed event emitter, stable function identity. |
+| `useCondition` | Register a pull-only condition getter. Reads refs naturally. |
+| `useAction` | Register an action handler. Auto-cleans via `onScopeDispose`. |
+| `useInlineTrigger` | One-off triggers inside a `<script setup>`. |
+| `<TriggerRuntimeProvider>` / `provideTriggerRuntime` | Inject a runtime via `provide`/`inject`. |
+| `<TriggerScope>` / `provideTriggerScope` | Scope registrations to a feature subtree. |
+
+## Quick start
+
+Three small components. The trigger reads like a spec, each component only knows about its own port.
+
+### 1. Define the trigger
+
+```ts title="src/triggers/messageTrigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type Settings = { sound: boolean; notifications: boolean };
+
+export const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string; author: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({
+      title: event.payload.author,
+      body:  event.payload.text,
+    });
+  },
+});
+```
+
+### 2. Wrap the tree
+
+```vue title="src/App.vue"
+<script setup lang="ts">
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/vue';
+import SettingsProvider from './SettingsProvider.vue';
+import Chat from './Chat.vue';
+import Toast from './Toast.vue';
+
+const runtime = createRuntime();
+</script>
+
+<template>
+  <TriggerRuntimeProvider :runtime="runtime">
+    <SettingsProvider />
+    <Chat />
+    <Toast />
+  </TriggerRuntimeProvider>
+</template>
+```
+
+### 3. Wire components
+
+```vue title="src/SettingsProvider.vue"
+<script setup lang="ts">
+import { ref } from 'vue';
+import { useCondition } from '@triggery/vue';
+import { messageTrigger, type Settings } from './triggers/messageTrigger';
+
+const settings = ref<Settings>({ sound: true, notifications: true });
+useCondition(messageTrigger, 'settings', () => settings.value);
+</script>
+
+<template></template>
+```
+
+```vue title="src/Chat.vue"
+<script setup lang="ts">
+import { useEvent } from '@triggery/vue';
+import { messageTrigger } from './triggers/messageTrigger';
+
+const fire = useEvent(messageTrigger, 'new-message');
+</script>
+
+<template>
+  <button @click="fire({ text: 'hi', author: 'Alice' })">send</button>
+</template>
+```
+
+```vue title="src/Toast.vue"
+<script setup lang="ts">
+import { useAction } from '@triggery/vue';
+import { messageTrigger } from './triggers/messageTrigger';
+
+useAction(messageTrigger, 'showToast', ({ title, body }) => {
+  console.log(`[${title}] ${body}`);
+});
+</script>
+
+<template></template>
+```
+
+Click the button — `Toast` logs. Toggle `settings.value.notifications` to false — silent.
+
+## How Vue integration works
+
+Composables work both inside component `setup()` and inside detached `effectScope()`s. `useCondition` does **not** subscribe via `watch` — it's pull-only, so dispatches never re-render the host component. If a component also needs to render the same data, use a normal `computed` or `ref` alongside.
+
+## Cleanup
+
+Everything auto-cleans via `onScopeDispose` — works in setup scope, detached scopes, and inside `<KeepAlive>` correctly.
+
+## Recipes
+
+<CardGrid>
+  <LinkCard title="Counter (Vue)" description="The hello-world recipe." href="/recipes/vue/counter/" />
+  <LinkCard title="Notification pipeline" description="Toast + sound + badge across three components." href="/recipes/vue/notification-pipeline/" />
+  <LinkCard title="Debounced search" description="take-latest + AbortSignal for autocomplete." href="/recipes/react/debounced-search/" />
+</CardGrid>
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="The runtime this binding wraps." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="Identical hook shape for React 18+/19." href="/packages/react/" />
+  <LinkCard title="@triggery/solid" description="Identical hook shape for SolidJS." href="/packages/solid/" />
+  <LinkCard title="@triggery/testing" description="Test the trigger without rendering Vue." href="/packages/testing/" />
+  <LinkCard title="@triggery/vite" description="Auto-discovery via virtual:triggery-registry." href="/packages/vite/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/vue)
+- [npm](https://www.npmjs.com/package/@triggery/vue)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/vue/CHANGELOG.md)

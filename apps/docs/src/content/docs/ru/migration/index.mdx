@@ -1,0 +1,16 @@
+---
+title: Миграция
+description: "Перенос существующего кода побочных эффектов на Triggery — из useEffect, Redux Saga, RTK listenerMiddleware и других."
+---
+
+Большинство тех, кто переходит на Triggery, приходит с багажом: `useEffect` повсюду, пара саг, несколько регистраций в `listenerMiddleware`. Эти страницы объясняют, как каждая исходная парадигма ложится на модель «событие → условия → действия», и где codemod-скрипт может взять на себя скучную работу.
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <LinkCard title="От useEffect" description="Базовое механическое соответствие и случаи, когда переходить не стоит." href="/ru/migration/from-useeffect/" />
+  <LinkCard title="От RTK listenerMiddleware" description="Есть поддержка codemod: один listener → один триггер." href="/ru/migration/from-rtk-listener/" />
+  <LinkCard title="От Redux Saga" description="Соответствие watcher-саг, takeLatest/takeEvery, race/all. Заглушка codemod появится в 1.0." href="/ru/migration/from-redux-saga/" />
+  <LinkCard title="От redux-observable" description="Epics → триггеры. Вручную, но механически." href="/ru/migration/from-redux-observable/" />
+  <LinkCard title="vs xstate / saga / rxjs / effector / mobx" description="Когда выбирать Triggery вместо альтернатив." href="/ru/migration/comparison/" />
+</CardGrid>

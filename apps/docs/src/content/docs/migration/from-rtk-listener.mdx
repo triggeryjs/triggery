@@ -1,0 +1,149 @@
+---
+title: "From RTK listenerMiddleware"
+description: "Move @reduxjs/toolkit listener registrations into Triggery — one listener becomes one trigger."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`listenerMiddleware` from `@reduxjs/toolkit` is the closest thing in the Redux ecosystem to a trigger. The migration is mostly mechanical: one `startListening({ actionCreator, effect })` registration becomes one `createTrigger({ id, events, handler })`. The codemod `migrate-from-listener-middleware` handles the actionCreator shape; other shapes need human review.
+
+## Mental model mapping
+
+| listenerMiddleware | Triggery |
+|---|---|
+| `startListening({ actionCreator: foo, effect })` | `createTrigger({ events: ['foo'], handler })` |
+| `startListening({ matcher: isAnyOf(a, b) })` | `events: ['a', 'b']` and branch on `event.name` |
+| `startListening({ predicate: (action, state) => … })` | Predicate → condition + handler guard |
+| `effect(action, api)` — `api.getState()` | `conditions.someName` (registered via `useReduxCondition`) |
+| `api.dispatch(action)` | `actions.someAction?.(payload)` |
+| `api.cancelActiveListeners()` | `concurrency: 'take-latest'` (default) with `signal` |
+| `api.signal` | `signal` in handler context |
+| `api.fork(task)` | Sub-handler; explicit `take-every` concurrency |
+
+## Pattern 1 — actionCreator-based listener
+
+```ts title="Before"
+listenerMiddleware.startListening({
+  actionCreator: chatSlice.actions.messageReceived,
+  effect: (action, api) => {
+    const settings = api.getState().settings;
+    if (!settings.notifications) return;
+    api.dispatch(uiSlice.actions.showToast({ title: action.payload.author }));
+  },
+});
+```
+
+```ts title="After"
+export const messageTrigger = createTrigger<{
+  events:     { 'chat/messageReceived': Message };
+  conditions: { settings: Settings };
+  actions:    { showToast: { title: string } };
+}>({
+  id: 'message-received',
+  events: ['chat/messageReceived'],
+  required: ['settings'],
+  handler({ event, check, actions }) {
+    if (!check.is('settings', s => s.notifications)) return;
+    actions.showToast?.({ title: event.payload.author });
+  },
+});
+```
+
+State access (`api.getState().settings`) becomes a `useReduxCondition` registered by the settings feature; the toast dispatch becomes a `useAction` on the UI feature.
+
+## Pattern 2 — matcher
+
+```ts title="Before"
+import { isAnyOf } from '@reduxjs/toolkit';
+
+listenerMiddleware.startListening({
+  matcher: isAnyOf(chatSlice.actions.messageReceived, chatSlice.actions.mentionReceived),
+  effect: (action, api) => { /* … */ },
+});
+```
+
+```ts title="After"
+createTrigger<{ /* … */ }>({
+  events: ['chat/messageReceived', 'chat/mentionReceived'],
+  handler({ event /* event.name is the discriminator */, actions }) {
+    if (event.name === 'chat/mentionReceived') actions.playSound?.('mention');
+    actions.showToast?.({ /* … */ });
+  },
+});
+```
+
+Listing both names in `events:` indexes the trigger under both event keys — the handler sees a discriminated union of payloads.
+
+## Pattern 3 — predicate against state
+
+```ts title="Before"
+listenerMiddleware.startListening({
+  predicate: (action, currentState) =>
+    action.type === 'chat/messageReceived' &&
+    currentState.settings.notifications,
+  effect: /* … */,
+});
+```
+
+```ts title="After"
+createTrigger<{
+  events:     { 'chat/messageReceived': Message };
+  conditions: { settings: Settings };
+}>({
+  events: ['chat/messageReceived'],
+  required: ['settings'],
+  handler({ check, actions }) {
+    if (!check.is('settings', s => s.notifications)) return;
+    actions.showToast?.({ /* … */ });
+  },
+});
+```
+
+The predicate's "is this state right?" check turns into `check.is` inside the handler — same logic, lazily evaluated from a single source.
+
+## Pattern 4 — race against signal (async listeners)
+
+```ts title="Before"
+effect: async (action, api) => {
+  api.cancelActiveListeners();           // take-latest
+  const res = await fetch('/details', { signal: api.signal });
+  if (api.signal.aborted) return;
+  api.dispatch(detailsLoaded(await res.json()));
+}
+```
+
+```ts title="After"
+{
+  concurrency: 'take-latest',            // default
+  async handler({ signal, actions }) {
+    const res = await fetch('/details', { signal });
+    if (signal.aborted) return;
+    actions.storeDetails?.(await res.json());
+  },
+}
+```
+
+`take-latest` is the default; you only pass `concurrency:` to opt into something else.
+
+## Codemod
+
+`@triggery/codemod` ships [`migrate-from-listener-middleware`](/packages/codemod/) for the actionCreator shape:
+
+```bash
+npx triggery-codemod migrate-from-listener-middleware src/store/middleware.ts --dry-run
+```
+
+For each `startListening({ actionCreator, effect })` call the codemod generates one `*.trigger.ts` stub with the `effect` body dropped verbatim into the handler and a `// TODO` marker for the `getState()`/`dispatch()` conversion. Matcher / predicate shapes are detected but skipped — you'll do those by hand from the patterns above.
+
+## Keeping Redux around
+
+You don't have to remove Redux. The most common path is: keep the store, keep `createSlice`, and replace listenerMiddleware *as a side-effect mechanism* with triggers. The `@triggery/redux` adapter exposes selectors as conditions in 30 lines — see [`@triggery/redux`](/packages/redux/).
+
+<CardGrid>
+  <LinkCard title="From Redux Saga" description="takeLatest / takeEvery / takeLeading → concurrency strategies." href="/migration/from-redux-saga/" />
+  <LinkCard title="@triggery/redux" description="useReduxCondition adapter." href="/packages/redux/" />
+  <LinkCard title="Concurrency strategies" description="take-latest, take-every, queue, exhaust." href="/guide/async/concurrency/" />
+  <LinkCard title="Codemod CLI" description="migrate-from-listener-middleware." href="/packages/codemod/" />
+</CardGrid>

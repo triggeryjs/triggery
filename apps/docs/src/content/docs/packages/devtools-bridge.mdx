@@ -1,0 +1,74 @@
+---
+title: "@triggery/devtools-bridge"
+description: "Page-side bridge for Triggery devtools — broadcasts runtime events over window.postMessage."
+sidebar:
+  order: 18
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Page-side bridge that makes a Triggery runtime observable to external tools — the Chrome extension, a future standalone web panel, custom inspectors, anything that can listen to `window.postMessage`. Framework-agnostic, zero runtime dependencies, returns a no-op in Node / SSR.
+
+[![npm](https://img.shields.io/npm/v/@triggery/devtools-bridge?style=flat-square)](https://www.npmjs.com/package/@triggery/devtools-bridge)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/devtools-bridge?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/devtools-bridge)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/devtools-bridge" />
+
+Peer deps: `@triggery/core`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `installDevtoolsBridge(runtime)` | Attach the page-side bridge to a runtime. Returns a `dispose()` callback. |
+
+## Quick example
+
+```ts
+import { createRuntime } from '@triggery/core';
+import { installDevtoolsBridge } from '@triggery/devtools-bridge';
+
+const runtime = createRuntime();
+
+if (import.meta.env.DEV) {
+  installDevtoolsBridge(runtime);
+}
+```
+
+That's it. The bridge:
+
+1. Exposes a discovery handle on `window.__triggery_devtools__` so tools can detect the runtime.
+2. Broadcasts a `triggery:hello` `postMessage` with the current `graph()` + inspector buffer.
+3. Subscribes to the runtime and broadcasts a `triggery:snapshot` for every new run.
+4. On `dispose()`, removes the discovery handle and broadcasts a `triggery:bye`.
+
+In Node / SSR `installDevtoolsBridge` returns a no-op disposer.
+
+## Wire format
+
+```ts
+{ source: 'triggery-devtools', type: 'triggery:hello',    runtimeId, graph, buffer, at }
+{ source: 'triggery-devtools', type: 'triggery:snapshot', runtimeId, snapshot,     at }
+{ source: 'triggery-devtools', type: 'triggery:bye',      runtimeId,               at }
+```
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="The runtime this bridge attaches to." href="/packages/core/" />
+  <LinkCard title="@triggery/devtools-panel" description="In-app inspector React components." href="/packages/devtools-panel/" />
+  <LinkCard title="@triggery/devtools-redux" description="Stream runtime events into the Redux DevTools extension." href="/packages/devtools-redux/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/devtools-bridge)
+- [npm](https://www.npmjs.com/package/@triggery/devtools-bridge)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/devtools-bridge/CHANGELOG.md)

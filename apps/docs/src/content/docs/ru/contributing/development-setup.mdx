@@ -1,0 +1,101 @@
+---
+title: "Настройка окружения"
+description: "Клонировать монорепо, установить зависимости, запустить тесты и сайт документации локально."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Монорепо Triggery — это pnpm workspace. Полный набор команд для чистого чекаута короткий: если `pnpm test` зелёный — окружение рабочее.
+
+## Что должно стоять заранее
+
+- **Node.js** ≥ 20 (рекомендуется LTS).
+- **pnpm** ≥ 9 — включается через `corepack enable && corepack prepare pnpm@latest --activate`.
+- **git** с настроенным ключом подписи (опционально; подписанные коммиты рекомендованы, но не обязательны).
+
+В корне репо лежит `.devcontainer/`, так что workspace можно открыть и в **GitHub Codespaces** или **VS Code Dev Containers** — локальная настройка тогда не нужна вовсе.
+
+## Клон и бутстрап
+
+```bash
+git clone https://github.com/triggeryjs/triggery.git
+cd triggery
+pnpm install
+pnpm build
+pnpm test
+```
+
+`pnpm build` обязателен перед первым запуском тестов, потому что часть пакетов импортирует собранный вывод своих зависимостей.
+
+## Структура репозитория
+
+```
+triggery/
+├── packages/
+│   ├── core/                 # Runtime + createTrigger + middleware
+│   ├── react/  solid/  vue/  # Framework bindings (same API surface)
+│   ├── testing/              # createTestRuntime, mockCondition, mockAction
+│   ├── vite/                 # Vite plugin (auto-discovery + HMR)
+│   ├── zustand/  redux/  jotai/  mobx/  reatom/  signals/  query/
+│   ├── dom/  socket/
+│   ├── eslint-plugin/  codemod/  cli/
+│   └── devtools-redux/  devtools-bridge/  devtools-panel/
+├── extensions/
+│   └── chrome-devtools/      # DevTools panel extension
+├── apps/
+│   └── docs/                 # This site (Astro Starlight)
+├── benchmarks/
+│   ├── bench/core/           # Triggery dispatch hot-path
+│   └── bench/vs/             # Side-by-side comparisons
+├── examples/                 # Runnable Vite/Next/RN demos
+├── templates/                # Starter templates for `triggery create`
+└── .changeset/               # Changeset files (one per merged feature/fix)
+```
+
+## Запуск сайта документации
+
+```bash
+cd apps/docs
+pnpm dev
+```
+
+Dev-сервер Astro поднимается на `http://localhost:4321/triggery/` (базовый путь совпадает с GitHub Pages). Превью «как в продакшене»:
+
+```bash
+pnpm --filter @triggery/docs build
+pnpm --filter @triggery/docs preview
+```
+
+Шаг сборки также запускает чекер ссылок и генератор i18n-фолбэков — поглядывай на хвост его вывода, если добавляешь или переименовываешь страницы.
+
+## Запуск бенчмарков
+
+```bash
+pnpm bench
+```
+
+Сьюты `bench/vs/` печатают ops/sec бок о бок с effector / rxjs / saga / xstate / reatom / mobx. CodSpeed подбирает бенчи в CI; локально достаточно бенч-раннера Vitest.
+
+## Частые команды
+
+```bash
+pnpm lint            # Biome lint
+pnpm format          # Biome write
+pnpm typecheck       # tsc -b
+pnpm test            # full test matrix
+pnpm test:coverage   # Vitest coverage (core target ≥ 95%)
+pnpm changeset       # add a changeset for a PR (only for packages/* changes)
+```
+
+<Aside type="tip">
+Для PR'ов только по докам или только по CI changeset **не нужен**. В шаблоне PR есть чекбокс, чтобы это подтвердить.
+</Aside>
+
+<CardGrid>
+  <LinkCard title="Стандарты кода" description="TypeScript strict, Biome, соглашения по публичному API." href="/ru/contributing/coding-standards/" />
+  <LinkCard title="Написание тестов" description="Vitest, fakeScheduler, контрактные тесты." href="/ru/contributing/writing-tests/" />
+  <LinkCard title="Написание документации" description="Руководство по стилю для этого сайта." href="/ru/contributing/writing-docs/" />
+  <LinkCard title="RFC-процесс" description="Как предложить изменение публичного API." href="/ru/contributing/rfc-process/" />
+</CardGrid>

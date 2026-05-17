@@ -1,0 +1,178 @@
+---
+title: "createTestRuntime"
+description: "Собрать изолированный рантайм, расширенный mockCondition / mockAction / flushMicrotasks."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Конструирует `Runtime`, расширенный тремя тестовыми хелперами — `mockCondition`, `mockAction` и `flushMicrotasks`. Стандартная точка входа для написания тестов триггеров без React: каждый тест получает свой рантайм, каждое условие и действие моделируются явно, очередь микротасков сливается по запросу.
+
+Базовый рантайм принимает те же [`RuntimeOptions`](/ru/api/core/types/runtime-options/), что и `createRuntime`.
+
+## Импорт
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+```
+
+## Сигнатура
+
+```ts
+function createTestRuntime(options?: TestRuntimeOptions): TestRuntime;
+
+type TestRuntimeOptions = RuntimeOptions;
+
+type TestRuntime = Runtime & {
+  mockCondition<S, K>(
+    trigger: Trigger<S>,
+    name: K,
+    valueOrGetter: ConditionMap<S>[K] | (() => ConditionMap<S>[K]),
+  ): RegistrationToken;
+
+  mockAction<S, K>(
+    trigger: Trigger<S>,
+    name: K,
+    handler: ActionFn<ActionMap<S>[K]>,
+  ): RegistrationToken;
+
+  flushMicrotasks(): Promise<void>;
+};
+```
+
+## Параметры
+
+| Параметр | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `options` | `RuntimeOptions` | `{}` | Те же опции, что и у [`createRuntime`](/ru/api/core/create-runtime/). |
+
+## Возвращает
+
+`TestRuntime` — `Runtime` плюс три хелпера. См. [`mockCondition`](/ru/api/testing/mock-condition/), [`mockAction`](/ru/api/testing/mock-action/), [`flushMicrotasks`](/ru/api/testing/flush-microtasks/).
+
+## Примеры
+
+### Базовый тест
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+
+describe('demo trigger', () => {
+  it('fires the action when the condition matches', () => {
+    const rt = createTestRuntime();
+    const t = createTrigger<{
+      events: { tick: number };
+      conditions: { enabled: boolean };
+      actions: { log: number };
+    }>(
+      {
+        id: 'demo',
+        events: ['tick'],
+        required: ['enabled'],
+        handler({ event, conditions, actions }) {
+          if (!conditions.enabled) return;
+          actions.log?.(event.payload);
+        },
+      },
+      rt,
+    );
+
+    rt.mockCondition(t, 'enabled', true);
+    const log = vi.fn();
+    rt.mockAction(t, 'log', log);
+
+    rt.fireSync('tick', 42);
+    expect(log).toHaveBeenCalledWith(42);
+  });
+});
+```
+
+### Async-диспатч со сливом микротасков
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('drains microtasks before assertion', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { tick: void };
+    actions: { log: void };
+  }>(
+    {
+      id: 'demo',
+      events: ['tick'],
+      handler({ actions }) {
+        actions.log?.();
+      },
+    },
+    rt,
+  );
+
+  const log = vi.fn();
+  rt.mockAction(t, 'log', log);
+
+  rt.fire('tick');            // microtask scheduler — handler not yet ran
+  await rt.flushMicrotasks();
+  expect(log).toHaveBeenCalledTimes(1);
+});
+```
+
+### Очистка между тестами
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime, type TestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach } from 'vitest';
+
+let rt: TestRuntime;
+
+beforeEach(() => {
+  rt = createTestRuntime();
+});
+afterEach(() => {
+  rt.dispose(); // aborts in-flight handlers, drops registrations
+});
+```
+
+### С middleware
+
+```ts twoslash
+import { createTestRuntime } from '@triggery/testing';
+import type { Middleware } from '@triggery/core';
+
+const trace: Middleware = {
+  name: 'trace',
+  onActionEnd({ actionName, durationMs }) {
+    console.log(actionName, durationMs);
+  },
+};
+
+const rt = createTestRuntime({ middleware: [trace] });
+```
+
+## Замечания
+
+<Aside type="tip">
+Пары `createTestRuntime` с [`createFakeScheduler`](/ru/api/testing/fake-scheduler/), когда триггер использует `actions.debounce / throttle / defer`. Тестовый планировщик подменяет `setTimeout`, и можно делать `advance(N)` вместо ожидания реального времени.
+</Aside>
+
+<Aside type="caution">
+Перегрузка `value | getter` в `mockCondition` использует эвристику — функция без аргументов считается геттером. Если тип значения условия — это сама функция без аргументов, передавай явный геттер (`() => myFn`), чтобы избежать неоднозначности.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="mockCondition" description="Подменить условие для тестов." href="/ru/api/testing/mock-condition/" />
+  <LinkCard title="mockAction" description="Подменить обработчик действия." href="/ru/api/testing/mock-action/" />
+  <LinkCard title="flushMicrotasks" description="Слить ожидающие микротаски." href="/ru/api/testing/flush-microtasks/" />
+  <LinkCard title="createFakeScheduler" description="Планировщик с виртуальными часами для тестов debounce / throttle." href="/ru/api/testing/fake-scheduler/" />
+</CardGrid>

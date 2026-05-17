@@ -1,0 +1,157 @@
+---
+title: "@triggery/react"
+description: "Биндинги Triggery для React 18+/19 — useEvent, useCondition, useAction, provider, scope."
+sidebar:
+  order: 2
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+React-биндинги для [Triggery](https://github.com/triggeryjs/triggery). Хуки имеют ту же форму, что и в `@triggery/solid` и `@triggery/vue`. **Без рантайм-зависимостей** — тонкая прослойка над жизненным циклом поверх `@triggery/core`.
+
+[![npm](https://img.shields.io/npm/v/@triggery/react?style=flat-square)](https://www.npmjs.com/package/@triggery/react)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/react?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/react)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/react" />
+
+Peer-зависимости: `react >= 18.0.0`, `react-dom >= 18.0.0`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| [`useEvent`](/ru/api/react/use-event/) | Типизированный эмиттер событий со стабильной идентичностью. |
+| [`useCondition`](/ru/api/react/use-condition/) | Регистрирует pull-only геттер условия. |
+| [`useAction`](/ru/api/react/use-action/) | Регистрирует обработчик действия. |
+| [`useInlineTrigger`](/ru/api/react/use-inline-trigger/) | Одноразовые триггеры внутри компонента. |
+| [`useInspect`](/ru/api/react/use-inspect/) / [`useInspectHistory`](/ru/api/react/use-inspect-history/) | Снимок последнего запуска / история из кольцевого буфера. |
+| [`createNamedHooks`](/ru/api/react/create-named-hooks/) | Получить `useNewMessageEvent`, `useUserCondition`, … из триггера. |
+| [`<TriggerRuntimeProvider>`](/ru/api/react/trigger-runtime-provider/) | Внедрить кастомный рантайм в поддерево. |
+| [`<TriggerScope>`](/ru/api/react/trigger-scope/) | Ограничить регистрации условий/действий поддеревом-фичей. |
+
+## Быстрый старт
+
+Три небольших файла. Триггер читается как спецификация, компоненты знают только о своём порту.
+
+### 1. Опиши триггер
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+
+export const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string; author: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings) return;
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({
+      title: event.payload.author,
+      body:  event.payload.text,
+    });
+  },
+});
+```
+
+### 2. Оберни дерево
+
+```tsx title="src/main.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+### 3. Подключи компоненты
+
+```tsx title="src/App.tsx"
+import { useAction, useCondition, useEvent } from '@triggery/react';
+import { useState } from 'react';
+import { messageTrigger } from './triggers/message.trigger';
+
+function SettingsProvider() {
+  const [settings] = useState({ sound: true, notifications: true });
+  useCondition(messageTrigger, 'settings', () => settings, [settings]);
+  return null;
+}
+
+function Chat() {
+  const fire = useEvent(messageTrigger, 'new-message');
+  return (
+    <button type="button" onClick={() => fire({ text: 'hi', author: 'Alice' })}>
+      send
+    </button>
+  );
+}
+
+function Toast() {
+  useAction(messageTrigger, 'showToast', ({ title, body }) => console.log(`[${title}] ${body}`));
+  return null;
+}
+
+export function App() {
+  return (
+    <>
+      <SettingsProvider />
+      <Chat />
+      <Toast />
+    </>
+  );
+}
+```
+
+Нажми на кнопку — `Toast` залогирует. Переключи `settings.notifications` в `false` — тишина.
+
+## Рецепты
+
+<CardGrid>
+  <LinkCard title="Счётчик" description="Hello-world рецепт." href="/ru/recipes/react/counter/" />
+  <LinkCard title="Конвейер уведомлений" description="Тост + звук + бейдж в трёх компонентах." href="/ru/recipes/react/notification-pipeline/" />
+  <LinkCard title="Поиск с дебаунсом" description="take-latest + AbortSignal для автокомплита." href="/ru/recipes/react/debounced-search/" />
+  <LinkCard title="WebSocket-синхронизация" description="Realtime-обновления без связности компонентов." href="/ru/recipes/react/websocket-sync/" />
+</CardGrid>
+
+## SSR / RSC
+
+На сервере хуки возвращают no-op'ы. Реальная подписка происходит в `useEffect`, поэтому гидрация не расходится. См. [руководство по SSR](/ru/guide/ssr/server-side-rendering/) и [руководство по React Server Components](/ru/guide/ssr/react-server-components/).
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Рантайм, который оборачивает этот биндинг." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/solid" description="Идентичная форма хуков для SolidJS." href="/ru/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Идентичная форма хуков для Vue 3." href="/ru/packages/vue/" />
+  <LinkCard title="@triggery/zustand" description="Адаптер: чтение стора Zustand из условия." href="/ru/packages/zustand/" />
+  <LinkCard title="@triggery/redux" description="Адаптер: чтение стора Redux из условия." href="/ru/packages/redux/" />
+  <LinkCard title="@triggery/testing" description="Тестируй триггер без рендера React." href="/ru/packages/testing/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/react)
+- [npm](https://www.npmjs.com/package/@triggery/react)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/react/CHANGELOG.md)

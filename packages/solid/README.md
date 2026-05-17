@@ -96,6 +96,10 @@ Register an action handler for the trigger. Invoked whenever the trigger body ca
 
 Solid components only run their setup once. No `useCallback`, no dependency arrays, no ref dance — just close over what you need. Condition getters that read signals automatically see the latest value at fire time because Solid signals are pure functions.
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/solid/](https://triggeryjs.github.io/packages/solid/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — the runtime this binding wraps.

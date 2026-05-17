@@ -1,0 +1,100 @@
+---
+title: "setDefaultRuntime"
+description: "Replace the global runtime singleton. Primarily for tests that need a fresh runtime each iteration."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Replaces the runtime returned by [`getDefaultRuntime`](/api/core/get-default-runtime/). The next call to `getDefaultRuntime()` — and every binding hook with no provider in scope — sees the new instance.
+
+Use this when you need a clean slate per test, when your app boot path constructs a customized runtime, or when you mount multiple isolated runtimes and want one of them to act as the default.
+
+## Import
+
+```ts
+import { setDefaultRuntime } from '@triggery/core';
+```
+
+## Signature
+
+```ts
+function setDefaultRuntime(runtime: Runtime): void;
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `runtime` | [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) | Any runtime created via [`createRuntime`](/api/core/create-runtime/) or [`createTestRuntime`](/api/testing/create-test-runtime/). |
+
+## Returns
+
+`void`. Side effect only.
+
+## Examples
+
+### Fresh runtime per test
+
+```ts twoslash
+import { createRuntime, setDefaultRuntime } from '@triggery/core';
+import { afterEach, beforeEach } from 'vitest';
+
+beforeEach(() => {
+  setDefaultRuntime(createRuntime({ inspectorBufferSize: 100 }));
+});
+afterEach(() => {
+  // Optional — the next beforeEach will replace it anyway.
+});
+```
+
+### Replace with a test runtime that has `mockCondition` / `mockAction`
+
+```ts twoslash
+import { setDefaultRuntime } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+setDefaultRuntime(rt);
+
+// Any module that calls createTrigger() without an explicit runtime now binds
+// to `rt` via the default-runtime fallback inside createTrigger.
+```
+
+### Custom runtime in app bootstrap
+
+```ts twoslash
+import { createRuntime, setDefaultRuntime, type Middleware } from '@triggery/core';
+
+const tracing: Middleware = {
+  name: 'tracing',
+  onFire({ eventName }) {
+    console.debug('[event]', eventName);
+  },
+};
+
+setDefaultRuntime(createRuntime({ middleware: [tracing] }));
+```
+
+## Notes
+
+<Aside type="caution" title="Existing triggers don't migrate">
+Triggers created against the previous default runtime stay registered on the previous instance. `setDefaultRuntime` only affects future `createTrigger(...)` calls that omit the runtime argument, and future bindings that fall back to the default. If you want full isolation, recreate the triggers inside each test's setup.
+</Aside>
+
+<Aside type="tip">
+Inside React, prefer wrapping your tree in `<TriggerRuntimeProvider runtime={…}>` over mutating the global singleton — the provider is local to the subtree and doesn't leak across tests when modules outlive the run.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="getDefaultRuntime" description="Read the current singleton (and lazy-create on first call)." href="/api/core/get-default-runtime/" />
+  <LinkCard title="createRuntime" description="Create an isolated runtime." href="/api/core/create-runtime/" />
+  <LinkCard title="createTestRuntime" description="Test-flavoured runtime with mockCondition / mockAction." href="/api/testing/create-test-runtime/" />
+  <LinkCard title="TriggerRuntimeProvider" description="Subtree-scoped runtime injection." href="/api/react/trigger-runtime-provider/" />
+</CardGrid>

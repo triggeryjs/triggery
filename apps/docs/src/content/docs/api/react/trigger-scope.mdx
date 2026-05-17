@@ -1,0 +1,159 @@
+---
+title: "TriggerScope"
+description: "Scope condition and action registrations to a subtree. Lighter than TriggerRuntimeProvider."
+sidebar:
+  order: 9
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Provides a scope id to descendants. `useCondition` and `useAction` calls inside this subtree register with the scope, and only triggers declared with the same `scope` in `createTrigger(...)` will see them. The runtime, inspector, scheduler and middleware all stay shared — `TriggerScope` is a lighter, in-runtime partition compared to `<TriggerRuntimeProvider>`.
+
+Use it when one runtime is correct but you need two halves of the tree to register independent providers for the same condition or action.
+
+## Import
+
+```ts
+import { TriggerScope } from '@triggery/react';
+```
+
+## Signature
+
+```ts
+function TriggerScope(props: TriggerScopeProps): JSX.Element;
+
+type TriggerScopeProps = {
+  readonly id: string;
+  readonly children: ReactNode;
+};
+```
+
+## Props
+
+| Prop | Type | Required | Description |
+|---|---|---|---|
+| `id` | `string` | yes | Scope id. Must match the `scope` field on a trigger to bind. |
+| `children` | `ReactNode` | yes | Subtree where registrations are tagged with `id`. |
+
+## Examples
+
+### Two chat instances on one page
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { TriggerScope, useAction, useCondition, useEvent } from '@triggery/react';
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { author: string; text: string } };
+  conditions: { activeChannelId: string };
+  actions: { showToast: { title: string } };
+}>({
+  id: 'chat:new-message',
+  scope: 'chat',
+  events: ['new-message'],
+  required: ['activeChannelId'],
+  handler({ event, conditions, actions }) {
+    if (event.payload.author === conditions.activeChannelId) return;
+    actions.showToast?.({ title: event.payload.author });
+  },
+});
+
+function ChatA() {
+  useCondition(messageTrigger, 'activeChannelId', () => 'a', []);
+  useAction(messageTrigger, 'showToast', t => console.log('toast A', t.title));
+  return null;
+}
+function ChatB() {
+  useCondition(messageTrigger, 'activeChannelId', () => 'b', []);
+  useAction(messageTrigger, 'showToast', t => console.log('toast B', t.title));
+  return null;
+}
+
+function Page() {
+  return (
+    <>
+      <TriggerScope id="chat">
+        <ChatA />
+      </TriggerScope>
+      <TriggerScope id="chat">
+        {/* Second scope — registrations from ChatB would override ChatA's
+            but they're in a different boundary. Use distinct ids if you want
+            truly independent buckets. */}
+        <ChatB />
+      </TriggerScope>
+    </>
+  );
+}
+```
+
+### Independent scopes for two trigger instances
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { TriggerScope, useCondition } from '@triggery/react';
+
+const triggerLeft = createTrigger<{
+  events: { ping: void };
+  conditions: { value: number };
+}>({ id: 'left', scope: 'left', events: ['ping'], required: ['value'], handler() {} });
+
+const triggerRight = createTrigger<{
+  events: { ping: void };
+  conditions: { value: number };
+}>({ id: 'right', scope: 'right', events: ['ping'], required: ['value'], handler() {} });
+
+function Layout() {
+  return (
+    <>
+      <TriggerScope id="left">
+        <Provider t={triggerLeft} v={1} />
+      </TriggerScope>
+      <TriggerScope id="right">
+        <Provider t={triggerRight} v={2} />
+      </TriggerScope>
+    </>
+  );
+}
+
+function Provider({ t, v }: { t: ReturnType<typeof createTrigger>; v: number }) {
+  useCondition(t, 'value', () => v, [v]);
+  return null;
+}
+```
+
+### Nested scopes
+
+The inner `id` wins for everything inside it:
+
+```tsx
+import { TriggerScope } from '@triggery/react';
+
+<TriggerScope id="outer">
+  {/* registrations here tagged "outer" */}
+  <TriggerScope id="inner">
+    {/* registrations here tagged "inner" */}
+  </TriggerScope>
+</TriggerScope>
+```
+
+## Notes
+
+<Aside type="caution" title="Scope must match exactly">
+A trigger created with `scope: 'chat'` only sees registrations made in a `<TriggerScope id="chat">`. A global trigger (no `scope`) only sees registrations made **outside** any `TriggerScope`. Mismatches are silent no-ops at runtime but log a one-time DEV warning so you notice.
+</Aside>
+
+<Aside type="tip">
+For full isolation — separate inspector, scheduler, middleware — use [`<TriggerRuntimeProvider>`](/api/react/trigger-runtime-provider/). `TriggerScope` is for the lighter case where you want one runtime but two independent registration buckets per condition/action name.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="TriggerRuntimeProvider" description="Heavier isolation — separate runtime per subtree." href="/api/react/trigger-runtime-provider/" />
+  <LinkCard title="createTrigger" description="Where you declare the `scope` field." href="/api/core/create-trigger/" />
+  <LinkCard title="useCondition" description="Registrations inside a scope inherit its id." href="/api/react/use-condition/" />
+  <LinkCard title="Scopes guide" description="Patterns for multi-instance UIs." href="/guide/architecture/scopes/" />
+</CardGrid>

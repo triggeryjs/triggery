@@ -1,0 +1,111 @@
+---
+title: "Writing docs"
+description: "Frontmatter, components, file structure and the Guide-vs-Recipes-vs-API split for this Astro Starlight site."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+This site is built with **Astro Starlight 0.37** and the `starlight-theme-nova` plugin. Pages live under `apps/docs/src/content/docs/` and are written in `.mdx`. The point of this page is to keep new contributions visually and structurally consistent with what's already here.
+
+## File layout and URL shape
+
+```
+apps/docs/src/content/docs/
+├── guide/             → /guide/...
+├── recipes/           → /recipes/...
+├── api/               → /api/...
+├── packages/          → /packages/...
+├── migration/         → /migration/...
+├── ecosystem/         → /ecosystem/...
+└── contributing/      → /contributing/...
+```
+
+- **File names** are kebab-case (`from-useeffect.mdx`, `notification-pipeline.mdx`). URLs match the file name minus the extension, lower-cased, with trailing slash.
+- **Cross-references** are absolute and kebab-case: `/api/react/use-event/`, `/guide/essentials/conditions/`, `/packages/codemod/`.
+- **No leading or trailing whitespace** in slugs; no underscores.
+
+## Frontmatter
+
+Every page has at least `title` and `description`. Use double quotes — especially when the value starts with `@` (YAML would otherwise parse it as an alias):
+
+```yaml
+---
+title: "@triggery/core"
+description: "The framework-agnostic orchestration runtime."
+sidebar:
+  order: 1
+---
+```
+
+`sidebar.order` controls position when the sidebar is `autogenerate`-d. Lower numbers sort first.
+
+## What goes where
+
+| Section | Audience | Style |
+|---|---|---|
+| **Guide** | Reader learning the library top to bottom | Long-form explanatory prose. Mental models, why, when not. Examples are illustrative. |
+| **Recipes** | Reader copying a working scenario | Scenario-first. Full runnable code. End-to-end, including test. |
+| **API Reference** | Reader looking up a signature | Terse. Signature → params → return → example → see-also. |
+| **Migration** | Reader carrying baggage (useEffect/saga/RxJS) | Mapping table → before/after pairs → codemod note. |
+| **Packages** | Reader picking a package | Install → "what's inside" → quick example → related. |
+| **Ecosystem** | Reader looking for adapters/integrations | Tables of packages with one-line descriptions and links. |
+| **Contributing** | Reader writing a PR | Conventions, not narrative. |
+
+If you're unsure where to put a page — pick the section whose audience matches the *reader's mental state at that moment*, not the topic.
+
+## Components
+
+The components below are imported from `@astrojs/starlight/components` and used consistently across the site. Import them at the top of the file under the frontmatter:
+
+```mdx
+import { Aside, LinkCard, CardGrid, TabItem, Steps, FileTree } from '@astrojs/starlight/components';
+```
+
+| Component | When to use |
+|---|---|
+| `<Aside type="tip">` / `"caution"` / `"note"` / `"danger"` | Side-bar callouts. Use sparingly — overused asides become noise. |
+| `<LinkCard title=… description=… href=… />` | Cross-references at the end of a page. |
+| `<CardGrid>` | Wraps 2-4 `<LinkCard>` for the page footer. |
+|  `<TabItem label=…>` (inside `<FrameworkTabs>`) and `<PackageManagers pkg=…>`  | Switch between React/Solid/Vue or pnpm/npm/yarn/bun. |
+| `<Steps>` | Numbered ordered list with strong visual treatment. |
+| `<FileTree>` | Render a directory listing — use for "where does this file live" sections. |
+
+## Style rules
+
+- **No H1.** The page title comes from the frontmatter; the first heading in the body is `##`.
+- **No trailing "## Summary"** — end the page with a `<CardGrid>` of next-step cards.
+- **No emojis** anywhere in headings, body, or commit messages.
+- **No marketing scaffolding** — no "🚀 What's new", no "✨ Features". Plain section titles.
+- **Code blocks** carry a `title=`-prefixed file path when they represent a real file:
+  ````
+  ```ts title="src/triggers/message.trigger.ts"
+  ```
+  ````
+- Use **fenced code** with explicit language tags. No tildes.
+- Tables follow GFM pipe-table syntax. Keep alignment loose — humans don't grep for it.
+
+## House voice
+
+- Address the reader as "you". Avoid "we" except for project-collective statements ("we ship codemods for breaking changes").
+- Be direct, technical, no fluff. The aim is Zod-density with Vue-friendliness.
+- Show the code, then explain *what* changed and *why*. Avoid "let me explain" preamble.
+- Honest about limits — "this doesn't map" / "planned for 1.0" / "use X instead" is preferred over hedged promises.
+
+## Verifying your changes
+
+```bash
+cd apps/docs
+pnpm dev               # http://localhost:4321/triggery/
+pnpm --filter @triggery/docs build
+```
+
+The build runs the link checker and the i18n fallback generator. Broken internal links fail the build — fix them locally before pushing.
+
+<CardGrid>
+  <LinkCard title="Development setup" description="Clone, install, run docs locally." href="/contributing/development-setup/" />
+  <LinkCard title="Coding standards" description="TypeScript strict, naming, ESM only." href="/contributing/coding-standards/" />
+  <LinkCard title="RFC process" description="When a docs change needs an RFC (rarely)." href="/contributing/rfc-process/" />
+  <LinkCard title="Code of conduct" description="Be excellent to each other." href="/contributing/code-of-conduct/" />
+</CardGrid>

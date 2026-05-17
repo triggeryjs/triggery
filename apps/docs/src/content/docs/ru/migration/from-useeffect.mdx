@@ -1,0 +1,131 @@
+---
+title: "От useEffect"
+description: "Соответствие распространённых паттернов побочных эффектов в useEffect модели Triggery: событие → условия → действия."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+`useEffect` — это универсальный escape hatch React, и большинство приложений в итоге используют его для задач, под которые он не был спроектирован: оркестрация побочных эффектов через границы фич. Эта страница — полевой справочник по переводу таких `useEffect` в Triggery, по одной форме за раз.
+
+## Соответствие ментальных моделей
+
+| Форма `useEffect` | Аналог в Triggery |
+|---|---|
+| Тело эффекта | Тело обработчика |
+| `useEffect(fn, [deps])` с перезапуском при изменении зависимостей | Геттер `useCondition` — читается лениво, без перезапуска |
+| `return () => cleanup()` | `signal.addEventListener('abort', …)` для асинхронных обработчиков; синхронным cleanup не нужен |
+| `setTimeout` внутри эффекта | `actions.debounce(ms).foo(p)` — таймером владеет рантайм |
+| Подписка на внешний источник | `useDomEvent` / `useSocketIoEvent` / `useWebSocketEvent` из адаптеров |
+| `if (cond) doThing()` внутри эффекта | `check.is('cond', …)` внутри обработчика |
+| Вызов action из Zustand/Redux/Jotai | `actions.someAction?.(payload)` |
+
+## Паттерн 1 — useEffect с cleanup (подписка / отписка)
+
+```tsx title="Before"
+useEffect(() => {
+  const handler = (msg: Message) => onMessage(msg);
+  socket.on('new-message', handler);
+  return () => socket.off('new-message', handler);
+}, [onMessage]);
+```
+
+```tsx title="After"
+const fireMessage = useEvent(messageTrigger, 'new-message');
+useSocketIoEvent(socket, 'new-message', fireMessage);
+```
+
+Адаптер `@triggery/socket` сам берёт на себя `on` / `off` и даёт `fireMessage` стабильную идентичность. Обратные вызовы, захваченные в замыкания, исчезают.
+
+## Паттерн 2 — useEffect, гоняющийся за зависимостями
+
+```tsx title="Before"
+useEffect(() => {
+  if (!user || !settings.notifications) return;
+  if (channelId === activeChannelId) return;
+  showToast({ title: msg.author, body: msg.text });
+}, [user, settings, channelId, activeChannelId, msg]);
+```
+
+Массив зависимостей раздувается; пропущенная запись — это тихий баг. В Triggery правило живёт в одном обработчике, а *провайдеры* никого не перерендеривают:
+
+```ts title="After (handler)"
+handler({ event, conditions, actions, check }) {
+  if (event.payload.channelId === conditions.activeChannelId) return;
+  if (!check.is('settings', s => s.notifications)) return;
+  actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+}
+```
+
+Каждое значение, которое читает обработчик, приходит из `useCondition` где-то ещё — и ни один из этих компонентов не перерендеривается при срабатывании события.
+
+## Паттерн 3 — useEffect, вызывающий action стора
+
+```tsx title="Before"
+const increment = useBadgeStore(s => s.increment);
+useEffect(() => {
+  if (msg && msg.authorId !== currentUserId) increment(msg.channelId);
+}, [msg, currentUserId, increment]);
+```
+
+```ts title="After"
+// trigger handler:
+if (event.payload.authorId !== conditions.currentUserId) {
+  actions.incrementBadge?.(event.payload.channelId);
+}
+
+// reactor (in the badge feature):
+useAction(messageTrigger, 'incrementBadge', channelId => increment(channelId));
+```
+
+Стор не протекает в файл триггера — реактор, который владеет состоянием badge, владеет и dispatch'ем.
+
+## Паттерн 4 — useEffect, слушающий сокет
+
+```tsx title="Before — split between Chat.tsx and NotificationLayer.tsx"
+// Chat.tsx
+useEffect(() => {
+  socket.on('new-message', msg => {
+    setMessages(m => [...m, msg]);
+  });
+  return () => socket.off('new-message');
+}, []);
+
+// NotificationLayer.tsx — second listener for the same event
+useEffect(() => {
+  socket.on('new-message', msg => {
+    if (settings.notifications) toast(msg.author);
+  });
+  return () => socket.off('new-message');
+}, [settings]);
+```
+
+Два слушателя, два cleanup'а, два массива зависимостей, одно событие. Заменяется на один `fireMessage` и много `useAction`-реакторов — полная версия в [рецепте notification pipeline](/ru/recipes/react/notification-pipeline/).
+
+## Codemod
+
+`@triggery/codemod` поставляет [`extract-trigger`](/ru/packages/codemod/), который вытаскивает первый `useEffect(() => { … }, [])` из файла в соседний `*.trigger.ts`-заготовку и переписывает компонент на вызов `useEvent(...)`. Он намеренно механический — типизация схемы, вынос условий и логика cleanup остаются на тебе.
+
+```bash
+npx triggery-codemod extract-trigger --name new-message src/Chat.tsx --dry-run
+```
+
+Для всего более сложного (эффекты с условными зависимостями, несколько эффектов, делящих состояние, кастомные хуки) codemod не помогает — но паттерны выше говорят, что делать руками.
+
+## Когда оставить `useEffect`
+
+Triggery — не замена каждому `useEffect`. Оставляй его, когда:
+
+- Побочный эффект чисто локален в одном компоненте и не вырастет ("переключить класс по клику").
+- Ты подписываешься на браузерное API, которое интересно только этому компоненту (например, `ResizeObserver`, чей результат рендерится тут же).
+- Ты синхронизируешься с ref (`ref.current?.focus()` после изменения состояния).
+
+Всё, что пересекает границу фичи, — это то, для чего существует Triggery.
+
+<CardGrid>
+  <LinkCard title="От RTK listenerMiddleware" description="Один listener → один триггер, с поддержкой codemod-скрипта." href="/ru/migration/from-rtk-listener/" />
+  <LinkCard title="От Redux Saga" description="Соответствие watcher-ов и put/select." href="/ru/migration/from-redux-saga/" />
+  <LinkCard title="Anti-spaghetti" description="Когда НЕ делать триггер и как держать обработчики короткими." href="/ru/guide/architecture/anti-spaghetti/" />
+  <LinkCard title="Codemod CLI" description="extract-trigger и компания." href="/ru/packages/codemod/" />
+</CardGrid>

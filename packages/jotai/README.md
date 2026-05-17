@@ -62,6 +62,10 @@ useJotaiCondition<V, S, K>(
 ): void
 ```
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/jotai/](https://triggeryjs.github.io/packages/jotai/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.

@@ -1,0 +1,265 @@
+---
+title: "Conditions"
+description: "Pull-only world snapshots — what the runtime reads at fire time, never between fires."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+A **condition** is a piece of "world state" the handler may want to look at when it runs. A provider component registers a *getter* under a condition name; when the trigger fires, the runtime calls the getter once and freezes the value for the rest of that run.
+
+That's a small idea with a big consequence: **the trigger pulls state, the provider doesn't push it.** No subscriptions, no re-renders, no diff tracking. Triggery doesn't have a reactive graph — it has a Map of `() => T` functions that get called exactly when an event needs them.
+
+## Declaring a condition
+
+Conditions live in the schema's `conditions` map. Each entry maps a name to the value type the getter must return:
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': { channelId: string; text: string } };
+  conditions: {
+    settings:        Settings;
+    activeChannelId: string | null;
+    currentUserId:   string;
+  };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    if (!conditions.settings) return;
+    if (event.payload.channelId === conditions.activeChannelId) return;
+
+    if (check.is('settings', (s) => s.notifications)) {
+      actions.showToast?.({ title: 'New message', body: event.payload.text });
+    }
+  },
+});
+```
+
+Three names, three value types. Whether they're actually registered at fire time is a separate question — see [required gate](#the-required-gate) below.
+
+## Registering a getter
+
+Providers register getters through a binding hook. `useCondition` takes the trigger, the condition name, a getter function, and (in React) an optional deps array with the same semantics as `useMemo`:
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/features/SettingsPanel.tsx"
+    import { useCondition } from '@triggery/react';
+    import { useState } from 'react';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function SettingsPanel() {
+      const [settings, setSettings] = useState({
+        sound: true, notifications: true, dnd: false,
+      });
+      // The runtime calls `() => settings` only when 'new-message' fires.
+      useCondition(messageTrigger, 'settings', () => settings, [settings]);
+      // …UI to edit settings
+    }
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/features/SettingsPanel.tsx"
+    import { useCondition } from '@triggery/solid';
+    import { createSignal } from 'solid-js';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function SettingsPanel() {
+      const [settings] = createSignal({ sound: true, notifications: true, dnd: false });
+      // Solid signals are already getters — pass them directly.
+      useCondition(messageTrigger, 'settings', settings);
+    }
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```vue title="src/features/SettingsPanel.vue"
+    <script setup lang="ts">
+    import { useCondition } from '@triggery/vue';
+    import { ref } from 'vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    const settings = ref({ sound: true, notifications: true, dnd: false });
+    useCondition(messageTrigger, 'settings', () => settings.value);
+    </script>
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+The deps array works exactly like `useCallback` / `useMemo`: when any dep changes, the runtime re-reads the latest closure. The getter itself is wrapped in a stable ref so re-renders don't re-register the condition with the runtime.
+
+## Pull-only — what that means in practice
+
+The getter runs **only at fire time**. Concretely:
+
+- No subscriptions are set up between provider state and the runtime.
+- Provider re-renders do *not* call the getter, do *not* invalidate anything, do *not* notify any other component.
+- A trigger that never fires never asks for the value. Cheap.
+- The same handler reading `conditions.settings` twice in one run sees the same value. The proxy caches per-run.
+
+This is the property that decouples the trigger from the React render cycle. A toast layer, a settings panel and a chat list can all live next to a trigger without any of them rendering when a message arrives.
+
+```text
+provider state changes  →  no runtime work
+event fires             →  for each subscribed trigger:
+                              for each condition the handler reads:
+                                  call getter() exactly once
+                              run handler with the frozen snapshot
+                              dispatch actions
+```
+
+## Reading conditions inside the handler
+
+Every condition the handler can mention is typed as `T | undefined`. The reason is honest: until V1.1's builder API lands, TypeScript can't narrow the type based on `required: [...]`. So you have three safe ways to read:
+
+```ts
+handler({ conditions, check }) {
+  // 1. Manual guard — fine for one or two.
+  if (!conditions.settings) return;
+  if (!conditions.settings.notifications) return;
+  // conditions.settings is now Settings (narrowed by TS).
+
+  // 2. `check.is` — typed predicate. Returns false if the condition is absent.
+  if (!check.is('settings', (s) => s.notifications)) return;
+
+  // 3. `check.all` / `check.any` — multi-condition predicates (see Handlers page).
+  if (!check.all({ settings: (s) => s.notifications, currentUserId: () => true })) return;
+}
+```
+
+Use the [`required` field](#the-required-gate) for "the handler is meaningless without this". Use `check.is` for "the handler should skip when X isn't true". They compose.
+
+## The `required` gate
+
+A condition listed in `required: [...]` must have **at least one registered getter** at fire time, or the handler is skipped before it runs. The inspector records a `'skipped'` entry with reason `'missing-required-condition:<name>'`.
+
+```ts
+createTrigger<Schema>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings', 'currentUserId'],   // both must be registered
+  handler({ conditions }) {
+    // We know they exist at runtime — but TS still sees `T | undefined` in V1.
+  },
+});
+```
+
+This is the gate that lets you wire scenarios safely. If `<UserProvider>` hasn't mounted yet, `'new-message'` events arrive, get a recorded skip, and the user sees nothing. Once the provider mounts, the next event runs the handler normally. The provider can be in a different feature folder than the trigger; the trigger doesn't import it.
+
+In the inspector this shows up as:
+
+```text
+triggery/message-received/fire   status: 'skipped'   reason: 'missing-required-condition:currentUserId'
+```
+
+— a precise signal that something is mounted late or not at all.
+
+See [Trigger anatomy → `required`](/guide/essentials/trigger-anatomy/#required-optional) for the full mechanics.
+
+## Adapter pattern — wrapping external stores
+
+A `useState` value is a trivial getter. The same pattern works for any external store — Zustand, Redux, Jotai, MobX, Signals, TanStack Query. The adapter packages do this in ~30 lines: they read from the store synchronously and hand the value back through `useCondition`.
+
+```tsx title="With @triggery/zustand"
+import { useStoreCondition } from '@triggery/zustand';
+import { useCurrentUserStore } from '../stores/user';
+import { messageTrigger } from '../triggers/message.trigger';
+
+function CurrentUserProvider() {
+  useStoreCondition(messageTrigger, 'currentUserId', useCurrentUserStore, (s) => s.id);
+  return null;
+}
+```
+
+The Zustand store re-renders the provider when its slice changes — but that's the provider's business, and Triggery doesn't care. The runtime still only calls `() => s.id` at fire time, and the cached `useStore` selector hands back the latest value.
+
+The same shape works for [`@triggery/redux`](/packages/redux/), [`@triggery/jotai`](/packages/jotai/), [`@triggery/query`](/packages/query/), and any store you author yourself — see [Adapters](/packages/).
+
+## Last-mount-wins ownership
+
+What if two providers register the same condition name on the same trigger? The runtime keeps both registrations on an internal stack, with the **most recently mounted** at the top — the value the handler sees.
+
+```tsx
+function ProviderA() {
+  useCondition(messageTrigger, 'currentUserId', () => 'alice');   // mounted first
+  return null;
+}
+function ProviderB() {
+  useCondition(messageTrigger, 'currentUserId', () => 'bob');     // mounted second — wins
+  return null;
+}
+
+// Mount order: <ProviderA /> then <ProviderB />.
+// Handler reads conditions.currentUserId → 'bob'.
+// When <ProviderB /> unmounts, 'alice' takes over (stack pop).
+```
+
+Two intentional consequences:
+
+1. **Tests and overrides are simple.** A test mounts a provider with the test value second; it wins. A feature flag overrides the global provider by mounting deeper in the tree.
+2. **StrictMode is safe.** React 18 StrictMode mounts → unmounts → mounts in development. The stack model handles this without spurious collisions because each registration is stable.
+
+In DEV, the runtime emits a one-time `console.warn` per `(triggerId, conditionName)` when a second live registration arrives:
+
+```text
+[triggery] multiple condition registrations for "currentUserId" on trigger "message-received" —
+last-mount-wins. To compose values from several sources, register through a single hook.
+```
+
+This is a heads-up that *probably* something is wrong. If you genuinely want last-mount-wins (overrides, tests), it's fine to ignore. See [Ownership](/guide/architecture/ownership/) for the full discussion and patterns for composing values when you have multiple sources of truth.
+
+## Scoped conditions
+
+Conditions register globally by default. Wrap a subtree with `<TriggerScope id="...">` and conditions registered inside become visible only to triggers whose `scope` matches:
+
+```tsx
+<TriggerScope id="chat">
+  <SettingsPanel />          {/* settings condition — only visible to scope='chat' triggers */}
+  <ChatRoom />
+</TriggerScope>
+
+<TriggerScope id="settings-screen">
+  <SettingsPanel />          {/* same component, separate registration, isolated */}
+</TriggerScope>
+```
+
+Two `<ChatRoom>` instances in two scopes operate on two independent `settings` conditions. The scope key is a string — you can match by tenant, by route, by feature flag. See [Scopes](/guide/architecture/scopes/).
+
+## Common patterns
+
+**Conditions are nouns, not actions.** `settings`, `currentUserId`, `cartTotal` — not `getSettings` or `loadCart`. The verb is implicit in "read this at fire time".
+
+**One condition per concept.** Don't bundle unrelated values into one `appState` condition just because they happen to be in the same Zustand store. The runtime cares about whether the value is registered; mixing concerns makes the `required` list lie.
+
+**Keep getters cheap.** They run at fire time, and a misbehaving getter throws inside the dispatch loop. Don't `fetch` from a getter. Don't synchronously decompress a 3 MB blob. If the value is expensive, memoize at the provider level and have the getter return the cached result.
+
+**Use `check.is` instead of nested `if`.** It's shorter, it handles the undefined case for you, and the inspector records a `snapshotKeys` entry only when the condition was actually consulted. Cleaner traces.
+
+<CardGrid>
+  <LinkCard
+    title="Actions"
+    description="The opposite port — side-effect channels registered by reactors."
+    href="/guide/essentials/actions/"
+  />
+  <LinkCard
+    title="Ownership"
+    description="Last-mount-wins, multiple providers, DEV warn-once, composing sources."
+    href="/guide/architecture/ownership/"
+  />
+  <LinkCard
+    title="Trigger anatomy"
+    description="The full createTrigger reference — including the required gate."
+    href="/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Handlers"
+    description="ctx walkthrough — including check.is / check.all / check.any patterns."
+    href="/guide/essentials/handlers/"
+  />
+</CardGrid>

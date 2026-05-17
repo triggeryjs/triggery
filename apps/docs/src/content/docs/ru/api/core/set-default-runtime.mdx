@@ -1,0 +1,100 @@
+---
+title: "setDefaultRuntime"
+description: "Заменить глобальный синглтон рантайма. Прежде всего для тестов, где нужен свежий рантайм на каждой итерации."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Заменяет рантайм, который возвращает [`getDefaultRuntime`](/ru/api/core/get-default-runtime/). Следующий вызов `getDefaultRuntime()` — и каждый хук-биндинг без провайдера в скоупе — увидит новый экземпляр.
+
+Используй, когда нужно чистое состояние на каждый тест, когда твой boot-код приложения собирает кастомный рантайм, или когда поднимаешь несколько изолированных рантаймов и хочешь, чтобы один из них был дефолтным.
+
+## Импорт
+
+```ts
+import { setDefaultRuntime } from '@triggery/core';
+```
+
+## Сигнатура
+
+```ts
+function setDefaultRuntime(runtime: Runtime): void;
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `runtime` | [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts) | Любой рантайм, созданный через [`createRuntime`](/ru/api/core/create-runtime/) или [`createTestRuntime`](/ru/api/testing/create-test-runtime/). |
+
+## Возвращает
+
+`void`. Только побочный эффект.
+
+## Примеры
+
+### Свежий рантайм на каждый тест
+
+```ts twoslash
+import { createRuntime, setDefaultRuntime } from '@triggery/core';
+import { afterEach, beforeEach } from 'vitest';
+
+beforeEach(() => {
+  setDefaultRuntime(createRuntime({ inspectorBufferSize: 100 }));
+});
+afterEach(() => {
+  // Optional — the next beforeEach will replace it anyway.
+});
+```
+
+### Замена на тестовый рантайм с `mockCondition` / `mockAction`
+
+```ts twoslash
+import { setDefaultRuntime } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+setDefaultRuntime(rt);
+
+// Any module that calls createTrigger() without an explicit runtime now binds
+// to `rt` via the default-runtime fallback inside createTrigger.
+```
+
+### Кастомный рантайм при bootstrap-приложении
+
+```ts twoslash
+import { createRuntime, setDefaultRuntime, type Middleware } from '@triggery/core';
+
+const tracing: Middleware = {
+  name: 'tracing',
+  onFire({ eventName }) {
+    console.debug('[event]', eventName);
+  },
+};
+
+setDefaultRuntime(createRuntime({ middleware: [tracing] }));
+```
+
+## Замечания
+
+<Aside type="caution" title="Существующие триггеры не мигрируют">
+Триггеры, созданные относительно предыдущего рантайма по умолчанию, остаются зарегистрированными на старом экземпляре. `setDefaultRuntime` влияет только на будущие вызовы `createTrigger(...)` без аргумента-рантайма и на будущие биндинги, которые откатываются к дефолтному. Для полной изоляции пересоздавай триггеры в setup'е каждого теста.
+</Aside>
+
+<Aside type="tip">
+Внутри React предпочитай оборачивать дерево в `<TriggerRuntimeProvider runtime={…}>`, а не мутировать глобальный синглтон — провайдер локален к поддереву и не утекает между тестами, когда модули переживают запуск.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="getDefaultRuntime" description="Прочитать текущий синглтон (и лениво создать при первом вызове)." href="/ru/api/core/get-default-runtime/" />
+  <LinkCard title="createRuntime" description="Создать изолированный рантайм." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="createTestRuntime" description="Тестовый рантайм с mockCondition / mockAction." href="/ru/api/testing/create-test-runtime/" />
+  <LinkCard title="TriggerRuntimeProvider" description="Скоупоориентированный инжект рантайма в поддерево." href="/ru/api/react/trigger-runtime-provider/" />
+</CardGrid>

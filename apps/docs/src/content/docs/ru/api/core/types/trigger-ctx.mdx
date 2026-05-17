@@ -1,0 +1,199 @@
+---
+title: "TriggerCtx"
+description: "Объект контекста, который передаётся в обработчик триггера на каждом запуске — event, conditions, actions, check, signal, meta."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Единственный аргумент, который получает каждый обработчик триггера. В нём упакованы матчившееся событие, снепшот условий, прокси действий, DSL `check`, метаданные рантайма и `AbortSignal`. Форма полностью выводится из [`TriggerSchema`](/ru/api/core/types/trigger-schema/) триггера — деструктурируй только нужные поля.
+
+## Импорт
+
+```ts
+import type { TriggerCtx } from '@triggery/core';
+```
+
+## Определение
+
+```ts
+type TriggerCtx<S extends TriggerSchema, R extends ConditionKey<S> = never> = {
+  readonly event:      EventOf<S>;
+  readonly conditions: ConditionsCtx<ConditionMap<S>, R>;
+  readonly actions:    ActionsCtx<ActionMap<S>>;
+  readonly check:      CheckCtx<ConditionMap<S>>;
+  readonly meta:       MetaCtx;
+  readonly signal:     AbortSignal;
+};
+```
+
+`S` — схема триггера; `R` — union ключей обязательных условий (`required: [...]` в конфиге).
+
+## Поля
+
+### `event` — `EventOf<S>`
+
+Дискриминированный union по `S['events']`. У каждого варианта `{ readonly name: K; readonly payload: EventMap<S>[K] }`. Сужай через `event.name`.
+
+```ts
+type EventOf<S> = { name: 'open'; payload: { id: string } }
+               | { name: 'close'; payload: { id: string; reason: 'ok' | 'cancel' } };
+```
+
+### `conditions` — `ConditionsCtx<ConditionMap<S>, R>`
+
+Снепшот всех условий, снимается один раз в момент срабатывания. Ключи, перечисленные в `required`, видны как необязательные нет — без `undefined`; остальные — `T | undefined`.
+
+Ограничение V1: `required` не сужает в системе типов — `conditions.user` остаётся `User | undefined`, даже если `required: ['user']`. Используй `check.is/all/any` или ранний guard `if (!conditions.user) return;`.
+
+### `actions` — `ActionsCtx<ActionMap<S>>`
+
+Мапа `{ [name]?: (payload) => void }` плюс три цепочечных таймера:
+
+| Метод | Возвращает | Описание |
+|---|---|---|
+| `actions.<name>?.(payload)` | `void` | Вызвать действие, если оно зарегистрировано. Optional chain, потому что реактор мог быть не смонтирован. |
+| `actions.debounce(ms)` | та же форма | Ждать `ms` тишины перед срабатыванием. |
+| `actions.throttle(ms)` | та же форма | Не более одного срабатывания за окно `ms`. |
+| `actions.defer(ms)` | та же форма | Ждать `ms` перед срабатыванием — без coalescing. |
+
+### `check` — `CheckCtx<ConditionMap<S>>`
+
+DSL предикатов. См. [`createCheck`](/ru/api/core/create-check/). `is`, `all` и `any` сужают значение через NonNullable внутри предиката.
+
+### `meta` — `MetaCtx`
+
+Метаданные рантайма о текущем запуске:
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `runId` | `string` | Уникальный id запуска. |
+| `triggerId` | `string` | Триггер, который сейчас запущен. |
+| `scheduledAt` | `number` | `performance.now()` в момент постановки запуска в очередь. |
+| `cascadeDepth` | `number` | 0 для срабатываний верхнего уровня; `n` для n-го потомка каскада. |
+| `parentRunId?` | `string` | Установлен, если запуск — часть каскада. |
+| `parentTriggerId?` | `string` | То же — id upstream-триггера. |
+
+### `signal` — `AbortSignal`
+
+Прерывается, когда рантайм отменяет текущий запуск — например, стратегия concurrency `take-latest` его вытесняет, триггер отключён или утилизирован, либо разрушается сам рантайм. Передавай его в `fetch(url, { signal })`, `addEventListener('…', fn, { signal })` или проверяй `signal.aborted` после любых async-ожиданий.
+
+## Примеры
+
+### Деструктурируй только нужное
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events:     { ping: void };
+  conditions: { user: { id: string } | null };
+  actions:    { log: string };
+}>({
+  id: 'demo',
+  events: ['ping'],
+  required: ['user'],
+  handler({ event, conditions, actions, check, meta, signal }) {
+    if (signal.aborted) return;
+    if (!check.is('user', u => u.id.length > 0)) return;
+    actions.log?.(`[run ${meta.runId}] ${event.name}`);
+  },
+});
+```
+
+### Сужение по `event.name`
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { open: { id: string }; close: { id: string; reason: 'ok' | 'cancel' } };
+}>({
+  id: 'modal',
+  events: ['open', 'close'],
+  handler({ event }) {
+    if (event.name === 'open') {
+      console.log('opening', event.payload.id);
+    } else {
+      console.log('closing', event.payload.reason);
+    }
+  },
+});
+```
+
+### Async-работа с поддержкой abort
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { fetch: string };
+  actions: { setData: unknown };
+}>({
+  id: 'fetcher',
+  events: ['fetch'],
+  concurrency: 'take-latest',
+  async handler({ event, actions, signal }) {
+    const res  = await fetch(`/api/${event.payload}`, { signal });
+    if (signal.aborted) return;
+    const data = await res.json();
+    actions.setData?.(data);
+  },
+});
+```
+
+### Цепочка действий с debounce
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { keystroke: string };
+  actions: { search: string };
+}>({
+  id: 'autocomplete',
+  events: ['keystroke'],
+  handler({ event, actions }) {
+    actions.debounce(300).search?.(event.payload);
+  },
+});
+```
+
+### Логирование с учётом каскада
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{ events: { 'order-placed': { id: string } } }>({
+  id: 'order',
+  events: ['order-placed'],
+  handler({ event, meta }) {
+    if (meta.cascadeDepth > 0) {
+      console.log(`order ${event.payload.id} via cascade from ${meta.parentTriggerId}`);
+    }
+  },
+});
+```
+
+## Замечания
+
+<Aside type="tip">
+`signal` — канонический способ прервать downstream-работу. Рантайм вызывает на нём `abort()` при вытеснении `take-latest`, при `dispose()`, для отключённых триггеров и при teardown рантайма. Любой код, который игнорирует `signal`, считай утечкой.
+</Aside>
+
+<Aside type="caution">
+Весь контекст — `readonly`. Не мутируй `conditions` или `actions` — оба они снепшоты, выведенные из регистраций, и могут шариться между потомками каскада.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="TriggerSchema" description="Дженерик, который задаёт типы каждого поля." href="/ru/api/core/types/trigger-schema/" />
+  <LinkCard title="createTrigger" description="Конструктор, который порождает этот контекст." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="createCheck" description="Собери DSL `check` вне обработчика." href="/ru/api/core/create-check/" />
+  <LinkCard title="Асинхронные обработчики" description="signal, concurrency, паттерны прерывания." href="/ru/guide/async/async-handlers/" />
+</CardGrid>

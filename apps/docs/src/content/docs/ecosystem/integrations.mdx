@@ -1,0 +1,55 @@
+---
+title: "Integrations"
+description: "Build tools, lint, codemods, CLI and devtools that plug into Triggery."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Adapters wrap external state or events as Triggery primitives; *integrations* live on the developer-experience side — they ship with your tooling, not with your runtime.
+
+## Build tools
+
+| Package | What it does |
+|---|---|
+| [`@triggery/vite`](/packages/vite/) ![npm](https://img.shields.io/npm/v/@triggery/vite?label=&style=flat-square) | Vite plugin: auto-imports every `*.trigger.ts` file via a `virtual:triggery-registry` module and supports HMR for trigger edits. No `import './triggers/foo.trigger'` by hand. |
+
+Webpack and Rspack auto-discovery plugins are on the [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) for the 1.0 cycle.
+
+## Code quality
+
+| Package | What it does |
+|---|---|
+| [`@triggery/eslint-plugin`](/packages/eslint-plugin/) ![npm](https://img.shields.io/npm/v/@triggery/eslint-plugin?label=&style=flat-square) | ESLint 9 flat-config plugin. Eight rules: `no-event-cascade`, `no-dynamic-id`, `hook-rules`, `exhaustive-conditions`, `exhaustive-required`, `max-handler-size`, `max-ports-per-trigger`, `prefer-named-hook`. Ships `recommended` and `strict` presets. |
+| [`@triggery/codemod`](/packages/codemod/) ![npm](https://img.shields.io/npm/v/@triggery/codemod?label=&style=flat-square) | ts-morph codemods. `extract-trigger` pulls a `useEffect` block into a `*.trigger.ts` file; `migrate-from-listener-middleware` generates one trigger per RTK `startListening` call. CLI and programmatic API. |
+
+## CLI and scaffolding
+
+| Package | What it does |
+|---|---|
+| [`@triggery/cli`](/packages/cli/) ![npm](https://img.shields.io/npm/v/@triggery/cli?label=&style=flat-square) | `triggery create` (scaffold a project from templates via giget), `triggery scaffold trigger` (new `*.trigger.ts` file), `triggery graph` (print the trigger graph as JSON / DOT / Markdown), `triggery lint` (run ESLint with the recommended preset shimmed in). |
+
+## DevTools
+
+| Package | What it does |
+|---|---|
+| [`@triggery/devtools-redux`](/packages/devtools-redux/) ![npm](https://img.shields.io/npm/v/@triggery/devtools-redux?label=&style=flat-square) | Middleware that streams runtime events into the Redux DevTools browser extension. Labels actions `triggery/<id>/fire` and friends. Works whether or not you actually use Redux. |
+| [`@triggery/devtools-panel`](/packages/devtools-panel/) ![npm](https://img.shields.io/npm/v/@triggery/devtools-panel?label=&style=flat-square) | Drop-in React components for in-app inspection — `<InspectorView>`, `<TriggerSnapshotView>`. Ship them behind a feature flag in dev. |
+| [`@triggery/devtools-bridge`](/packages/devtools-bridge/) ![npm](https://img.shields.io/npm/v/@triggery/devtools-bridge?label=&style=flat-square) | `installDevtoolsBridge(runtime)` — page-side bridge that exposes the runtime for external inspectors (Chrome extension, standalone panel). |
+| Chrome DevTools extension | Load unpacked from [`extensions/chrome-devtools`](https://github.com/triggeryjs/triggery/tree/main/extensions/chrome-devtools). Live inspector panel over the `devtools-bridge`. |
+
+## Coming after 1.0
+
+- `@triggery/devtools-replay` — record / replay / time-travel.
+- `@triggery/otel` — one OpenTelemetry span per handler run.
+- `@triggery/sentry` — Sentry breadcrumbs adapter.
+- `@triggery/broadcast` — multi-tab sync via `BroadcastChannel`.
+- VS Code extension — "used by N triggers" lens, "Go to trigger" navigation.
+
+<CardGrid>
+  <LinkCard title="Adapters" description="State manager and event-source packages." href="/ecosystem/adapters/" />
+  <LinkCard title="Roadmap" description="What's shipped, what's planned." href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md" />
+  <LinkCard title="CLI guide" description="triggery create / scaffold / graph / lint." href="/packages/cli/" />
+  <LinkCard title="Codemod guide" description="extract-trigger and friends." href="/packages/codemod/" />
+</CardGrid>

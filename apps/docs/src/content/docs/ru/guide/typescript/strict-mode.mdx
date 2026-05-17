@@ -1,0 +1,292 @@
+---
+title: "Strict mode (TypeScript)"
+description: "Triggery написан под noUncheckedIndexedAccess и exactOptionalPropertyTypes. Чтение API через эту призму — и без `as any`."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Публичные типы Triggery спроектированы под **самую строгую практическую конфигурацию TypeScript**. Пакет компилируется с `strict: true`, `noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true` и `noImplicitOverride: true`. Причина не идеологическая — эти флаги ловят большинство багов, на которые иначе натыкаются во время feature-фриза. Эта страница объясняет, что флаги значат для твоего кода, какие паттерны читаются естественно, и предлагает несколько альтернатив `as any`.
+
+## Рекомендуемый tsconfig
+
+Минимум, который мы рекомендуем приложению, использующему Triggery:
+
+```jsonc title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "useUnknownInCatchVariables": true,
+
+    "jsx": "react-jsx",
+    "skipLibCheck": false
+  }
+}
+```
+
+`skipLibCheck: false` — то, что большинство команд отключают; мы держим его включённым, потому что `.d.ts`-файлы Triggery намеренно дёшевы для проверки, а ранний отлов несовпадений между либами стоит этой секунды билда.
+
+## Почему всё опциональное
+
+Когда читаешь типы Triggery в первый раз, два момента удивляют:
+
+- `conditions.user` имеет тип `User | undefined`, даже когда `user` перечислен в `required`.
+- `actions.foo` имеет тип `(payload: Foo) => void | undefined`, поэтому каждое место вызова выглядит как `actions.foo?.(payload)`.
+
+Обе вещи намеренны. Обе кодируют реальность рантайма, которую strict mode потом делает видимой.
+
+## Conditions: `required` — это рантайм-гейт, а не статическая гарантия
+
+`required: ['user']` не обещает системе типов, что `conditions.user` существует, — он обещает рантайму, что обработчик **не запустится**, пока `user` не зарегистрирован. У разных слоёв системы разный взгляд:
+
+- **Диспетчер** проверяет required-набор и либо вызывает обработчик, либо записывает `'skipped'`.
+- **TypeScript** не знает, какой `<UserProvider>` смонтирован. Из статической программы он не может предсказать, есть ли `user` на момент вызова обработчика.
+
+Поэтому API выбирает безопасность: `conditions.user` имеет тип `User | undefined`, и обработчик обязан сузить.
+
+```ts
+handler({ conditions, actions, check }) {
+  // ✓ Explicit narrow — TS knows conditions.user is User after this.
+  if (!conditions.user) return;
+  actions.greet?.({ name: conditions.user.name });
+
+  // ✓ check.is narrows internally (NonNullable in the predicate type).
+  if (check.is('user', u => u.isActive)) {
+    actions.notify?.({ userId: conditions.user.id });
+  }
+}
+```
+
+Builder API в V1.1 это меняет — `createTrigger<S>().require(['user']).handle(ctx => ...)` типизирует `ctx.conditions.user` как `User` без гарда. Семантика рантайма не меняется.
+
+### Actions: каждое действие опционально, потому что реакторы могут отсутствовать
+
+Триггер не *владеет* своими реакторами. Есть ли у `showToast` зарегистрированный обработчик — зависит от того, в дереве ли `<NotificationLayer>`. Strict mode это кодирует:
+
+```ts
+type ActionsCtx<A> = { readonly [K in keyof A]?: ActionFn<A[K]> } & { /* modifiers */ };
+```
+
+Каждый ключ действия опционален. Места вызова используют optional chaining:
+
+```ts
+actions.showToast?.({ title: event.payload.author });
+actions.debounce(800).playSound?.();
+actions.throttle(2000).updateBadge?.(event.payload.channelId);
+```
+
+Это **не шум** — это полезный рантайм-контракт. Обработчик работает независимо от того, смонтирован ли реактор `showToast`; ничего не падает, когда реактора нет. Можно читать как «отправь это действие, *если* кто-то слушает». Тесты логики триггеров, не рендерящие UI, этим пользуются: обработчик прекрасно работает с нулём зарегистрированных действий.
+
+ESLint-правило `actions-optional-chaining` флагает `actions.showToast(...)` без `?.`, чтобы паттерн оставался единообразным.
+
+## `noUncheckedIndexedAccess` на практике
+
+Когда включаешь этот флаг, все обращения по индексу к массиву становятся `T | undefined`. Внутренний код Triggery написан под него — но и твой код в обработчиках может с этим столкнуться:
+
+```ts
+handler({ event }) {
+  const lines = event.payload.text.split('\n');
+  const first = lines[0];           // string | undefined under noUncheckedIndexedAccess
+  if (!first) return;
+  // …
+}
+```
+
+Это не про Triggery — это общая TS-гигиена — но в коде обработчиков встречается достаточно часто, чтобы упомянуть. Лечение — всегда сужение, никогда не non-null-ассершен.
+
+## `exactOptionalPropertyTypes` и void-события
+
+С `exactOptionalPropertyTypes: true` становится видна разница между `payload?: T` и `payload?: T | undefined`. `EventOf<S>` у Triggery использует первую форму:
+
+```ts
+type EventOf<S> = {
+  [K in EventKey<S>]: { readonly name: K; readonly payload: EventMap<S>[K] };
+}[EventKey<S>];
+```
+
+`payload` **всегда** присутствует в члене discriminated union. Для void-событий его значение `undefined` (рантайм пихает туда `undefined`), но само свойство существует. Это значит:
+
+```ts
+events: { 'app:ready': void };
+
+handler({ event }) {
+  if (event.name === 'app:ready') {
+    // event.payload is `void` — i.e. you can't read fields off it.
+    // event.payload?.foo  → TS error: foo doesn't exist on void
+  }
+}
+```
+
+Правильный способ прочитать payload void-события — не читать его. Если у события есть варианты, моделируй их как discriminated payload, а не как отсутствие payload.
+
+## `EmptyRecord` — случай «нет действий»
+
+У триггера могут быть события и условия без действий — чисто аналитика, например. TS-форма `actions` тогда — `{}` плюс цепочка модификаторов. С пустыми объектными типами в TS есть мелкая ловушка, которую библиотека закрывает через алиас `EmptyRecord`:
+
+```ts title="From @triggery/core/types.ts"
+export type EmptyRecord = Record<string, never>;
+
+export type ActionMap<S> =
+  S['actions'] extends Record<string, unknown> ? S['actions'] : EmptyRecord;
+```
+
+`Record<string, never>` — технически верный способ сказать «ключи запрещены» — отличается от `{}` (что значит «любое non-null значение»). Большинство пользователей `EmptyRecord` напрямую не пишут; важно, что случай пустых действий компилируется и ведёт себя ожидаемо:
+
+```ts
+createTrigger<{
+  events: { 'analytics:event': { kind: string } };
+  // no conditions, no actions
+}>({
+  id: 'analytics',
+  events: ['analytics:event'],
+  handler({ event, actions }) {
+    // actions still has the modifier chain (debounce/throttle/defer)
+    // even though there are no action methods to chain into.
+    sendBeacon(event.payload);
+  },
+});
+```
+
+Если нужно назвать «схема без действий» в generic, `EmptyRecord` — это алиас:
+
+```ts
+import type { EmptyRecord } from '@triggery/core';
+
+type AnalyticsSchema = {
+  events: { 'analytics:event': { kind: string } };
+  actions: EmptyRecord;
+};
+```
+
+## Альтернативы `as any`
+
+Несколько паттернов, где strict mode заставляет тянуться к `as any`. У каждого есть безопасная альтернатива.
+
+### Брендирование без потери типобезопасности
+
+Брендированные типы (см. [Типизация схемы → Брендированные id](/ru/guide/typescript/schema-typing/#branded-ids--protecting-cross-api-calls)) хотят, чтобы `string` стал `ChannelId`. Естественное желание — написать `as any`:
+
+```ts
+const id = stringFromSomewhere() as any as ChannelId;   // ✗
+```
+
+Правильная форма идёт через конструктор:
+
+```ts
+const channelId = (s: string): ChannelId => s as ChannelId;   // single `as`, single place
+
+const id = channelId(stringFromSomewhere());                  // ✓
+```
+
+Теперь каст живёт в одной функции. Если когда-нибудь появится валидация — она пойдёт туда.
+
+### Generic-хелперы по схемам
+
+Тестовый хелпер хочет принимать «любой триггер» и проверять его инспектор. Не хватайся за `as any`:
+
+```ts
+// ✗ Sledgehammer
+function expectFired(trigger: any, eventName: any) {
+  expect(trigger.inspect()?.eventName).toBe(eventName);
+}
+
+// ✓ Generic with the public types
+import type { EventKey, Trigger, TriggerSchema } from '@triggery/core';
+function expectFired<S extends TriggerSchema>(trigger: Trigger<S>, eventName: EventKey<S>) {
+  expect(trigger.inspect()?.eventName).toBe(eventName);
+}
+```
+
+Generic-версия сохраняет инфу о типах в точке вызова — `expectFired(messageTrigger, 'wrong-name')` будет TS-ошибкой.
+
+### Сужение по `event.name`
+
+Когда триггер перечисляет несколько событий, иногда хочется вызвать хелпер, специфичный для одного из них:
+
+```ts
+handler({ event }) {
+  // ✗ "I know this is the urgent variant"
+  showUrgent(event.payload as UrgentPayload);
+
+  // ✓ Discriminate
+  if (event.name === 'urgent-message') {
+    showUrgent(event.payload);  // event.payload is narrowed
+  }
+}
+```
+
+Discriminated union по `name` всегда сужает `payload` за тебя — в этом и весь смысл `EventOf<S>`.
+
+### «Хочу, чтобы триггер просто где-то существовал»
+
+Если когда-нибудь захочется написать `let trigger: Trigger<any>` из-за динамической схемы — ты вышел за пределы типизированной поверхности и должен тянуться к **рантайм-внутренностям**:
+
+```ts
+import type { Trigger, TriggerSchema } from '@triggery/core';
+
+function disable(trigger: Trigger<TriggerSchema>) {
+  trigger.disable();
+}
+```
+
+`Trigger<TriggerSchema>` — максимально-generic-тип; именно его рантайм хранит внутри. Это не `any`; это «любая валидная схема».
+
+## `useUnknownInCatchVariables` и async-обработчики
+
+Паттерн async-обработчика в Triggery взаимодействует с `useUnknownInCatchVariables: true`:
+
+```ts
+async handler({ event, signal, actions }) {
+  try {
+    const res = await fetch(event.payload.url, { signal });
+    actions.show?.(await res.json());
+  } catch (err) {
+    // err is `unknown` under this flag
+    if (err instanceof DOMException && err.name === 'AbortError') return;
+    if (err instanceof Error) actions.reportError?.(err.message);
+    else actions.reportError?.(String(err));
+  }
+}
+```
+
+Рантайм глотает ошибки обработчика и записывает `'errored'` в инспектор — ловить не обязательно. Но если ловишь — сужай переменную; не клади на неё `as Error` вслепую.
+
+## Когда правда нужно выйти из strict
+
+Два случая. Оба должны быть маленькими.
+
+- **Обёртка над не-TS-библиотекой, возвращающей `any`.** Оберни один раз на границе; кастани к типизированной форме; всё дальше — strict.
+- **Тестовые фикстуры.** `as unknown as User` для умышленно неполной фикстуры — нормально, только пусть это будет тестовый код, не продакшен.
+
+На всё остальное паттерны выше заменяют каст.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Типизация схемы"
+    description="Generic TriggerSchema и производные типы, которые эта страница считает известными."
+    href="/ru/guide/typescript/schema-typing/"
+  />
+  <LinkCard
+    title="Валидация"
+    description="Типы на шаг дальше — рантайм-проверки на границах продьюсеров."
+    href="/ru/guide/typescript/validation/"
+  />
+  <LinkCard
+    title="Обработчики"
+    description="Ctx обработчика — каков тип каждого поля и как читать его под strict mode."
+    href="/ru/guide/essentials/handlers/"
+  />
+  <LinkCard
+    title="Асинхронные обработчики"
+    description="Сужение AbortSignal и abort-aware-паттерн под useUnknownInCatchVariables."
+    href="/ru/guide/async/async-handlers/"
+  />
+</CardGrid>

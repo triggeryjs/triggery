@@ -1,0 +1,92 @@
+---
+title: "@triggery/eslint-plugin"
+description: "ESLint-плагин для Triggery — ловит неправильное использование createTrigger / useEvent / useCondition / useAction. 8 правил, flat-config пресеты."
+sidebar:
+  order: 19
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+ESLint-плагин для Triggery: ловит неправильное использование `createTrigger` и API хуков, навязывает соглашения и держит файлы триггеров читабельными как спецификации. Поставляется с пресетами `recommended` и `strict` для flat-config ESLint 9.x.
+
+[![npm](https://img.shields.io/npm/v/@triggery/eslint-plugin?style=flat-square)](https://www.npmjs.com/package/@triggery/eslint-plugin)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/eslint-plugin?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/eslint-plugin)
+
+## Установка
+
+<PackageManagers pkg="@triggery/eslint-plugin eslint typescript" dev />
+
+Peer-зависимости: `eslint >= 9.0.0`, `typescript >= 5.0.0`.
+
+## Что внутри
+
+| Правило | Recommended | Strict | Auto-fix |
+|---|:---:|:---:|:---:|
+| `no-dynamic-id` | error | error | — |
+| `no-event-cascade` | error | error | — |
+| `hook-rules` | error | error | — |
+| `exhaustive-conditions` | warn | error | — |
+| `exhaustive-required` | warn | error | — |
+| `max-handler-size` | warn (≤50) | error (≤30) | — |
+| `max-ports-per-trigger` | warn (≤12) | error (≤8) | — |
+| `prefer-named-hook` | off | warn (≥3) | — |
+
+## Быстрый пример
+
+Flat-config (ESLint 9.x):
+
+```js title="eslint.config.js"
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  triggery.configs.recommended,
+  // Or, dialled up:
+  // triggery.configs.strict,
+];
+```
+
+Выборочные правила:
+
+```js
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  {
+    plugins: { '@triggery': triggery },
+    rules: {
+      '@triggery/no-dynamic-id':       'error',
+      '@triggery/no-event-cascade':    'error',
+      '@triggery/max-handler-size':    ['warn', { max: 40 }],
+    },
+  },
+];
+```
+
+## Ключевые правила
+
+- **`no-dynamic-id`** — `createTrigger({ id })` обязан быть строковым литералом. Id триггеров — это ключи реестра, метки в devtools и якоря в графе; они должны быть детерминированными.
+- **`no-event-cascade`** — запрещает `useEvent(...)` внутри обработчика `useAction(...)`. Каскады допустимы в рантайме, но писать их inline — значит прятать межтриггерный поток управления.
+- **`hook-rules`** — framework-нейтральные rules-of-hooks для `useEvent` / `useCondition` / `useAction` / `useInlineTrigger`.
+- **`exhaustive-conditions`** — для каждого имени в `required: [...]` есть соответствующий `useCondition` в том же файле.
+- **`exhaustive-required`** — каждый вызов `createTrigger({...})` должен содержать явный ключ `required:` (используй `required: []`, если гейт не нужен).
+- **`max-handler-size`** / **`max-ports-per-trigger`** — держи триггеры спецификационно-компактными; когда разрастаются — бери codemod `extract-trigger`.
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Рантайм, о котором знают эти правила." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/codemod" description="extract-trigger / migrate-from-listener-middleware создают файлы триггеров, которые проверяет этот плагин." href="/ru/packages/codemod/" />
+  <LinkCard title="@triggery/cli" description="triggery lint оборачивает пресет recommended этого плагина." href="/ru/packages/cli/" />
+  <LinkCard title="@triggery/testing" description="Статические проверки и рантайм-тесты — вместе." href="/ru/packages/testing/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/eslint-plugin)
+- [npm](https://www.npmjs.com/package/@triggery/eslint-plugin)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/eslint-plugin/CHANGELOG.md)

@@ -1,0 +1,131 @@
+---
+title: "От redux-observable"
+description: "Соответствие RxJS epics обработчикам Triggery — что ложится, а что нет."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Epics в `redux-observable` — это RxJS-пайплайны над action stream. Самая распространённая форма — "отфильтровать по типу, сделать асинхронную штуку, эмитнуть результирующий action" — напрямую ложится на обработчик Triggery. Всё, что комбинирует несколько потоков реактивно (`combineLatest`, `withLatestFrom`) — это место, где pull-only модель Triggery и push-only модель RxJS начинают расходиться.
+
+## Соответствие ментальных моделей
+
+| redux-observable / RxJS | Triggery |
+|---|---|
+| Фильтр `ofType('foo')` | `events: ['foo']` |
+| `ofType('foo', 'bar')` | `events: ['foo', 'bar']` |
+| `debounceTime(ms)` на источнике | `actions.debounce(ms).out?.(p)` для выходов; вручную для гейтинга входов |
+| `throttleTime(ms)` | `actions.throttle(ms).out?.(p)` |
+| `switchMap` | `concurrency: 'take-latest'` (по умолчанию) |
+| `mergeMap` | `concurrency: 'take-every'` |
+| `exhaustMap` | `concurrency: 'exhaust'` |
+| `concatMap` | `concurrency: 'queue'` |
+| `map(action => …)` эмит action'а | `actions.someAction?.(…)` |
+| `withLatestFrom(state$, sel)` | `conditions.someName`, зарегистрированное через `useReduxCondition` |
+| `combineLatest([a$, b$, c$])` | **Нет прямого соответствия** — см. ниже |
+| `takeUntil(stop$)` | Проверки `signal.aborted` в `async handler` |
+
+## Паттерн 1 — ofType + switchMap
+
+```ts title="Before"
+const detailsEpic: Epic = action$ => action$.pipe(
+  ofType('chat/openConversation'),
+  switchMap(action =>
+    from(api.fetchDetails(action.payload.id)).pipe(
+      map(data => detailsLoaded(data)),
+    ),
+  ),
+);
+```
+
+```ts title="After"
+createTrigger<{
+  events:  { 'chat/openConversation': { id: string } };
+  actions: { storeDetails: Details };
+}>({
+  id: 'details-loader',
+  events: ['chat/openConversation'],
+  required: [],
+  concurrency: 'take-latest',     // default
+  async handler({ event, signal, actions }) {
+    const data = await api.fetchDetails(event.payload.id, { signal });
+    if (signal.aborted) return;
+    actions.storeDetails?.(data);
+  },
+});
+```
+
+`switchMap` = `take-latest`. Семантика та же: новый вход отменяет предыдущую in-flight задачу.
+
+## Паттерн 2 — debounceTime на входе
+
+```ts title="Before"
+const searchEpic: Epic = action$ => action$.pipe(
+  ofType('search/queryChanged'),
+  debounceTime(300),
+  switchMap(action => /* … */),
+);
+```
+
+Triggery не гейтит входы с помощью debounce — конвенция в том, чтобы гейтить *выход*:
+
+```ts title="After"
+createTrigger<{
+  events:  { 'search/queryChanged': string };
+  actions: { runSearch: string };
+}>({
+  id: 'search-debounced',
+  events: ['search/queryChanged'],
+  required: [],
+  handler({ event, actions }) {
+    actions.debounce(300).runSearch?.(event.payload);
+  },
+});
+```
+
+Реактор на другой стороне (`useAction(trigger, 'runSearch', q => /* fetch */)`) получает только последний вызов в пределах окна.
+
+## Паттерн 3 — withLatestFrom
+
+```ts title="Before"
+const epic: Epic = (action$, state$) => action$.pipe(
+  ofType('chat/messageReceived'),
+  withLatestFrom(state$),
+  filter(([_, state]) => state.settings.notifications),
+  map(([action]) => showToast(action.payload)),
+);
+```
+
+```ts title="After"
+createTrigger<{
+  events:     { 'chat/messageReceived': Message };
+  conditions: { settings: Settings };
+  actions:    { showToast: { title: string } };
+}>({
+  id: 'toast-on-msg',
+  events: ['chat/messageReceived'],
+  required: ['settings'],
+  handler({ event, check, actions }) {
+    if (!check.is('settings', s => s.notifications)) return;
+    actions.showToast?.({ title: event.payload.author });
+  },
+});
+```
+
+## Что не ложится чисто
+
+- **`combineLatest` нескольких потоков.** Триггеры реагируют на *одно* событие за раз и подтягивают условия лениво — у них нет "запускайся, когда любой из этих потоков эмитнет". Либо выбирай один как событие триггера, а остальные трактуй как условия, либо оставляй этот кусок как epic / RxJS-пайплайн и зови `fireEvent` из `subscribe`.
+- **Multicasting через `shareReplay`.** У hot/cold-семантики RxJS нет аналога в Triggery; если они нужны — оставь RxJS.
+- **Операторы backpressure** (`bufferTime`, `windowToggle`). Планировщик Triggery батчит микрозадачи на тик, но не реализует backpressure-инструментарий RxJS.
+
+## Когда оставить RxJS
+
+Оставляй RxJS для по-настоящему stream-heavy частей: анимационные пайплайны, сложная многосторонняя синхронизация, всё, где `combineLatest` / `merge` / `partition` делают реальную работу. Две библиотеки нормально сосуществуют — обработчик триггера может подписаться на одноразовый observable, а epic может `dispatch`-ить action, на который Triggery как раз слушает.
+
+<CardGrid>
+  <LinkCard title="От Redux Saga" description="Генераторные watcher-ы." href="/ru/migration/from-redux-saga/" />
+  <LinkCard title="Стратегии конкурентности" description="take-latest, queue, exhaust." href="/ru/guide/async/concurrency/" />
+  <LinkCard title="Debouncing & throttling" description="actions.debounce / throttle / defer." href="/ru/guide/async/debouncing-throttling/" />
+  <LinkCard title="Сравнения" description="vs RxJS, XState, Effector, MobX." href="/ru/migration/comparison/" />
+</CardGrid>

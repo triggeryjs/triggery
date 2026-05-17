@@ -1,0 +1,89 @@
+---
+title: "@triggery/vite"
+description: "Vite plugin for Triggery — auto-imports every *.trigger.ts via a virtual module with HMR. Framework-agnostic."
+sidebar:
+  order: 6
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+[Vite](https://vitejs.dev) plugin that auto-discovers every `*.trigger.ts` file in your project and registers it at app startup. One import of `virtual:triggery-registry` at the entry point and every trigger is live — no manual import wiring. HMR-aware: editing a trigger re-runs `createTrigger(...)`, adding or renaming files invalidates the virtual module.
+
+[![npm](https://img.shields.io/npm/v/@triggery/vite?style=flat-square)](https://www.npmjs.com/package/@triggery/vite)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/vite?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/vite)
+
+## Install
+
+<PackageManagers pkg="@triggery/vite" dev />
+
+Peer deps: `vite ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `triggery(options?)` (default) | The Vite plugin. Returns a `Plugin` you drop into the `plugins` array. |
+| `virtual:triggery-registry` | Side-effect virtual module that imports every matched file. |
+
+## Quick example
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [triggery({ glob: 'src/**/*.trigger.ts' })],
+});
+```
+
+```ts title="src/main.tsx"
+import 'virtual:triggery-registry';
+// ...rest of your bootstrap
+```
+
+That's the full setup. Every file matching the glob is auto-imported, so its top-level `createTrigger(...)` call registers with the default runtime.
+
+## Options
+
+| Option | Default | Description |
+|---|---|---|
+| `glob` | `'src/**/*.trigger.{ts,tsx,js,jsx}'` | One pattern or an array. Anything `tinyglobby` accepts. |
+
+## HMR
+
+- Editing an existing trigger file just re-runs its `createTrigger(...)` — the runtime's last-mount-wins replaces the old registration. No special handling needed in your app code.
+- Adding / removing / renaming a trigger file invalidates the virtual module so its import list is rebuilt on the next request.
+
+<Aside type="tip">
+  When using `@triggery/vite` with `@triggery/react` (or `solid`/`vue`), keep your triggers in files named `*.trigger.ts`. The convention pays off — your IDE search, this plugin, and the `triggery graph` CLI all key off the same suffix.
+</Aside>
+
+## Type declaration
+
+Add a single ambient declaration so TypeScript knows about the virtual module:
+
+```ts title="src/vite-env.d.ts"
+/// <reference types="vite/client" />
+declare module 'virtual:triggery-registry';
+```
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="The runtime that registered triggers attach to." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="Most common pairing for Vite + React apps." href="/packages/react/" />
+  <LinkCard title="@triggery/solid" description="Pairs with vite-plugin-solid." href="/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Pairs with @vitejs/plugin-vue." href="/packages/vue/" />
+  <LinkCard title="@triggery/cli" description="triggery graph reads the same *.trigger.ts files." href="/packages/cli/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/vite)
+- [npm](https://www.npmjs.com/package/@triggery/vite)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/vite/CHANGELOG.md)

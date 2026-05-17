@@ -1,0 +1,138 @@
+---
+title: "useInlineTrigger"
+description: "Определить компонентно-локальный триггер, живущий в течение жизни компонента. Escape hatch для разовых реакций."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Определяет триггер прямо внутри компонента. Триггер создаётся при монтировании, живёт до размонтирования и автоматически утилизируется при размонтировании компонента. Используй это для разовых реакций, где вытащить их в отдельный `*.trigger.ts` было бы оверкилом — крошечные аналитические тапы, координация модалок в рамках одного экрана, клавиатурные шорткаты, актуальные только пока открыта панель.
+
+Для всего, что переиспользуется по приложению, — предпочитай [`createTrigger`](/ru/api/core/create-trigger/) в выделенном файле `*.trigger.ts`.
+
+## Импорт
+
+```ts
+import { useInlineTrigger } from '@triggery/react';
+```
+
+## Сигнатура
+
+```ts
+function useInlineTrigger<S extends TriggerSchema>(
+  config: UseInlineTriggerConfig<S>,
+): void;
+
+type UseInlineTriggerConfig<S> = {
+  readonly on: keyof NonNullable<S['events']> & string;
+  readonly do: TriggerHandler<S>;
+  readonly id?: string;
+};
+```
+
+## Параметры
+
+| Параметр | Тип | Обязательный | Описание |
+|---|---|---|---|
+| `config.on` | `keyof S['events']` | да | Имя события, на которое реагируем. Должно быть стабильным между рендерами. |
+| `config.do` | `TriggerHandler<S>` | да | Тело обработчика. Получает тот же `ctx`, что и обработчик полноценного `createTrigger`. |
+| `config.id` | `string` | нет | Необязательный debug-id. По умолчанию — авто-сгенерированный стабильный id (`inline:<n>`). |
+
+## Возвращает
+
+`void`. Триггер регистрируется в `useEffect` и утилизируется при размонтировании.
+
+## Примеры
+
+### Аналитический тап в рамках одного экрана
+
+```tsx
+import { useInlineTrigger } from '@triggery/react';
+
+function CtaSection() {
+  useInlineTrigger<{ events: { 'cta:click': { id: string } } }>({
+    on: 'cta:click',
+    do: ({ event }) => {
+      window.analytics?.track('cta_click', { id: event.payload.id });
+    },
+  });
+  return <button type="button">Sign up</button>;
+}
+```
+
+### Клавиатурный шорткат, пока открыта панель
+
+```tsx
+import { useInlineTrigger } from '@triggery/react';
+
+function ShortcutsPanel({ onClose }: { onClose: () => void }) {
+  useInlineTrigger<{ events: { 'keyboard:escape': void } }>({
+    on: 'keyboard:escape',
+    do: () => onClose(),
+  });
+  return <div>Press Esc to close</div>;
+}
+```
+
+### Фиксированный id для тестов
+
+```tsx
+import { useInlineTrigger } from '@triggery/react';
+
+function Counter() {
+  useInlineTrigger<{ events: { increment: void } }>({
+    id: 'counter:tick', // stable across remounts — easier to mock in tests
+    on: 'increment',
+    do: () => console.log('tick'),
+  });
+  return null;
+}
+```
+
+### Чтение условий / зажигание действий
+
+```tsx
+import { useInlineTrigger } from '@triggery/react';
+
+function ChatRow() {
+  useInlineTrigger<{
+    events:     { 'message:select': { id: string } };
+    conditions: { selectedId: string | null };
+    actions:    { highlight: { id: string } };
+  }>({
+    on: 'message:select',
+    do: ({ event, conditions, actions }) => {
+      if (event.payload.id === conditions.selectedId) return;
+      actions.highlight?.({ id: event.payload.id });
+    },
+  });
+  return null;
+}
+```
+
+## Замечания
+
+<Aside type="caution" title="`on` должен быть стабильным">
+Менять `on` между рендерами — это неверное использование: рантайм индексирует триггер по имени события на момент регистрации. Если оно изменится, в DEV выстреливает предупреждение; в PROD новое значение тихо игнорируется.
+</Aside>
+
+<Aside type="tip" title="Обработчик захватывает свежие замыкания">
+Обработчик хранится в ref, поэтому он всегда видит актуальное замыкание (значения счётчика, пропсы и т.д.), несмотря на то что сам триггер создаётся ровно один раз при монтировании. Массив `deps` не нужен.
+</Aside>
+
+<Aside>
+Inline-триггеры живут рядом с файловыми. Их авто-сгенерированный id (`inline:<n>`) стабилен на инстанс компонента — два смонтированных `Counter` дают два разных id. Формат — не публичный контракт; считай его непрозрачным.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="Полноценный конструктор — предпочтителен для переиспользуемых триггеров." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="useEvent" description="Зажги событие, на которое реагирует inline-триггер." href="/ru/api/react/use-event/" />
+  <LinkCard title="TriggerScope" description="Скоупит inline-триггеры на поддерево." href="/ru/api/react/trigger-scope/" />
+  <LinkCard title="Руководство: когда инлайнить" description="Разовые реакции vs файловые триггеры." href="/ru/guide/essentials/trigger-anatomy/" />
+</CardGrid>

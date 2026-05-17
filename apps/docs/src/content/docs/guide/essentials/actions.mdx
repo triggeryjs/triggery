@@ -1,0 +1,237 @@
+---
+title: "Actions"
+description: "Side-effect channels registered by reactors — invoked from the handler, never from a render."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+An **action** is a typed side-effect channel: a name + a payload type. A *reactor* component registers an executor under that name with `useAction`; when a handler runs and calls `actions.<name>(payload)`, the executor fires.
+
+Actions are how the rule expressed in a trigger turns into observable change in the world — a toast appearing, a sound playing, a fetch starting. The reactor never has to know who decided to invoke it, only what it does once invoked.
+
+## Declaring an action
+
+Actions live in the schema's `actions` map. Each entry maps a name to the payload type the executor receives:
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events:  { 'new-message': { author: string; text: string } };
+  actions: {
+    showToast:      { title: string; body: string };
+    playSound:      'beep' | 'whoosh';
+    beep:           void;                      // no payload
+    incrementBadge: string;                    // channelId
+  };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  handler({ event, actions }) {
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    actions.playSound?.('beep');
+    actions.beep?.();
+    actions.incrementBadge?.(event.payload.author);
+  },
+});
+```
+
+A void payload (`void`) declares an action with no argument: `actions.beep?.()`.
+
+## Registering an executor
+
+Reactors use `useAction(trigger, name, handler)`. The handler receives the payload typed exactly as declared:
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/features/NotificationLayer.tsx"
+    import { useAction } from '@triggery/react';
+    import { toast } from 'sonner';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function NotificationLayer() {
+      useAction(messageTrigger, 'showToast', ({ title, body }) => {
+        toast.success(title, { description: body });
+      });
+
+      useAction(messageTrigger, 'playSound', (kind) => {
+        new Audio(`/sounds/${kind}.mp3`).play().catch(() => {});
+      });
+
+      useAction(messageTrigger, 'beep', () => console.log('beep'));
+
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/features/NotificationLayer.tsx"
+    import { useAction } from '@triggery/solid';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function NotificationLayer() {
+      useAction(messageTrigger, 'showToast', ({ title, body }) => {
+        console.log('toast', title, body);
+      });
+      useAction(messageTrigger, 'playSound', (kind) => {
+        new Audio(`/sounds/${kind}.mp3`).play().catch(() => {});
+      });
+      useAction(messageTrigger, 'beep', () => console.log('beep'));
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```vue title="src/features/NotificationLayer.vue"
+    <script setup lang="ts">
+    import { useAction } from '@triggery/vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    useAction(messageTrigger, 'showToast', ({ title, body }) => {
+      console.log('toast', title, body);
+    });
+    useAction(messageTrigger, 'playSound', (kind) => {
+      new Audio(`/sounds/${kind}.mp3`).play().catch(() => {});
+    });
+    useAction(messageTrigger, 'beep', () => console.log('beep'));
+    </script>
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+Like `useCondition`, registration is **pull-only**: the reactor does not re-render when the trigger fires. The runtime simply has a pointer to the latest closure, and calls it when the handler asks.
+
+The hook keeps the latest handler in a ref — there's no need to `useCallback` the body. Each re-render replaces the closure transparently; the registration itself stays stable.
+
+## Calling actions from the handler
+
+Every entry on `ctx.actions` is typed as `((payload) => void) | undefined`. The `undefined` is honest: the executor might not be registered (the reactor hasn't mounted, or it lives in a different scope). The optional-chaining `?.` is the call-site equivalent of "fine if no one's listening":
+
+```ts
+handler({ actions, event }) {
+  actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  actions.beep?.();
+  // If neither is registered: the handler completes silently, inspector marks the
+  // executedActions as empty for this run.
+}
+```
+
+Calling an unregistered action is a no-op, **not** an error. This is the right default for orchestration: the rule shouldn't care whether the audio feature is mounted on a given page.
+
+If you want a "must be registered" semantic, write a `required`-style check yourself: `if (!actions.beep) { /* fall back, log, … */ }`. There's no built-in `requiredActions` field in V1.
+
+## The action proxy — `debounce / throttle / defer`
+
+`ctx.actions` is a proxy with a tiny chainable API on top. Three timing wrappers are built in:
+
+```ts
+actions.debounce(800).playSound?.('beep');
+actions.throttle(2000).updateBadge?.(channelId);
+actions.defer(100).analytics?.({ kind: 'msg.received' });
+```
+
+**`debounce(ms)`** — drop intermediate calls. Each call resets a `ms`-timer; only the last call's payload fires, once the trigger goes quiet for `ms`. Useful for "play one beep for a burst of messages".
+
+**`throttle(ms)`** — leading-edge: the first call fires immediately, subsequent calls within `ms` are dropped. Useful for "tick the badge at most every two seconds even if 50 messages arrive". (Trailing-edge variant lands in V1.1.)
+
+**`defer(ms)`** — fire once after `ms`, unconditionally. Each call schedules an independent timer; they don't collapse. Useful for "send analytics 100ms after, so a user closing the page immediately doesn't trigger it".
+
+The runtime owns the timer state per trigger. When the trigger is disposed, every outstanding timer is cancelled. No leaked `setTimeout` handles, no executors firing after their reactor has unmounted.
+
+```ts
+handler({ event, actions, conditions }) {
+  if (event.name === 'new-message') {
+    actions.debounce(800).playSound?.('beep');         // one beep per burst
+    actions.throttle(2000).incrementBadge?.(event.payload.channelId);
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  }
+}
+```
+
+See [Debouncing & throttling](/guide/async/debouncing-throttling/) for the cancellation rules and the timer-cleanup contract.
+
+## Sync vs async executors
+
+An executor can return `void` or `Promise<void>`. The runtime handles both:
+
+```ts
+useAction(messageTrigger, 'persistDraft', async (draft) => {
+  await fetch('/api/drafts', { method: 'POST', body: JSON.stringify(draft) });
+});
+```
+
+For async executors, the runtime records the resolution / rejection through the middleware `onActionEnd` / `onError` hooks — your tracing middleware sees real durations. If you need to abort an in-flight executor when its trigger is superseded, you'll combine actions with the handler's `signal`. See [Cancellation](/guide/async/cancellation/) for the pattern.
+
+The handler does **not** await `actions.<name>(...)` automatically — actions are fire-and-forget from the handler's perspective. If two actions need to run in order, await them explicitly with a small helper, or model the second action as its own event in a follow-up trigger.
+
+## Concurrency — what happens with rapid fires
+
+When the same handler fires twice quickly, the **trigger's** concurrency strategy decides what happens to the *handler* — `take-latest` aborts the previous run, `queue` serializes, and so on. That's a trigger-level setting, not an action-level one. See [Concurrency strategies](/guide/async/concurrency/) for the table.
+
+What about the **executor**? It runs once per `actions.foo(...)` call. If the handler fires it three times in one run, the executor runs three times back-to-back. Use `debounce` / `throttle` if you want fewer executions; use a queue inside the executor if you need serialization at the side-effect layer. The runtime won't second-guess you.
+
+A common shorthand for "run these in order, never two at once" is the trigger's own `queue` concurrency plus a synchronous action that performs the actual work. The handler runs serialized; the action runs synchronously inside it.
+
+## Last-mount-wins ownership
+
+Like conditions, actions register on an internal stack. The most recently mounted reactor's handler wins; on unmount, the previous one takes over. In DEV, the runtime emits a one-time warning per `(triggerId, actionName)` when a second live registration arrives:
+
+```text
+[triggery] multiple action registrations for "showToast" on trigger "message-received" —
+last-mount-wins. To compose values from several sources, register through a single hook.
+```
+
+Two reasons this is fine:
+
+1. **Overrides are first-class.** A modal mounts and wants to intercept `showToast`? Mount the override, it wins, on close it unmounts and the global handler takes over again.
+2. **Tests are simple.** Mount the test reactor; it wins; assert it received the payload; teardown.
+
+If you genuinely need *both* handlers to run (e.g. one toast, one log), register through a single composed hook that calls both. The library does not silently fan out — explicit composition is the contract.
+
+See [Ownership](/guide/architecture/ownership/) for the full discussion.
+
+## Scoped actions
+
+Like conditions, actions register globally by default. Wrap a subtree with `<TriggerScope id="...">` and the actions registered inside become visible only to triggers whose `scope` matches:
+
+```tsx
+<TriggerScope id="modal-stack">
+  <ModalNotificationLayer />     {/* overrides 'showToast' just for modal-scoped triggers */}
+</TriggerScope>
+```
+
+This is the typesafe alternative to "context-aware actions". See [Scopes](/guide/architecture/scopes/).
+
+## Common patterns
+
+**Action = imperative verb.** `showToast`, `playSound`, `incrementBadge`. The reactor *does* the thing. Avoid "compute"-style names — those are conditions.
+
+**Don't read state inside an action.** Actions are side effects, not pure transforms. If you need state to decide what to do, model it as a condition the handler reads, and pass the result as the action payload. The handler stays the only place with cross-cutting decision logic.
+
+**One action per side effect.** Resist combining `showToast`+`logError`+`incrementBadge` into a single `notifyAll` action. The trigger should compose them. Granular actions make the inspector readable and the reactors testable.
+
+**Don't call actions from outside a handler.** Actions exist as a port of a trigger run, with `triggerId`, `runId`, middleware tracking and inspector entries attached. Calling them from a button onClick bypasses all of that. If a button "does X", fire an event; the trigger decides what gets invoked.
+
+<CardGrid>
+  <LinkCard
+    title="Debouncing & throttling"
+    description="The full timer model — cancellation, dispose, leading vs trailing edge."
+    href="/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Ownership"
+    description="Last-mount-wins, multiple reactors, overrides, DEV warn-once."
+    href="/guide/architecture/ownership/"
+  />
+  <LinkCard
+    title="Concurrency strategies"
+    description="take-latest, queue, exhaust — what happens when the handler fires too fast."
+    href="/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Async handlers"
+    description="signal propagation, awaiting work, the AbortController contract."
+    href="/guide/async/async-handlers/"
+  />
+</CardGrid>

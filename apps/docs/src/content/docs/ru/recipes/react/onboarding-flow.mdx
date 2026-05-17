@@ -1,0 +1,286 @@
+---
+title: "Сценарий онбординга"
+description: "Веди многошаговый продуктовый тур из одного триггера, который слушает смену маршрутов и обнаружение фич — без кладбища useEffect и без vendor lock-in на тур-библиотеку."
+sidebar:
+  order: 6
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Сценарии онбординга печально известны разрастающейся логикой: «показать шаг 2, только если шаг 1 пройден, пользователь на нужном маршруте, он не закрыл тур и у него вообще есть доступ к фиче». Либо это хардкодится в одну гигантскую цепочку `useEffect`, либо тянется тур-библиотека, которая владеет половиной UI. Третий путь Triggery — держать *правила* в одном триггере, а *каждый компонент шага* пусть сам сообщает о себе триггеру.
+
+<StackBlitzButton path="examples/vite-react-onboarding" label="Открыть в StackBlitz" />
+
+## Сценарий
+
+Двухшаговый онбординг-тур:
+
+1. **Шаг 1 — «Попробуй поиск»**: показывается при первом заходе пользователя на `/dashboard`, если он не закрыл онбординг.
+2. **Шаг 2 — «Сохрани фильтр»**: показывается, когда пользователь впервые запускает событие `feature:search-used` (после прохождения шага 1).
+
+Состояние, которое формирует правила:
+
+- `<RouterProvider>` отдаёт текущий `route`.
+- `<UserProvider>` отдаёт `{ completedSteps, dismissed }` из профиля пользователя.
+- Фичи сами сообщают об использовании через события `feature:*`.
+
+## Структура файлов
+
+<FileTree>
+- src/
+  - triggers/
+    - **onboarding.trigger.ts** что показывать и когда
+  - features/
+    - router/
+      - RouterProvider.tsx провайдер (`route`)
+    - user/
+      - UserProvider.tsx провайдер (`completedSteps`, `dismissed`)
+    - dashboard/
+      - DashboardSearch.tsx продьюсер (запускает `feature:search-used`)
+    - onboarding/
+      - OnboardingHost.tsx реактор (рендерит активный шаг)
+</FileTree>
+
+## 1. Триггер
+
+```ts title="src/triggers/onboarding.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type StepId = 'try-search' | 'save-filter';
+
+export const onboardingTrigger = createTrigger<{
+  events: {
+    'route-changed':      { to: string };
+    'feature-discovered': { name: 'search-used' | 'filter-saved' };
+  };
+  conditions: {
+    completedSteps: ReadonlySet<StepId>;
+    dismissed:      boolean;
+    route:          string;
+  };
+  actions: {
+    showStep:     StepId;
+    completeStep: StepId;
+  };
+}>({
+  id: 'onboarding',
+  events: ['route-changed', 'feature-discovered'],
+  required: ['completedSteps', 'dismissed'],
+  handler({ event, conditions, actions }) {
+    // The user opted out — never bother them.
+    if (conditions.dismissed) return;
+
+    const done = conditions.completedSteps;
+
+    if (event.name === 'route-changed') {
+      // Step 1: first visit to the dashboard.
+      if (event.payload.to === '/dashboard' && !done.has('try-search')) {
+        actions.showStep?.('try-search');
+      }
+      return;
+    }
+
+    // Feature discovery — promote step 2 when search is used (and step 1 is done).
+    if (event.name === 'feature-discovered') {
+      const { name } = event.payload;
+
+      if (name === 'search-used' && done.has('try-search') && !done.has('save-filter')) {
+        actions.completeStep?.('try-search');
+        actions.showStep?.('save-filter');
+      }
+
+      if (name === 'filter-saved' && done.has('save-filter') === false) {
+        actions.completeStep?.('save-filter');
+      }
+    }
+  },
+});
+```
+
+Весь свод правил онбординга — двадцать пять строк, читается за один присест, спорить со спецификацией невозможно.
+
+## 2. Провайдеры
+
+```tsx title="src/features/router/RouterProvider.tsx"
+import { useCondition, useEvent } from '@triggery/react';
+import { useEffect } from 'react';
+import { onboardingTrigger } from '../../triggers/onboarding.trigger';
+
+export function RouterProvider({
+  route,
+  children,
+}: {
+  route: string;
+  children: React.ReactNode;
+}) {
+  useCondition(onboardingTrigger, 'route', () => route, [route]);
+
+  // Doubles as the producer for `route-changed`.
+  const fireRouteChanged = useEvent(onboardingTrigger, 'route-changed');
+  useEffect(() => {
+    fireRouteChanged({ to: route });
+  }, [fireRouteChanged, route]);
+
+  return <>{children}</>;
+}
+```
+
+<Aside type="tip">
+Это *единственный* `useEffect`, который ты увидишь во всей системе онбординга — и нужен он только как мостик между «роутер обновился» и «запускай событие». Все остальные реактивные правила живут в файле триггера.
+</Aside>
+
+```tsx title="src/features/user/UserProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { useMemo } from 'react';
+import { onboardingTrigger, type StepId } from '../../triggers/onboarding.trigger';
+
+export function UserProvider({
+  completed,
+  dismissed,
+  children,
+}: {
+  completed: readonly StepId[];
+  dismissed: boolean;
+  children: React.ReactNode;
+}) {
+  const set = useMemo(() => new Set(completed), [completed]);
+
+  useCondition(onboardingTrigger, 'completedSteps', () => set,       [set]);
+  useCondition(onboardingTrigger, 'dismissed',      () => dismissed, [dismissed]);
+
+  return <>{children}</>;
+}
+```
+
+## 3. Продьюсеры фич
+
+Любая фича, которая хочет *продвинуть тур*, запускает событие `feature-discovered`. Она не знает, какой шаг проталкивает — это работа триггера.
+
+```tsx title="src/features/dashboard/DashboardSearch.tsx"
+import { useEvent } from '@triggery/react';
+import { useState } from 'react';
+import { onboardingTrigger } from '../../triggers/onboarding.trigger';
+
+export function DashboardSearch() {
+  const [q, setQ] = useState('');
+  const fireDiscovered = useEvent(onboardingTrigger, 'feature-discovered');
+
+  return (
+    <form
+      onSubmit={e => {
+        e.preventDefault();
+        fireDiscovered({ name: 'search-used' });
+      }}
+    >
+      <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" />
+      <button type="submit">Search</button>
+    </form>
+  );
+}
+```
+
+## 4. Хост
+
+Один компонент владеет видимыми coachmark'ами. Он регистрирует `showStep` и `completeStep` и пишет текущий шаг в стор.
+
+```tsx title="src/features/onboarding/OnboardingHost.tsx"
+import { useAction } from '@triggery/react';
+import { useState } from 'react';
+import { onboardingTrigger, type StepId } from '../../triggers/onboarding.trigger';
+
+const STEP_COPY: Record<StepId, { title: string; body: string }> = {
+  'try-search':  { title: 'Try the search', body: 'Type anything in the box up top.' },
+  'save-filter': { title: 'Save a filter',  body: 'Save the current view to come back to it.' },
+};
+
+export function OnboardingHost({ onComplete }: { onComplete: (step: StepId) => void }) {
+  const [active, setActive] = useState<StepId | null>(null);
+
+  useAction(onboardingTrigger, 'showStep', step => setActive(step));
+  useAction(onboardingTrigger, 'completeStep', step => {
+    onComplete(step);
+    setActive(curr => (curr === step ? null : curr));
+  });
+
+  if (!active) return null;
+
+  return (
+    <aside role="dialog" className="coachmark">
+      <h3>{STEP_COPY[active].title}</h3>
+      <p>{STEP_COPY[active].body}</p>
+      <button type="button" onClick={() => setActive(null)}>Got it</button>
+    </aside>
+  );
+}
+```
+
+`onComplete` — это шов, через который ты сохранишь прогресс в API профиля пользователя. Триггеру про это знать не нужно — ему важно лишь, чтобы условие `completedSteps` отражало последнее состояние при следующем срабатывании.
+
+## 5. Собираем вместе
+
+```tsx title="src/App.tsx"
+import { useState } from 'react';
+import { OnboardingHost } from './features/onboarding/OnboardingHost';
+import { RouterProvider } from './features/router/RouterProvider';
+import { UserProvider } from './features/user/UserProvider';
+import type { StepId } from './triggers/onboarding.trigger';
+
+export function App() {
+  const [route]      = useState('/dashboard');
+  const [completed, setCompleted] = useState<readonly StepId[]>([]);
+  const [dismissed]  = useState(false);
+
+  return (
+    <UserProvider completed={completed} dismissed={dismissed}>
+      <RouterProvider route={route}>
+        <OnboardingHost onComplete={step => setCompleted(c => [...c, step])} />
+        {/* …the rest of the app… */}
+      </RouterProvider>
+    </UserProvider>
+  );
+}
+```
+
+## Тест
+
+```ts title="src/triggers/onboarding.trigger.test.ts"
+import { createTestRuntime, mockAction, mockCondition } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { onboardingTrigger, type StepId } from './onboarding.trigger';
+
+describe('onboarding', () => {
+  it('shows step 1 on first dashboard visit', async () => {
+    const rt = createTestRuntime({ triggers: [onboardingTrigger] });
+    const showStep = vi.fn();
+    mockCondition(rt, onboardingTrigger, 'completedSteps', new Set<StepId>());
+    mockCondition(rt, onboardingTrigger, 'dismissed',      false);
+    mockCondition(rt, onboardingTrigger, 'route',          '/dashboard');
+    mockAction(rt, onboardingTrigger, 'showStep', showStep);
+
+    await rt.fire('route-changed', { to: '/dashboard' });
+
+    expect(showStep).toHaveBeenCalledWith('try-search');
+  });
+
+  it('never shows anything when the user dismissed onboarding', async () => {
+    const rt = createTestRuntime({ triggers: [onboardingTrigger] });
+    const showStep = vi.fn();
+    mockCondition(rt, onboardingTrigger, 'completedSteps', new Set<StepId>());
+    mockCondition(rt, onboardingTrigger, 'dismissed',      true);
+    mockAction(rt, onboardingTrigger, 'showStep', showStep);
+
+    await rt.fire('route-changed', { to: '/dashboard' });
+    await rt.fire('feature-discovered', { name: 'search-used' });
+
+    expect(showStep).not.toHaveBeenCalled();
+  });
+});
+```
+
+## Варианты и см. также
+
+<CardGrid>
+  <LinkCard title="Границы владения" href="/ru/guide/architecture/ownership/" description="Почему состояние роутера живёт в провайдере, а не в триггере." />
+  <LinkCard title="useCondition" href="/ru/api/react/use-condition/" description="Справочник по хуку." />
+</CardGrid>

@@ -1,0 +1,294 @@
+---
+title: "Синхронизация по WebSocket"
+description: "Прокачай реалтайм-сообщения из socket.io в триггер, маршрутизируй их через условия и обновляй query-кеш из одного реактора."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Чат-приложение подписано на `socket.io`. Каждое входящее сообщение должно разойтись веером: инвалидировать запрос разговора, дописать сообщение в кеш списка и увеличить счётчик непрочитанных — но только для каналов, которые пользователю реально нужны, и только когда он сейчас на это сообщение не смотрит. Сам сокет остаётся в *одном* файле. Логика маршрутизации — в *одном* триггере. Побочные эффекты — у тех компонентов, которым они принадлежат.
+
+<StackBlitzButton path="examples/vite-react-websocket-sync" label="Открыть в StackBlitz" />
+
+## Сценарий
+
+Сервер `socket.io` эмитит события `message` с `{ channelId, message }`. Нужно:
+
+1. **Дописать сообщение** в кеш списка React Query для этого канала — всегда.
+2. **Инвалидировать превью канала** в сайдбаре — только если канал в списке подписок пользователя.
+3. **Увеличить счётчик непрочитанных** — только если пользователь сейчас не смотрит этот канал.
+
+Три независимые реакции, отсечённые тремя снимками условий, и все провязаны через один триггер.
+
+## Раскладка по файлам
+
+<FileTree>
+- src/
+  - triggers/
+    - **message.trigger.ts** правило маршрутизации
+  - features/
+    - socket/
+      - SocketBridge.tsx продьюсер (`useSocketIoEvent` пробрасывает в `useEvent`)
+    - session/
+      - SubscriptionProvider.tsx провайдер (подписки на каналы)
+    - chat/
+      - ActiveChannel.tsx провайдер (`activeChannelId`)
+      - ChatCacheReactor.tsx реактор (три `useAction`)
+  - App.tsx собирает всё вместе
+</FileTree>
+
+## 1. Триггер
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Message = {
+  id: string;
+  channelId: string;
+  authorId: string;
+  text: string;
+  at: number;
+};
+
+export const messageTrigger = createTrigger<{
+  events: {
+    'message-received': { channelId: string; message: Message };
+  };
+  conditions: {
+    activeChannelId:    string | null;
+    subscribedChannels: ReadonlySet<string>;
+    currentUserId:      string;
+  };
+  actions: {
+    appendToList:    { channelId: string; message: Message };
+    invalidatePreview: string;             // channelId
+    incrementUnread: string;               // channelId
+  };
+}>({
+  id: 'message-received',
+  events: ['message-received'],
+  required: ['currentUserId'],
+  handler({ event, conditions, actions, check }) {
+    const { channelId, message } = event.payload;
+
+    // Кеш списка обновляется всегда — любой потребитель list-запроса
+    // должен увидеть новое сообщение, даже если канал отфильтрован где-то ещё.
+    actions.appendToList?.({ channelId, message });
+
+    // Превью в сайдбаре — только для каналов, на которые пользователь подписан.
+    if (check.is('subscribedChannels', set => set.has(channelId))) {
+      actions.invalidatePreview?.(channelId);
+    }
+
+    // Счётчик непрочитанных — только если канал не активен и сообщение не от самого пользователя.
+    const isActive = conditions.activeChannelId === channelId;
+    const isOwn = message.authorId === conditions.currentUserId;
+    if (!isActive && !isOwn) {
+      actions.incrementUnread?.(channelId);
+    }
+  },
+});
+```
+
+Обработчик читается сверху вниз как продуктовая спецификация. Добавить четвёртый побочный эффект (push-уведомление, лог в аналитику и т. п.), не трогая сокет, провайдеры и существующие реакторы, — это просто новый `useAction` где-то ещё в дереве.
+
+## 2. Продьюсер
+
+Один компонент владеет сокетом. Через `@triggery/socket` он пробрасывает входящие события `message` в триггер. Само соединение живёт в родителе — мост лишь регистрирует слушателя.
+
+```tsx title="src/features/socket/SocketBridge.tsx"
+import { useSocketIoEvent } from '@triggery/socket';
+import type { Socket } from 'socket.io-client';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+type WirePayload = { channelId: string; message: {
+  id: string; channelId: string; authorId: string; text: string; at: number;
+} };
+
+export function SocketBridge({ socket }: { socket: Socket }) {
+  useSocketIoEvent(messageTrigger, 'message-received', socket, 'message', {
+    mapPayload: (raw: WirePayload) => raw,
+  });
+
+  return null;
+}
+```
+
+<Aside type="tip">
+`useSocketIoEvent` — это *типизированный шорткат* для «подпишись на `socket.on('message', …)` и вызови `fireEvent(...)` на каждое сообщение». Хук сам делает attach и detach в `useEffect` — безопасно для StrictMode. Если `socket` равен `null` (ещё создаётся), хук работает no-op'ом, пока ты не передашь сокет.
+</Aside>
+
+Если транспорт — голый `WebSocket`, а не `socket.io`, замени на `useWebSocketEvent`:
+
+```tsx
+useWebSocketEvent(messageTrigger, 'message-received', ws, 'message', {
+  mapPayload: (e) => JSON.parse((e as MessageEvent).data) as WirePayload,
+});
+```
+
+## 3. Провайдеры
+
+Три компонента владеют тремя кусочками состояния. Никто из них не импортирует другого.
+
+```tsx title="src/features/session/SubscriptionProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { useMemo } from 'react';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+export function SubscriptionProvider({
+  channels,
+  userId,
+  children,
+}: {
+  channels: readonly string[];
+  userId: string;
+  children: React.ReactNode;
+}) {
+  const set = useMemo(() => new Set(channels), [channels]);
+
+  useCondition(messageTrigger, 'subscribedChannels', () => set, [set]);
+  useCondition(messageTrigger, 'currentUserId',      () => userId, [userId]);
+
+  return <>{children}</>;
+}
+```
+
+```tsx title="src/features/chat/ActiveChannel.tsx"
+import { useCondition } from '@triggery/react';
+import { messageTrigger } from '../../triggers/message.trigger';
+
+export function ActiveChannelProvider({
+  channelId,
+  children,
+}: {
+  channelId: string | null;
+  children: React.ReactNode;
+}) {
+  useCondition(messageTrigger, 'activeChannelId', () => channelId, [channelId]);
+  return <>{children}</>;
+}
+```
+
+Условия читаются *лениво* — только когда срабатывает триггер. Перерендер `<ActiveChannelProvider>` при переключении канала ничего не инвалидирует; новый геттер просто вернёт новое значение при следующем вызове.
+
+## 4. Реактор
+
+Один компонент владеет побочными эффектами. Он напрямую говорит с кешем и со стором счётчиков.
+
+```tsx title="src/features/chat/ChatCacheReactor.tsx"
+import { useAction } from '@triggery/react';
+import { useQueryClient } from '@tanstack/react-query';
+import { messageTrigger } from '../../triggers/message.trigger';
+import { useBadgeStore } from '../../stores/badge';
+
+export function ChatCacheReactor() {
+  const qc = useQueryClient();
+  const increment = useBadgeStore(s => s.increment);
+
+  useAction(messageTrigger, 'appendToList', ({ channelId, message }) => {
+    qc.setQueryData<typeof message[]>(['messages', channelId], (prev = []) => [
+      ...prev,
+      message,
+    ]);
+  });
+
+  useAction(messageTrigger, 'invalidatePreview', channelId => {
+    qc.invalidateQueries({ queryKey: ['channel-preview', channelId] });
+  });
+
+  useAction(messageTrigger, 'incrementUnread', channelId => {
+    increment(channelId);
+  });
+
+  return null;
+}
+```
+
+`<ChatCacheReactor>` ничего не знает про подписки и активные каналы. Триггер уже решил, должно ли каждое действие выполниться. Реактор просто исполняет.
+
+## 5. Сборка приложения
+
+```tsx title="src/App.tsx"
+import { useEffect, useState } from 'react';
+import { io, type Socket } from 'socket.io-client';
+import { ActiveChannelProvider } from './features/chat/ActiveChannel';
+import { ChatCacheReactor } from './features/chat/ChatCacheReactor';
+import { SocketBridge } from './features/socket/SocketBridge';
+import { SubscriptionProvider } from './features/session/SubscriptionProvider';
+
+export function App() {
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [active, setActive] = useState<string | null>('c-lunch');
+
+  useEffect(() => {
+    const s = io('https://example.com', { autoConnect: true });
+    setSocket(s);
+    return () => { s.disconnect(); };
+  }, []);
+
+  return (
+    <SubscriptionProvider userId="u-bob" channels={['c-lunch', 'c-deploys']}>
+      <ActiveChannelProvider channelId={active}>
+        {socket && <SocketBridge socket={socket} />}
+        <ChatCacheReactor />
+        {/* …chat UI… */}
+      </ActiveChannelProvider>
+    </SubscriptionProvider>
+  );
+}
+```
+
+## Тесты
+
+Триггер — чистая функция от `(event, conditions)`. Чтобы его протестировать, не нужны ни сокет, ни React, ни query-клиент.
+
+```ts title="src/triggers/message.trigger.test.ts"
+import { createTestRuntime, mockAction, mockCondition } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { messageTrigger } from './message.trigger';
+
+const message = {
+  id: 'm1',
+  channelId: 'c-lunch',
+  authorId: 'u-alice',
+  text: 'are you free?',
+  at: 0,
+};
+
+describe('message-received', () => {
+  it('always appends to the list cache', async () => {
+    const rt = createTestRuntime({ triggers: [messageTrigger] });
+    const appendToList = vi.fn();
+    mockCondition(rt, messageTrigger, 'currentUserId', 'u-bob');
+    mockCondition(rt, messageTrigger, 'subscribedChannels', new Set<string>());
+    mockCondition(rt, messageTrigger, 'activeChannelId', null);
+    mockAction(rt, messageTrigger, 'appendToList', appendToList);
+
+    await rt.fire('message-received', { channelId: 'c-lunch', message });
+
+    expect(appendToList).toHaveBeenCalledWith({ channelId: 'c-lunch', message });
+  });
+
+  it('does not bump unread when the channel is active', async () => {
+    const rt = createTestRuntime({ triggers: [messageTrigger] });
+    const incrementUnread = vi.fn();
+    mockCondition(rt, messageTrigger, 'currentUserId', 'u-bob');
+    mockCondition(rt, messageTrigger, 'subscribedChannels', new Set(['c-lunch']));
+    mockCondition(rt, messageTrigger, 'activeChannelId', 'c-lunch');
+    mockAction(rt, messageTrigger, 'incrementUnread', incrementUnread);
+
+    await rt.fire('message-received', { channelId: 'c-lunch', message });
+
+    expect(incrementUnread).not.toHaveBeenCalled();
+  });
+});
+```
+
+## Варианты и похожее
+
+<CardGrid>
+  <LinkCard title="@triggery/socket" href="/ru/packages/socket/" description="Справочник по useSocketIoEvent и useWebSocketEvent." />
+  <LinkCard title="useEvent" href="/ru/api/react/use-event/" description="Справка по хуку." />
+</CardGrid>

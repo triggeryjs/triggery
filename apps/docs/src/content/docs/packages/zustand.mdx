@@ -1,0 +1,98 @@
+---
+title: "@triggery/zustand"
+description: "Zustand adapter for Triggery — useZustandCondition hook wiring a Zustand store into a trigger condition."
+sidebar:
+  order: 7
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Read a [Zustand](https://github.com/pmndrs/zustand) store from a Triggery condition. Pull-only — the selector runs at fire time, not on every store update, so the host component is never re-rendered because of this hook.
+
+[![npm](https://img.shields.io/npm/v/@triggery/zustand?style=flat-square)](https://www.npmjs.com/package/@triggery/zustand)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/zustand?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/zustand)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/zustand zustand" />
+
+Peer deps: `react >= 18.0.0`, `zustand ^4 || ^5`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `useZustandCondition(trigger, name, store, selector)` | Register a Zustand-backed condition. Works with both `create` (hook) stores and `createStore` (vanilla) stores. |
+
+## Quick example
+
+```tsx
+import { create } from 'zustand';
+import { createTrigger } from '@triggery/core';
+import { useZustandCondition } from '@triggery/zustand';
+
+type Settings = { sound: boolean; notifications: boolean };
+
+const useSettings = create<Settings>(() => ({
+  sound: true,
+  notifications: true,
+}));
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({ body: event.payload.text });
+  },
+});
+
+function SettingsBridge() {
+  useZustandCondition(messageTrigger, 'settings', useSettings, (s) => s);
+  return null;
+}
+```
+
+## How it works
+
+The runtime is pull-only: `selector(store.getState())` is called **only** when a trigger fires, not when the store changes. That means:
+
+1. Nothing in your React tree re-renders because of this hook. If a component also needs the same slice, call Zustand's own `useStore(store, selector)` alongside.
+2. The trigger always sees the latest state at fire time — no subscription, no possibility of a stale snapshot.
+
+## API
+
+```ts
+useZustandCondition<T, S, K>(
+  trigger: Trigger<S>,
+  name: K,
+  store: { getState(): T },
+  selector: (state: T) => ConditionMap<S>[K],
+): void
+```
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Exposes Trigger<S>." href="/packages/core/" />
+  <LinkCard title="@triggery/react" description="useZustandCondition is a React hook." href="/packages/react/" />
+  <LinkCard title="@triggery/redux" description="Alternative adapter for Redux stores." href="/packages/redux/" />
+  <LinkCard title="@triggery/jotai" description="Alternative adapter for Jotai atoms." href="/packages/jotai/" />
+  <LinkCard title="@triggery/mobx" description="Alternative adapter for MobX observables." href="/packages/mobx/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/zustand)
+- [npm](https://www.npmjs.com/package/@triggery/zustand)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/zustand/CHANGELOG.md)

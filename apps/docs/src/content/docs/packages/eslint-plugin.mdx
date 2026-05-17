@@ -1,0 +1,92 @@
+---
+title: "@triggery/eslint-plugin"
+description: "ESLint plugin for Triggery — catches mis-use of createTrigger / useEvent / useCondition / useAction. 8 rules, flat-config presets."
+sidebar:
+  order: 19
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+ESLint plugin for Triggery: catches mis-use of `createTrigger` and the hook API, enforces conventions, and keeps trigger files readable as specs. Ships `recommended` and `strict` flat-config presets for ESLint 9.x.
+
+[![npm](https://img.shields.io/npm/v/@triggery/eslint-plugin?style=flat-square)](https://www.npmjs.com/package/@triggery/eslint-plugin)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/eslint-plugin?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/eslint-plugin)
+
+## Install
+
+<PackageManagers pkg="@triggery/eslint-plugin eslint typescript" dev />
+
+Peer deps: `eslint >= 9.0.0`, `typescript >= 5.0.0`.
+
+## What's inside
+
+| Rule | Recommended | Strict | Auto-fix |
+|---|:---:|:---:|:---:|
+| `no-dynamic-id` | error | error | — |
+| `no-event-cascade` | error | error | — |
+| `hook-rules` | error | error | — |
+| `exhaustive-conditions` | warn | error | — |
+| `exhaustive-required` | warn | error | — |
+| `max-handler-size` | warn (≤50) | error (≤30) | — |
+| `max-ports-per-trigger` | warn (≤12) | error (≤8) | — |
+| `prefer-named-hook` | off | warn (≥3) | — |
+
+## Quick example
+
+Flat config (ESLint 9.x):
+
+```js title="eslint.config.js"
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  triggery.configs.recommended,
+  // Or, dialled up:
+  // triggery.configs.strict,
+];
+```
+
+Cherry-picking individual rules:
+
+```js
+import triggery from '@triggery/eslint-plugin';
+
+export default [
+  {
+    plugins: { '@triggery': triggery },
+    rules: {
+      '@triggery/no-dynamic-id':       'error',
+      '@triggery/no-event-cascade':    'error',
+      '@triggery/max-handler-size':    ['warn', { max: 40 }],
+    },
+  },
+];
+```
+
+## Rule highlights
+
+- **`no-dynamic-id`** — `createTrigger({ id })` must be a string literal. Trigger ids are registry keys, devtools labels, and graph anchors — they must be deterministic.
+- **`no-event-cascade`** — Disallows `useEvent(...)` inside a `useAction(...)` handler. Cascades are allowed at runtime, but writing them inline hides cross-trigger control flow.
+- **`hook-rules`** — Framework-neutral rules-of-hooks for `useEvent` / `useCondition` / `useAction` / `useInlineTrigger`.
+- **`exhaustive-conditions`** — Every name in `required: [...]` has a matching `useCondition` in the same file.
+- **`exhaustive-required`** — Every `createTrigger({...})` call must include an explicit `required:` key (use `required: []` if no gate is needed).
+- **`max-handler-size`** / **`max-ports-per-trigger`** — Keep triggers spec-like; reach for the `extract-trigger` codemod when they grow.
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="The runtime these rules know about." href="/packages/core/" />
+  <LinkCard title="@triggery/codemod" description="extract-trigger / migrate-from-listener-middleware introduce trigger files this plugin checks." href="/packages/codemod/" />
+  <LinkCard title="@triggery/cli" description="triggery lint wraps this plugin's recommended preset." href="/packages/cli/" />
+  <LinkCard title="@triggery/testing" description="Static checks plus runtime tests, together." href="/packages/testing/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/eslint-plugin)
+- [npm](https://www.npmjs.com/package/@triggery/eslint-plugin)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/eslint-plugin/CHANGELOG.md)

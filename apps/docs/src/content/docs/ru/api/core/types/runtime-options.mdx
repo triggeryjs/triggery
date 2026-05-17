@@ -1,0 +1,138 @@
+---
+title: "RuntimeOptions"
+description: "Конфигурация, которую принимает createRuntime — инспектор, middleware, глубина каскада, размер буфера."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Bag опций, передаваемый в [`createRuntime`](/ru/api/core/create-runtime/). Все поля необязательные; без аргументов создаётся рантайм со всеми дефолтами.
+
+## Импорт
+
+```ts
+import type { RuntimeOptions } from '@triggery/core';
+```
+
+## Определение
+
+```ts
+type RuntimeOptions = {
+  middleware?:          readonly Middleware[];
+  maxCascadeDepth?:     number;
+  inspectorBufferSize?: number;
+  inspector?:           boolean | { dev?: boolean; prod?: boolean };
+};
+```
+
+## Поля
+
+| Поле | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `middleware` | `readonly Middleware[]` | `[]` | Цепочка, применяемая к каждому триггеру в этом рантайме. Порядок важен для `onFire` / `onSkip` / `onActionStart` / `onActionEnd` / `onError` / `onCascade`. |
+| `maxCascadeDepth` | `number` | `3` | Максимальная глубина цепочек `action → fireEvent → …`. Запуски выше этой границы пропускаются с `'overflow'`. |
+| `inspectorBufferSize` | `number` | `50` | Размер кольцевого буфера инспектора. Игнорируется, когда инспектор выключен. |
+| `inspector` | `boolean \| { dev?: boolean; prod?: boolean }` | DEV `true`, PROD `false` (авто) | Переключатель инспектора по средам. См. ниже. |
+
+### Семантика `inspector`
+
+| Значение | Эффект |
+|---|---|
+| `undefined` (по умолчанию) | Авто — включён при `process.env.NODE_ENV !== 'production'`, иначе выключен. |
+| `true` | Всегда включён, вне зависимости от среды. |
+| `false` | Всегда выключен — горячий путь не аллоцирует снепшот вообще (~30–40% дополнительной пропускной способности). |
+| `{ dev?, prod? }` | Переопределение по средам. Неустановленные поля падают на авто-дефолт. |
+
+Когда выключен, обратные вызовы `runtime.subscribe` не вызываются, `runtime.getInspectorBuffer()` возвращает `[]`, а `trigger.inspect()` — `undefined`. Devtools — `@triggery/devtools-redux`, `@triggery/devtools-bridge`, хук `useInspectHistory` для React — зависят от включённого инспектора.
+
+## Примеры
+
+### Большинству приложений хватает дефолтов
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime(); // inspector auto, cascade=3, buffer=50, no middleware
+```
+
+### Уменьшить глубину каскада
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({ maxCascadeDepth: 1 });
+// Now `action → fireEvent → trigger` is allowed but `action → fireEvent → trigger → action → fireEvent → …` is not.
+```
+
+### Увеличить буфер инспектора
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({ inspectorBufferSize: 500 });
+// Helpful for long-running e2e tests that need to see runs from many minutes ago.
+```
+
+### Переопределение инспектора по средам
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+// On in dev, also on in prod (e.g. for an opt-in beta where you want telemetry).
+const runtime = createRuntime({ inspector: { dev: true, prod: true } });
+```
+
+### Режим бенчмарка горячего пути
+
+```ts twoslash
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({ inspector: false });
+// `getInspectorBuffer()` returns a shared frozen `[]`; `subscribe` is a noop.
+```
+
+### Цепочка миддлвэров
+
+```ts twoslash
+import { createRuntime, type Middleware } from '@triggery/core';
+
+const tracing: Middleware = {
+  name: 'tracing',
+  onFire({ eventName }) { console.debug('[fire]', eventName); },
+  onActionEnd({ actionName, durationMs }) {
+    console.debug(`[action] ${actionName} ${durationMs.toFixed(2)}ms`);
+  },
+};
+
+const audit: Middleware = {
+  name: 'audit',
+  onError({ triggerId, actionName, error }) {
+    console.error(`[${triggerId}] ${actionName} failed`, error);
+  },
+};
+
+const runtime = createRuntime({ middleware: [tracing, audit] });
+```
+
+## Замечания
+
+<Aside type="tip">
+Инспектор — единственная поверхность наблюдаемости: отключение убивает `runtime.subscribe`, буфер и `trigger.inspect()`. Для осознанной телеметрии большого объёма в проде оставь инспектор включённым и парь его с `Middleware`, который зеркалит снепшоты в твой мониторинг.
+</Aside>
+
+<Aside type="caution">
+`maxCascadeDepth` — абсолютный потолок, а не пер-триггерное переопределение. Триггеры, которым по делу нужны длинные цепочки, стоит ревьюить — обычно правильный ответ — разорвать каскад действием, которое решает задачу напрямую, а не порождает ещё одно событие.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createRuntime" description="Конструктор, который принимает этот тип." href="/ru/api/core/create-runtime/" />
+  <LinkCard title="Middleware" description="Форма хуков каждого middleware в цепочке." href="/ru/api/core/types/middleware/" />
+  <LinkCard title="createInspector" description="Реализация кольцевого буфера." href="/ru/api/core/create-inspector/" />
+  <LinkCard title="Каскады и ограничения" description="Почему max-depth по умолчанию равен 3." href="/ru/guide/essentials/runtime/" />
+</CardGrid>

@@ -1,0 +1,50 @@
+---
+title: Пакеты
+description: "Все 21 пакет в области имён @triggery/*, сгруппированные по уровням."
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery — монорепозиторий. Каждый пакет публикуется самостоятельно, имеет свой README и описан ниже.
+
+## Tier 1 — рантайм
+
+Ядро, биндинги и тестовый рантайм. Обязательны для любого проекта, использующего Triggery.
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Framework-agnostic рантайм оркестрации." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="Биндинги для React 18+/19." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/solid" description="Биндинги для SolidJS." href="/ru/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Биндинги для Vue 3." href="/ru/packages/vue/" />
+  <LinkCard title="@triggery/testing" description="Тестовый рантайм, fakeScheduler, заглушки." href="/ru/packages/testing/" />
+</CardGrid>
+
+## Tier 2 — адаптеры и интеграции
+
+Опциональные адаптеры для популярных стейт-менеджеров, источников событий и сборщиков.
+
+<CardGrid>
+  <LinkCard title="@triggery/zustand" description="Адаптер: стор Zustand → условие." href="/ru/packages/zustand/" />
+  <LinkCard title="@triggery/redux" description="Адаптер: стор Redux → условие." href="/ru/packages/redux/" />
+  <LinkCard title="@triggery/jotai" description="Адаптер: атом Jotai → условие." href="/ru/packages/jotai/" />
+  <LinkCard title="@triggery/mobx" description="Адаптер: observable MobX → условие." href="/ru/packages/mobx/" />
+  <LinkCard title="@triggery/reatom" description="Адаптер: атом Reatom → условие." href="/ru/packages/reatom/" />
+  <LinkCard title="@triggery/signals" description="Адаптер: @preact/signals → условие." href="/ru/packages/signals/" />
+  <LinkCard title="@triggery/query" description="Адаптер: TanStack Query → условие." href="/ru/packages/query/" />
+  <LinkCard title="@triggery/dom" description="События DOM/document/window → триггеры." href="/ru/packages/dom/" />
+  <LinkCard title="@triggery/socket" description="События socket.io / WebSocket → триггеры." href="/ru/packages/socket/" />
+  <LinkCard title="@triggery/vite" description="Плагин Vite: автодискавери + HMR." href="/ru/packages/vite/" />
+</CardGrid>
+
+## Tier 3 — DevTools и тулинг
+
+DevTools, ESLint-плагин, codemod-скрипты и CLI.
+
+<CardGrid>
+  <LinkCard title="@triggery/devtools-redux" description="Мост рантайм-событий в Redux DevTools." href="/ru/packages/devtools-redux/" />
+  <LinkCard title="@triggery/devtools-panel" description="React-компоненты встроенного инспектора." href="/ru/packages/devtools-panel/" />
+  <LinkCard title="@triggery/devtools-bridge" description="Мост на стороне страницы для внешних инспекторов." href="/ru/packages/devtools-bridge/" />
+  <LinkCard title="@triggery/eslint-plugin" description="8 lint-правил и flat-config пресеты." href="/ru/packages/eslint-plugin/" />
+  <LinkCard title="@triggery/codemod" description="Codemod-скрипты на ts-morph для миграции в Triggery." href="/ru/packages/codemod/" />
+  <LinkCard title="@triggery/cli" description="triggery create / scaffold / graph / lint." href="/ru/packages/cli/" />
+</CardGrid>

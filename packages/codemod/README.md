@@ -50,6 +50,10 @@ Other listenerMiddleware shapes (`matcher`, `predicate`, `type`) are detected bu
 
 ts-morph is the TypeScript Compiler API with a nicer surface. It speaks JSX and the same type system the rest of Triggery is built on. The codemods produce TypeScript output, so type-aware AST work would be a regression with jscodeshift's recast-based round-trip.
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/codemod/](https://triggeryjs.github.io/packages/codemod/).
+
 ## Related packages
 
 - [`@triggery/eslint-plugin`](https://www.npmjs.com/package/@triggery/eslint-plugin) — Lint rules that catch issues this codemod can't repair.

@@ -1,0 +1,138 @@
+---
+title: "useInlineTrigger"
+description: "Define a component-local trigger that lives for the lifetime of the component. Escape hatch for one-off reactions."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Defines a trigger inline inside a component. The trigger is created on mount, lives until unmount, and is automatically disposed when the component unmounts. Use this for one-off reactions where pulling them into a separate `*.trigger.ts` file would be overkill — tiny analytics taps, modal-stack coordination scoped to one screen, keyboard shortcuts that only matter while a panel is open.
+
+For anything reusable across the app — prefer [`createTrigger`](/api/core/create-trigger/) in a dedicated `*.trigger.ts` file.
+
+## Import
+
+```ts
+import { useInlineTrigger } from '@triggery/react';
+```
+
+## Signature
+
+```ts
+function useInlineTrigger<S extends TriggerSchema>(
+  config: UseInlineTriggerConfig<S>,
+): void;
+
+type UseInlineTriggerConfig<S> = {
+  readonly on: keyof NonNullable<S['events']> & string;
+  readonly do: TriggerHandler<S>;
+  readonly id?: string;
+};
+```
+
+## Parameters
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `config.on` | `keyof S['events']` | yes | Event name to react to. Must be stable between renders. |
+| `config.do` | `TriggerHandler<S>` | yes | Handler body. Receives the same `ctx` as a full `createTrigger` handler. |
+| `config.id` | `string` | no | Optional debug id. Defaults to an auto-generated stable id (`inline:<n>`). |
+
+## Returns
+
+`void`. The trigger is registered in `useEffect` and disposed on unmount.
+
+## Examples
+
+### Analytics tap scoped to one screen
+
+```tsx
+import { useInlineTrigger } from '@triggery/react';
+
+function CtaSection() {
+  useInlineTrigger<{ events: { 'cta:click': { id: string } } }>({
+    on: 'cta:click',
+    do: ({ event }) => {
+      window.analytics?.track('cta_click', { id: event.payload.id });
+    },
+  });
+  return <button type="button">Sign up</button>;
+}
+```
+
+### Keyboard shortcut while a panel is open
+
+```tsx
+import { useInlineTrigger } from '@triggery/react';
+
+function ShortcutsPanel({ onClose }: { onClose: () => void }) {
+  useInlineTrigger<{ events: { 'keyboard:escape': void } }>({
+    on: 'keyboard:escape',
+    do: () => onClose(),
+  });
+  return <div>Press Esc to close</div>;
+}
+```
+
+### Pinned id for tests
+
+```tsx
+import { useInlineTrigger } from '@triggery/react';
+
+function Counter() {
+  useInlineTrigger<{ events: { increment: void } }>({
+    id: 'counter:tick', // stable across remounts — easier to mock in tests
+    on: 'increment',
+    do: () => console.log('tick'),
+  });
+  return null;
+}
+```
+
+### Reading conditions / firing actions
+
+```tsx
+import { useInlineTrigger } from '@triggery/react';
+
+function ChatRow() {
+  useInlineTrigger<{
+    events:     { 'message:select': { id: string } };
+    conditions: { selectedId: string | null };
+    actions:    { highlight: { id: string } };
+  }>({
+    on: 'message:select',
+    do: ({ event, conditions, actions }) => {
+      if (event.payload.id === conditions.selectedId) return;
+      actions.highlight?.({ id: event.payload.id });
+    },
+  });
+  return null;
+}
+```
+
+## Notes
+
+<Aside type="caution" title="`on` must be stable">
+Changing the `on` event between renders is misuse — the runtime indexes the trigger by event name at registration time. A DEV warning fires if it ever changes; in PROD the new value is silently ignored.
+</Aside>
+
+<Aside type="tip" title="Handler captures fresh closures">
+The handler is stored in a ref, so it always sees the latest closure (counter values, props, etc.) even though the trigger itself is created exactly once on mount. You don't need a `deps` array.
+</Aside>
+
+<Aside>
+Inline triggers live alongside file-level ones. Their auto-generated id (`inline:<n>`) is stable per component instance — two mounted `Counter` components produce two separate ids. Don't rely on the format; treat it as opaque.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="The full constructor — preferred for reusable triggers." href="/api/core/create-trigger/" />
+  <LinkCard title="useEvent" description="Fire the event your inline trigger reacts to." href="/api/react/use-event/" />
+  <LinkCard title="TriggerScope" description="Scope inline triggers to a subtree." href="/api/react/trigger-scope/" />
+  <LinkCard title="When to inline guide" description="One-off reactions vs file-level triggers." href="/guide/essentials/trigger-anatomy/" />
+</CardGrid>

@@ -1,0 +1,274 @@
+---
+title: "Events"
+description: "Typed message bus entries — what they are, how they fire, how they reach handlers."
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+import FrameworkTabs from '~/components/FrameworkTabs.astro';
+
+An event in Triggery is the lightest possible thing: **a typed name + an optional payload**. It is fired by a producer, indexed by the runtime, and delivered to every trigger that listed the name in its `events` array. Producers don't know who's listening; triggers don't know who fires.
+
+That's the whole abstraction. Everything else on this page is a consequence of it.
+
+## Declaring an event
+
+Events live inside the trigger schema. The schema's `events` map is `Record<EventName, Payload>`:
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Message = { author: string; text: string; channelId: string };
+
+export const messageTrigger = createTrigger<{
+  events: {
+    'new-message':    Message;        // payload: Message
+    'message-edited': Message;        // same payload type, different event
+    'app:ready':      void;           // no payload
+  };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message', 'message-edited', 'app:ready'],
+  handler({ event, actions }) {
+    if (event.name === 'app:ready') return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+Two things to notice:
+
+1. **The schema maps event name → payload type.** That's enough for the runtime to type-check producers, handlers, and the cross-reference between the two.
+2. **The `events` array must list every name the trigger reacts to.** It's redundant with the schema, but it's what the runtime uses to index dispatch — and what the `@triggery/eslint-plugin` rule `exhaustive-events` cross-checks against the schema.
+
+A void payload (`void`) declares an event that carries no data. The emitter is `() => void`, no argument.
+
+## Firing an event
+
+In application code you fire events through a binding hook. The emitter identity is stable across renders — you can put it in a `useEffect` dependency array without re-running the effect.
+
+<FrameworkTabs>
+  <TabItem label="React">
+    ```tsx title="src/features/Chat.tsx"
+    import { useEvent } from '@triggery/react';
+    import { useEffect } from 'react';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function Chat() {
+      const fireNewMessage = useEvent(messageTrigger, 'new-message');
+      const fireReady      = useEvent(messageTrigger, 'app:ready');
+
+      useEffect(() => {
+        fireReady();
+        const off = socket.on('msg', fireNewMessage);
+        return off;
+      }, [fireNewMessage, fireReady]);
+
+      return null;
+    }
+    ```
+  </TabItem>
+  <TabItem label="Solid">
+    ```tsx title="src/features/Chat.tsx"
+    import { useEvent } from '@triggery/solid';
+    import { onMount, onCleanup } from 'solid-js';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    export function Chat() {
+      const fireNewMessage = useEvent(messageTrigger, 'new-message');
+      const fireReady      = useEvent(messageTrigger, 'app:ready');
+
+      onMount(() => {
+        fireReady();
+        const off = socket.on('msg', fireNewMessage);
+        onCleanup(off);
+      });
+    }
+    ```
+  </TabItem>
+  <TabItem label="Vue">
+    ```vue title="src/features/Chat.vue"
+    <script setup lang="ts">
+    import { useEvent } from '@triggery/vue';
+    import { onMounted, onUnmounted } from 'vue';
+    import { messageTrigger } from '../triggers/message.trigger';
+
+    const fireNewMessage = useEvent(messageTrigger, 'new-message');
+    const fireReady      = useEvent(messageTrigger, 'app:ready');
+
+    onMounted(() => {
+      fireReady();
+      onUnmounted(socket.on('msg', fireNewMessage));
+    });
+    </script>
+    ```
+  </TabItem>
+</FrameworkTabs>
+
+You can also fire events without React/Solid/Vue — outside a component tree, from a `socket.on` handler, from a router transition, from a CLI. Reach for the runtime directly:
+
+```ts title="src/socket.ts"
+import { getDefaultRuntime } from '@triggery/core';
+
+socket.on('msg', (msg) => {
+  getDefaultRuntime().fire('new-message', msg);
+});
+```
+
+If you created your own runtime, use that instance instead — `runtime.fire('new-message', msg)`. Same shape, no hook required.
+
+## What happens after `fire(...)`
+
+The runtime takes the event name, looks it up in its event index (a `Map<eventName, Set<RegisteredTrigger>>`), and enqueues a dispatch for every matching trigger. The producer returns immediately. Producing an event **never** re-renders the producer.
+
+Dispatch is mediated by a scheduler. The default is `'microtask'`: events fired in the same synchronous task are batched and delivered at the next microtask. This is the right default for almost everything — it plays well with React batching and prevents thrash when a burst of events arrives at once.
+
+The trigger declares its scheduler:
+
+```ts
+createTrigger<Schema>({
+  id: 'message-received',
+  events: ['new-message'],
+  schedule: 'microtask',   // default
+  // or 'sync' — dispatch before fire() returns; useful in tests and hot paths
+  handler({ event }) {},
+});
+```
+
+For tests that want to assert side effects in the same call frame, use `runtime.fireSync(...)`. It bypasses the per-trigger scheduler choice and runs the handler before returning. See [`@triggery/testing`](/packages/testing/).
+
+## Typed `event` inside the handler
+
+The handler's `event` is a discriminated union over every name in `events`. Switching on `event.name` narrows `event.payload`:
+
+```ts
+handler({ event }) {
+  switch (event.name) {
+    case 'new-message':
+      // event.payload is Message
+      console.log(event.payload.author);
+      break;
+    case 'message-edited':
+      // event.payload is Message — same type, different branch
+      console.log('edited:', event.payload.text);
+      break;
+    case 'app:ready':
+      // event.payload is void
+      break;
+  }
+},
+```
+
+For triggers with a single event the switch is unnecessary — `event.payload` is already narrowed to that event's payload type.
+
+## Multiple triggers, same event (broadcast)
+
+There is no limit on how many triggers list the same event name. The runtime delivers the fired event to all of them, independently:
+
+```ts title="src/triggers/analytics.trigger.ts"
+export const analyticsTrigger = createTrigger<{
+  events: { 'new-message': Message };
+  actions: { track: { kind: string; payload: unknown } };
+}>({
+  id: 'analytics:new-message',
+  events: ['new-message'],
+  handler({ event, actions }) {
+    actions.track?.({ kind: 'msg.received', payload: event.payload });
+  },
+});
+```
+
+`messageTrigger` (UI notification) and `analyticsTrigger` (telemetry) both react to the same `'new-message'` event. They don't know about each other. Adding a third — `audit.trigger.ts` writing to a server log — is one file and zero modifications elsewhere.
+
+This is the central payoff of the event abstraction: **the rule for a scenario is added or removed by adding or removing a trigger file**.
+
+## Multiple producers, same event
+
+The reverse is just as fine. Two components can both fire `'new-message'` — one from the WebSocket, one from a "compose locally" form — and every subscribing trigger reacts to both. The runtime doesn't track producer identity; an event is an event.
+
+```tsx
+function ComposeBox() {
+  const fire = useEvent(messageTrigger, 'new-message');
+  return <input onKeyDown={(e) => e.key === 'Enter' && fire({ /* … */ })} />;
+}
+```
+
+## Cross-trigger fanout
+
+Sometimes one event should be the cause of another. The handler can fire a follow-up event by reaching the runtime — or, in a binding, returning to the emitter pattern. The most common shape is a small "fanout" trigger:
+
+```ts title="src/triggers/fanout.trigger.ts"
+import { createTrigger, getDefaultRuntime } from '@triggery/core';
+
+export const fanoutTrigger = createTrigger<{
+  events: { 'user:signed-in': { userId: string } };
+}>({
+  id: 'on-sign-in-fanout',
+  events: ['user:signed-in'],
+  handler({ event }) {
+    const rt = getDefaultRuntime();
+    rt.fire('preload-inbox',      { userId: event.payload.userId });
+    rt.fire('preload-settings',   { userId: event.payload.userId });
+    rt.fire('analytics:identify', { userId: event.payload.userId });
+  },
+});
+```
+
+When `'user:signed-in'` fires, three downstream events fan out — each picked up by its own trigger. The runtime tracks this as a **cascade**: the produced events carry a `cascadeDepth` and `parentRunId` in their `meta`, so the inspector links the chain visually. The default cascade depth limit is 3 (configurable on the runtime); cycles are detected automatically and short-circuited.
+
+See [Cascade](/guide/architecture/cascade/) for the full story.
+
+## Event naming conventions
+
+The runtime accepts any non-empty string. Convention earns its keep when the inspector has dozens of events to render:
+
+- **Use kebab-case verbs for events**: `new-message`, `cart-checked-out`, `auth-token-refreshed`. Events are *things that happened*, not commands.
+- **Prefix with a domain** when you have one: `chat:new-message`, `cart:checked-out`, `auth:token-refreshed`. Colons / slashes / dots are all legal in the name.
+- **Don't mix tenses**. Pick past for "fact" events (`message-received`) or imperative for "intent" events (`send-message`) — be consistent inside a domain.
+- **Reserve verbs you can't undo for actions**, not events. `delete-user` as an event is a fact; `delete-user` as an action is a command — they should not share a name.
+
+A pragmatic shortcut: read the event name back as "**when** `<name>` …". `when chat:new-message` reads naturally; `when sendMessage` doesn't.
+
+## Inspector view
+
+Every fire produces one inspector entry per matching trigger. The DEV inspector labels each entry with `triggery/<trigger-id>/fire`, the event name, payload, executed actions and snapshot keys read by the handler. Hooked into the Redux DevTools via `@triggery/devtools-redux`, this is what your timeline looks like:
+
+```text
+triggery/message-received/fire     { eventName: 'new-message',    payload: { author: 'Alice' … }, status: 'fired' }
+triggery/analytics:new-message/fire{ eventName: 'new-message',    payload: { … },                 status: 'fired' }
+triggery/on-sign-in-fanout/fire    { eventName: 'user:signed-in', cascadeDepth: 0,                status: 'fired' }
+triggery/preload-inbox/fire        { eventName: 'preload-inbox',  cascadeDepth: 1,                status: 'fired' }
+```
+
+You can render this in-app with `useInspectHistory()` from `@triggery/react` — see [Inspector](/guide/advanced/inspector/).
+
+## Common patterns
+
+**Event = past-tense fact.** Don't think "I want to play a sound". Think "a new message arrived" — then write a trigger that plays a sound when that happens. The trigger composes; the fire site stays innocent of presentation choices.
+
+**One emitter per producer.** Cache the emitter in a variable, pass it to `useEffect` deps, register it with `socket.on`. Don't re-create the emitter inline on every render — thanks to the stable identity it's the same call either way, but the readability is better.
+
+**Don't fire from a render body.** Same rule as `setState`: side effects belong in effects, callbacks, or event handlers. The library doesn't enforce it, but firing in render leads to render loops you'll diagnose for an hour.
+
+<CardGrid>
+  <LinkCard
+    title="Conditions"
+    description="The other side of the handler ctx — pull-only snapshots read at fire time."
+    href="/guide/essentials/conditions/"
+  />
+  <LinkCard
+    title="Handlers"
+    description="The handler context (event, conditions, actions, check, signal, meta) in detail."
+    href="/guide/essentials/handlers/"
+  />
+  <LinkCard
+    title="Cascade"
+    description="Cross-trigger fanout, parentRunId, depth limits, cycle detection."
+    href="/guide/architecture/cascade/"
+  />
+  <LinkCard
+    title="Inspector"
+    description="The per-run ring buffer that powers devtools and useInspectHistory."
+    href="/guide/advanced/inspector/"
+  />
+</CardGrid>

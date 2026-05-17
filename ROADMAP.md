@@ -74,17 +74,26 @@ to ship codemods for any breaking change.
 - `@triggery/devtools-bridge` — page-side bridge for external inspectors.
 - Chrome DevTools extension (load unpacked).
 
+### Documentation
+- [Docs site](https://triggeryjs.github.io) — Astro Starlight under
+  `apps/docs/`, deployed on GitHub Pages via `.github/workflows/docs.yml`.
+- Landing, Guide (30 pages: Essentials, Async, Architecture, Advanced,
+  TypeScript, Testing, SSR), Recipes (8 React + Solid/Vue mirrors of the
+  canonical scenarios), API reference (every public symbol across the 21
+  `@triggery/*` packages), Packages catalogue, Migration cookbooks
+  (`useEffect`, RTK listenerMiddleware, Redux Saga, redux-observable,
+  mitt/nanoevents) plus comparisons vs XState / Effector / RxJS / MobX,
+  Ecosystem index, Contributing handbook.
+- Internationalisation scaffolding for 13 locales (en root, zh-CN, ja, uk,
+  fr, ko, pt, bn, it, fa, ru, cs, zh-TW, pl) — translations will be filled
+  in incrementally.
+
 ---
 
 ## In progress — towards 1.0
 
 These are the gating items for cutting the 1.0 release.
 
-- **Documentation site** (Astro Starlight at `triggery.dev`).
-  - Getting Started, API reference for every package, guides
-    (anti-spaghetti, cascade, scope, async/cancellation, testing).
-  - Five canonical examples: notifications, modals, onboarding,
-    analytics pipeline, realtime WebSocket sync.
 - **REPL** at `play.triggery.dev` — paste a trigger, fire events, see
   inspector output. Shareable URL.
 - **`migrate-from-saga` codemod** for `@triggery/codemod` — the
@@ -128,7 +137,8 @@ These items are scoped but not started.
 | 0.1.0 | First public release with core + react + adapters | Pending — gated on docs |
 | 0.2.0 | Solid + Vue bindings | **Shipped** |
 | 0.3.0 | Inspector opt-out + perf Tier 1 optimisations | **Shipped** |
-| 0.4.0 | Docs site v1 + REPL stub | Planned |
+| 0.4.0 | Docs site v1 | **Shipped** |
+| 0.4.1 | REPL stub at `play.triggery.dev` | Planned |
 | 0.5.0 | `@triggery/eslint-plugin` + `@triggery/codemod` + `@triggery/cli` + starters | **Shipped** |
 | 0.9.0 | RC — feature freeze + community testing window | Planned |
 | 1.0.0 | Stable | Planned |

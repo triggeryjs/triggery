@@ -1,0 +1,69 @@
+---
+title: "@triggery/devtools-redux"
+description: "Redux DevTools bridge for Triggery — middleware streaming runtime events into the Redux DevTools browser extension."
+sidebar:
+  order: 16
+  badge:
+    text: Tier 3
+    variant: tip
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Middleware that streams [Triggery](https://github.com/triggeryjs/triggery) runtime events into the [Redux DevTools browser extension](https://github.com/reduxjs/redux-devtools/tree/main/extension) — no Redux required. Every `fire`, `skip`, `action-start`, `action-end`, `error`, and `cascade` event shows up as an action in the DevTools panel, with a growing run history as "state".
+
+[![npm](https://img.shields.io/npm/v/@triggery/devtools-redux?style=flat-square)](https://www.npmjs.com/package/@triggery/devtools-redux)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/devtools-redux?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/devtools-redux)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/devtools-redux" dev />
+
+Peer deps: `@triggery/core`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| `reduxDevtoolsMiddleware(options?)` | Middleware factory. Pass to `createRuntime({ middleware: [...] })`. |
+| `DevtoolsReduxOptions` | TS type for the options bag. |
+
+Options:
+
+- `name` — Display name in the DevTools "Inspector → Stores" dropdown.
+- `historyLimit` — How many runs to keep as virtual "state" (default 100).
+
+## Quick example
+
+```ts
+import { createRuntime } from '@triggery/core';
+import { reduxDevtoolsMiddleware } from '@triggery/devtools-redux';
+
+const runtime = createRuntime({
+  middleware: import.meta.env.DEV
+    ? [reduxDevtoolsMiddleware({ name: 'My App', historyLimit: 200 })]
+    : [],
+});
+```
+
+If the Redux DevTools extension isn't installed (production builds, Node, browsers without the extension), the middleware degrades to a quiet no-op.
+
+<Aside type="tip">
+  Pair with [`@triggery/eslint-plugin`](/packages/eslint-plugin/) to catch issues at lint time, and [`@triggery/devtools-panel`](/packages/devtools-panel/) for an in-app inspector that lives alongside the extension.
+</Aside>
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="The runtime this middleware attaches to." href="/packages/core/" />
+  <LinkCard title="@triggery/devtools-panel" description="In-app inspector React components." href="/packages/devtools-panel/" />
+  <LinkCard title="@triggery/devtools-bridge" description="Page-side bridge for external inspectors." href="/packages/devtools-bridge/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/devtools-redux)
+- [npm](https://www.npmjs.com/package/@triggery/devtools-redux)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/devtools-redux/CHANGELOG.md)

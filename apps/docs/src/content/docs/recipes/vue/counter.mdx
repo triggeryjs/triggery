@@ -1,0 +1,65 @@
+---
+title: Counter
+description: "The simplest possible Triggery recipe in Vue 3 — one event, one action, one component."
+sidebar:
+  order: 1
+---
+
+import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Same counter as the [React](/recipes/react/counter/) and [Solid](/recipes/solid/counter/) versions. The trigger file is identical; only the component changes.
+
+## The trigger
+
+```ts title="src/triggers/counter.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const counterTrigger = createTrigger<{
+  events:  { increment: void; decrement: void };
+  actions: { adjust: number };
+}>({
+  id: 'counter',
+  events: ['increment', 'decrement'],
+  handler({ event, actions }) {
+    actions.adjust?.(event.name === 'increment' ? 1 : -1);
+  },
+});
+```
+
+## The component
+
+```vue title="src/Counter.vue"
+<script setup lang="ts">
+import { useAction, useEvent } from '@triggery/vue';
+import { ref } from 'vue';
+import { counterTrigger } from './triggers/counter.trigger';
+
+const count = ref(0);
+
+const inc = useEvent(counterTrigger, 'increment');
+const dec = useEvent(counterTrigger, 'decrement');
+
+useAction(counterTrigger, 'adjust', delta => {
+  count.value += delta;
+});
+</script>
+
+<template>
+  <div>
+    <button @click="dec()">−</button>
+    <output>{{ count }}</output>
+    <button @click="inc()">+</button>
+  </div>
+</template>
+```
+
+The Vue binding uses `provide`/`inject` for the runtime and `onScopeDispose` for cleanup — same lifecycle guarantees as React's `useEffect` cleanup.
+
+## Related
+
+<CardGrid>
+  <LinkCard title="React version" href="/recipes/react/counter/" description="The exact same trigger, React hooks." />
+  <LinkCard title="Solid version" href="/recipes/solid/counter/" description="With createSignal." />
+  <LinkCard title="Notification pipeline (Vue)" href="/recipes/vue/notification-pipeline/" description="The full multi-component scenario." />
+  <LinkCard title="@triggery/vue package" href="/packages/vue/" description="Hook reference." />
+</CardGrid>

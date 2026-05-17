@@ -1,0 +1,247 @@
+---
+title: "Analytics fan-out"
+description: "Fire one ui-action event per interaction; let one feature-flag-gated trigger fan out to Segment, Amplitude or GA4 — without touching the producers."
+sidebar:
+  order: 9
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+The analytics anti-pattern: every button and every form imports a `track(...)` helper, which imports the Segment SDK, which imports Amplitude, which is conditional on a feature flag — and the moment you want to swap providers, half your codebase changes. Triggery flips it: components fire a generic `ui:event`, a single trigger routes it to the right destination, and swapping providers is a one-file change.
+
+<StackBlitzButton path="examples/vite-react-analytics" label="Open in StackBlitz" />
+
+## Scenario
+
+1. **Every interesting UI action fires `ui:event`** with `{ name, props }`.
+2. **One trigger** decides where the event goes — Segment, Amplitude, GA4, or all three — based on feature flags read from a condition.
+3. **Three reactors** own the SDKs. They never know what events exist, they only know how to forward an event to their own destination.
+4. **Switching providers** is a config flip, not a refactor.
+
+## File layout
+
+<FileTree>
+- src/
+  - triggers/
+    - **analytics.trigger.ts** routing
+  - features/
+    - analytics/
+      - SegmentReactor.tsx
+      - AmplitudeReactor.tsx
+      - Ga4Reactor.tsx
+      - FlagsProvider.tsx provider for destinations
+    - dashboard/
+      - DashboardButton.tsx producer (just `fireUiEvent`)
+</FileTree>
+
+## 1. The trigger
+
+```ts title="src/triggers/analytics.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export type UiEvent = {
+  name: string;
+  props?: Readonly<Record<string, unknown>>;
+};
+
+export type Destinations = {
+  segment:   boolean;
+  amplitude: boolean;
+  ga4:       boolean;
+};
+
+export const analyticsTrigger = createTrigger<{
+  events: {
+    'ui:event': UiEvent;
+  };
+  conditions: {
+    destinations: Destinations;
+  };
+  actions: {
+    sendToSegment:   UiEvent;
+    sendToAmplitude: UiEvent;
+    sendToGa4:       UiEvent;
+  };
+}>({
+  id: 'analytics-fan-out',
+  events: ['ui:event'],
+  required: ['destinations'],
+  handler({ event, check, actions }) {
+    if (check.is('destinations', d => d.segment))   actions.sendToSegment?.(event.payload);
+    if (check.is('destinations', d => d.amplitude)) actions.sendToAmplitude?.(event.payload);
+    if (check.is('destinations', d => d.ga4))       actions.sendToGa4?.(event.payload);
+  },
+});
+```
+
+The trigger does *nothing* but route. Adding a fourth destination is one schema entry, one `check.is`, and one new reactor file — no producer changes.
+
+## 2. Producers
+
+A button is now just a button. Compare with the old `import { track } from './analytics'` style — the producer has no idea analytics exist beyond firing a generic event.
+
+```tsx title="src/features/dashboard/DashboardButton.tsx"
+import { useEvent } from '@triggery/react';
+import { analyticsTrigger } from '../../triggers/analytics.trigger';
+
+export function DashboardButton() {
+  const fireUiEvent = useEvent(analyticsTrigger, 'ui:event');
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        fireUiEvent({ name: 'dashboard:cta-clicked', props: { variant: 'hero' } });
+        // …business logic of the actual click here
+      }}
+    >
+      Try it
+    </button>
+  );
+}
+```
+
+<Aside type="tip">
+Want to convert an existing app *gradually*? Build a thin helper that wraps `fireUiEvent` with the existing `track(name, props)` signature. Callers don't change — they just pick up the routing.
+</Aside>
+
+## 3. The flag provider
+
+A single condition exposes which destinations are on. You can wire this to LaunchDarkly, your own flag service, a `localStorage` toggle, anything — the trigger doesn't care.
+
+```tsx title="src/features/analytics/FlagsProvider.tsx"
+import { useCondition } from '@triggery/react';
+import { analyticsTrigger, type Destinations } from '../../triggers/analytics.trigger';
+
+export function AnalyticsFlagsProvider({
+  destinations,
+  children,
+}: {
+  destinations: Destinations;
+  children: React.ReactNode;
+}) {
+  useCondition(analyticsTrigger, 'destinations', () => destinations, [destinations]);
+  return <>{children}</>;
+}
+```
+
+## 4. The reactors
+
+Three components — each one owns exactly one SDK. The runtime calls the reactor only when the trigger told it to.
+
+```tsx title="src/features/analytics/SegmentReactor.tsx"
+import { useAction } from '@triggery/react';
+import { analyticsTrigger } from '../../triggers/analytics.trigger';
+import { segment } from '../../lib/analytics-segment';
+
+export function SegmentReactor() {
+  useAction(analyticsTrigger, 'sendToSegment', ({ name, props }) => {
+    segment.track(name, props ?? {});
+  });
+  return null;
+}
+```
+
+```tsx title="src/features/analytics/AmplitudeReactor.tsx"
+import { useAction } from '@triggery/react';
+import { amplitude } from '../../lib/analytics-amplitude';
+import { analyticsTrigger } from '../../triggers/analytics.trigger';
+
+export function AmplitudeReactor() {
+  useAction(analyticsTrigger, 'sendToAmplitude', ({ name, props }) => {
+    amplitude.track(name, props as Record<string, unknown>);
+  });
+  return null;
+}
+```
+
+```tsx title="src/features/analytics/Ga4Reactor.tsx"
+import { useAction } from '@triggery/react';
+import { analyticsTrigger } from '../../triggers/analytics.trigger';
+
+declare global { interface Window { gtag?: (...args: unknown[]) => void } }
+
+export function Ga4Reactor() {
+  useAction(analyticsTrigger, 'sendToGa4', ({ name, props }) => {
+    window.gtag?.('event', name, props ?? {});
+  });
+  return null;
+}
+```
+
+## 5. Wire it up
+
+```tsx title="src/App.tsx"
+import { useState } from 'react';
+import { AnalyticsFlagsProvider } from './features/analytics/FlagsProvider';
+import { AmplitudeReactor } from './features/analytics/AmplitudeReactor';
+import { Ga4Reactor } from './features/analytics/Ga4Reactor';
+import { SegmentReactor } from './features/analytics/SegmentReactor';
+import { DashboardButton } from './features/dashboard/DashboardButton';
+
+export function App() {
+  const [destinations] = useState({ segment: true, amplitude: false, ga4: true });
+
+  return (
+    <AnalyticsFlagsProvider destinations={destinations}>
+      <SegmentReactor />
+      <AmplitudeReactor />
+      <Ga4Reactor />
+      <DashboardButton />
+    </AnalyticsFlagsProvider>
+  );
+}
+```
+
+## Scheduling
+
+Analytics calls are typically *not* on the critical path of a click — you'd like them off the main thread, but you don't want them to delay rendering either. Triggery uses a microtask scheduler by default, which is the right answer here: the click handler returns synchronously, React re-renders, *then* the trigger runs.
+
+```ts
+export const analyticsTrigger = createTrigger<{ /* …schema… */ }>({
+  id: 'analytics-fan-out',
+  schedule: 'microtask',   // default — explicit for clarity
+  // ...
+});
+```
+
+<Aside type="note" title="Schedulers in Triggery v1">
+The runtime ships two schedulers — `'microtask'` (default) and `'sync'`. An `'idle'` scheduler that defers dispatch via `requestIdleCallback` is on the [post-1.0 roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) and would suit this analytics fan-out. With `'microtask'` the batching is already good enough for most apps.
+</Aside>
+
+## Test it
+
+```ts title="src/triggers/analytics.trigger.test.ts"
+import { createTestRuntime, mockAction, mockCondition } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+import { analyticsTrigger } from './analytics.trigger';
+
+describe('analytics-fan-out', () => {
+  it('routes to enabled destinations only', async () => {
+    const rt = createTestRuntime({ triggers: [analyticsTrigger] });
+    const sendToSegment   = vi.fn();
+    const sendToAmplitude = vi.fn();
+    const sendToGa4       = vi.fn();
+    mockCondition(rt, analyticsTrigger, 'destinations', {
+      segment: true, amplitude: false, ga4: true,
+    });
+    mockAction(rt, analyticsTrigger, 'sendToSegment',   sendToSegment);
+    mockAction(rt, analyticsTrigger, 'sendToAmplitude', sendToAmplitude);
+    mockAction(rt, analyticsTrigger, 'sendToGa4',       sendToGa4);
+
+    await rt.fire('ui:event', { name: 'cta-clicked', props: { variant: 'hero' } });
+
+    expect(sendToSegment).toHaveBeenCalledOnce();
+    expect(sendToGa4).toHaveBeenCalledOnce();
+    expect(sendToAmplitude).not.toHaveBeenCalled();
+  });
+});
+```
+
+## Variations / Related
+
+<CardGrid>
+  <LinkCard title="Anti-spaghetti" href="/guide/architecture/anti-spaghetti/" description="Why a generic ui:event scales better than typed track helpers." />
+  <LinkCard title="useEvent" href="/api/react/use-event/" description="Hook reference." />
+</CardGrid>

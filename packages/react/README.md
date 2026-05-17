@@ -141,6 +141,10 @@ Read the latest snapshot of a trigger, or subscribe to the runtime's inspector r
 
 Returns `{ useFooEvent, useBarCondition, useBazAction }` named hooks derived from the trigger schema — purely for code readability in larger files.
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/react/](https://triggeryjs.github.io/packages/react/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer — the runtime this binding wraps.

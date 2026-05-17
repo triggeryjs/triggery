@@ -1,0 +1,89 @@
+---
+title: "@triggery/vite"
+description: "Vite-плагин для Triggery — авто-импорт всех *.trigger.ts через виртуальный модуль с HMR. Framework-agnostic."
+sidebar:
+  order: 6
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Плагин [Vite](https://vitejs.dev), который автоматически находит каждый `*.trigger.ts` в проекте и регистрирует его при старте приложения. Один импорт `virtual:triggery-registry` в точке входа — и все триггеры активны, без ручной развязки импортов. С поддержкой HMR: правка триггера перезапускает `createTrigger(...)`, добавление или переименование файлов инвалидирует виртуальный модуль.
+
+[![npm](https://img.shields.io/npm/v/@triggery/vite?style=flat-square)](https://www.npmjs.com/package/@triggery/vite)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/vite?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/vite)
+
+## Установка
+
+<PackageManagers pkg="@triggery/vite" dev />
+
+Peer-зависимости: `vite ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `triggery(options?)` (default) | Vite-плагин. Возвращает `Plugin`, который добавляется в массив `plugins`. |
+| `virtual:triggery-registry` | Виртуальный модуль с побочным эффектом — импортирует все подходящие файлы. |
+
+## Быстрый пример
+
+```ts title="vite.config.ts"
+import { defineConfig } from 'vite';
+import triggery from '@triggery/vite';
+
+export default defineConfig({
+  plugins: [triggery({ glob: 'src/**/*.trigger.ts' })],
+});
+```
+
+```ts title="src/main.tsx"
+import 'virtual:triggery-registry';
+// ...rest of your bootstrap
+```
+
+Это вся настройка. Каждый файл, соответствующий glob-паттерну, автоматически импортируется — и его top-level вызов `createTrigger(...)` регистрируется в дефолтном рантайме.
+
+## Опции
+
+| Опция | По умолчанию | Описание |
+|---|---|---|
+| `glob` | `'src/**/*.trigger.{ts,tsx,js,jsx}'` | Один паттерн или массив. Всё, что принимает `tinyglobby`. |
+
+## HMR
+
+- Правка существующего файла триггера просто перезапускает его `createTrigger(...)` — в рантайме срабатывает правило «last-mount-wins» и заменяет старую регистрацию. В коде приложения никаких специальных действий не нужно.
+- Добавление / удаление / переименование файла триггера инвалидирует виртуальный модуль, чтобы список импортов перестроился на следующем запросе.
+
+<Aside type="tip">
+  Когда используешь `@triggery/vite` вместе с `@triggery/react` (или `solid`/`vue`), держи триггеры в файлах с суффиксом `*.trigger.ts`. Соглашение окупается — IDE-поиск, этот плагин и CLI `triggery graph` опираются на один и тот же суффикс.
+</Aside>
+
+## Декларация типов
+
+Добавь одну ambient-декларацию, чтобы TypeScript знал о виртуальном модуле:
+
+```ts title="src/vite-env.d.ts"
+/// <reference types="vite/client" />
+declare module 'virtual:triggery-registry';
+```
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Рантайм, к которому подключаются зарегистрированные триггеры." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="Самое частое сочетание — Vite + React." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/solid" description="В паре с vite-plugin-solid." href="/ru/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="В паре с @vitejs/plugin-vue." href="/ru/packages/vue/" />
+  <LinkCard title="@triggery/cli" description="triggery graph читает те же *.trigger.ts." href="/ru/packages/cli/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/vite)
+- [npm](https://www.npmjs.com/package/@triggery/vite)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/vite/CHANGELOG.md)

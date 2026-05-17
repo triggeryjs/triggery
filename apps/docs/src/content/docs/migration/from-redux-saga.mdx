@@ -1,0 +1,140 @@
+---
+title: "From Redux Saga"
+description: "Map watcher sagas, takeLatest/takeEvery, race/all and put/select to Triggery handlers."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Sagas were the answer to "Redux thunks don't compose for complex flows" — generator functions that orchestrate effects through a runtime. Triggers replace the orchestration layer; the rest of your Redux store can stay where it is.
+
+There is no shipped codemod yet. `migrate-from-saga` is on the [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) for 1.0 — until then this page is the manual conversion guide.
+
+## Mental model mapping
+
+| redux-saga | Triggery |
+|---|---|
+| `takeLatest(type, worker)` | `concurrency: 'take-latest'` (default) |
+| `takeEvery(type, worker)` | `concurrency: 'take-every'` |
+| `takeLeading(type, worker)` | `concurrency: 'take-first'` |
+| `throttle(ms, type, worker)` | `actions.throttle(ms).foo()` for outputs, or external throttling |
+| `debounce(ms, type, worker)` | `actions.debounce(ms).foo()` |
+| `function* watcher() { yield takeLatest(…) }` | `createTrigger({ events: [type], concurrency, handler })` |
+| `yield put(action)` | `actions.someAction?.(payload)` |
+| `yield select(selector)` | `conditions.someName` — registered with `useReduxCondition` |
+| `yield call(api, …)` | Just `await api(…)` in an `async handler` |
+| `yield race({ task, timeout })` | `Promise.race`, with `signal` cooperating in the abort |
+| `yield all([…])` | `Promise.all(…)` inside the handler |
+| `cancel(task)` | Provided automatically under `take-latest` — `signal.aborted` flips |
+
+## Pattern 1 — watcher with takeLatest
+
+```ts title="Before"
+function* loadDetailsSaga(action) {
+  const settings = yield select(state => state.settings);
+  if (!settings.notifications) return;
+  const data = yield call(api.fetchDetails, action.payload.id);
+  yield put(detailsLoaded(data));
+}
+function* rootSaga() {
+  yield takeLatest('chat/openConversation', loadDetailsSaga);
+}
+```
+
+```ts title="After"
+export const detailsTrigger = createTrigger<{
+  events:     { 'chat/openConversation': { id: string } };
+  conditions: { settings: Settings };
+  actions:    { storeDetails: Details };
+}>({
+  id: 'details-loader',
+  events: ['chat/openConversation'],
+  required: ['settings'],
+  concurrency: 'take-latest',        // default; here for clarity
+  async handler({ event, signal, check, actions }) {
+    if (!check.is('settings', s => s.notifications)) return;
+    const data = await api.fetchDetails(event.payload.id, { signal });
+    if (signal.aborted) return;
+    actions.storeDetails?.(data);
+  },
+});
+```
+
+`yield select` becomes a condition; `yield put` becomes an action; the implicit cancellation of `takeLatest` becomes the explicit `signal` — but with the same default semantics.
+
+## Pattern 2 — takeEvery vs take-every
+
+```ts title="Before"
+yield takeEvery('analytics/track', function* (action) {
+  yield call(analytics.send, action.payload);
+});
+```
+
+```ts title="After"
+createTrigger<{ events: { 'analytics/track': Event } }>({
+  id: 'analytics',
+  events: ['analytics/track'],
+  concurrency: 'take-every',
+  async handler({ event, signal }) {
+    await analytics.send(event.payload, { signal });
+  },
+});
+```
+
+`take-every` runs concurrently, like `takeEvery`. None of the runs aborts the others.
+
+## Pattern 3 — race / all
+
+`race` and `all` have no direct Triggery primitive — you write them in the handler with standard `Promise.race` / `Promise.all`. The `signal` is the cancellation bus for both:
+
+```ts
+async handler({ event, signal, actions }) {
+  const result = await Promise.race([
+    api.fetchSlow(event.payload, { signal }),
+    new Promise<'timeout'>(r => setTimeout(() => r('timeout'), 5000)),
+  ]);
+  if (signal.aborted) return;
+  if (result === 'timeout') actions.showError?.('timed out');
+  else                      actions.storeResult?.(result);
+}
+```
+
+## Pattern 4 — channel / event emitter sagas
+
+Sagas that wrap a non-Redux event source (WebSocket, custom emitter) via `eventChannel` map cleanly to triggers + a producer adapter:
+
+```ts title="Before (sketch)"
+function* watchSocket() {
+  const channel = yield call(createSocketChannel, socket);
+  while (true) {
+    const msg = yield take(channel);
+    yield call(handle, msg);
+  }
+}
+```
+
+```ts title="After"
+// in a component:
+const fireMessage = useEvent(messageTrigger, 'new-message');
+useSocketIoEvent(socket, 'new-message', fireMessage);
+```
+
+`@triggery/socket` removes the channel boilerplate.
+
+## When you might keep sagas
+
+Generators are still the cleanest way to express **long-lived multi-step flows with explicit cancellation points** (`yield call`, `yield take`, `yield cancel`). If your app has a saga that resembles a finite-state machine, consider moving the FSM to XState and triggering it from a Triggery handler — see [the XState comparison](/migration/comparison/).
+
+## Codemod status
+
+There is no `migrate-from-saga` codemod yet — sagas are migrated by hand using the mapping above. The [`extract-trigger`](/api/codemod/extract-trigger/) and [`migrate-from-listener-middleware`](/api/codemod/migrate-from-listener-middleware/) codemods that ship today cover the `useEffect` and RTK `listenerMiddleware` paths. Saga support is tracked on the [GitHub Project board](https://github.com/orgs/triggeryjs/projects).
+
+Even when the codemod lands it will only touch the simple `takeLatest` / `takeEvery` / `takeLeading` watcher shapes — generators with multiple `yield take` calls always need human review.
+
+<CardGrid>
+  <LinkCard title="From redux-observable" description="Epics → triggers." href="/migration/from-redux-observable/" />
+  <LinkCard title="Concurrency strategies" description="take-latest, take-every, queue, exhaust." href="/guide/async/concurrency/" />
+  <LinkCard title="@triggery/redux" description="useReduxCondition adapter." href="/packages/redux/" />
+  <LinkCard title="Cancellation guide" description="signal in async handlers." href="/guide/async/cancellation/" />
+</CardGrid>

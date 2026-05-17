@@ -62,6 +62,10 @@ useReatomCondition<V, S, K>(
 
 Works with any callable Reatom primitive — atoms, computeds, derived values.
 
+## Documentation
+
+Full documentation, recipes and API reference at [https://triggeryjs.github.io/packages/reatom/](https://triggeryjs.github.io/packages/reatom/).
+
 ## Related packages
 
 - [`@triggery/core`](https://www.npmjs.com/package/@triggery/core) — Required peer.

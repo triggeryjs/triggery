@@ -110,6 +110,12 @@ Six files, one scenario, no prop drilling, no `useEffect` chains, no central thu
 pnpm add @triggery/core @triggery/react
 ```
 
+## Documentation
+
+The full documentation site is at **<https://triggeryjs.github.io>** — Guide, Recipes (React / Solid / Vue), API reference for every public symbol, Packages catalogue, Migration cookbooks (from `useEffect`, RTK listenerMiddleware, Redux Saga, redux-observable), and the Contributing handbook.
+
+The site is built with Astro Starlight under [`apps/docs/`](./apps/docs) and deployed by GitHub Pages on every push to `main`.
+
 ## Try it in 5 seconds
 
 A runnable Vite + React example lives in [`examples/vite-react-counter`](./examples/vite-react-counter). Open it without cloning:

@@ -1,0 +1,503 @@
+---
+title: "Comparisons"
+description: "How Triggery relates to XState, Redux Saga, redux-observable, RxJS, Effector, MobX and plain useEffect."
+sidebar:
+  order: 6
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery overlaps with a lot of libraries in the React/Redux/RxJS galaxy. Most of those libraries are *better than Triggery* at what they were designed for. This page is the honest "pick X if…" guide.
+
+The lens is consistent throughout: each library has a primary problem it solves, and Triggery has a primary problem *it* solves. When the two problems differ, the libraries cohabit; when they overlap, one usually wins.
+
+## Side-by-side: the same five-line scenario
+
+The scenario is "when `messageReceived` fires, if `settings.notifications` is on, dispatch `showToast`". This is the canonical example throughout the docs.
+
+```ts title="Triggery"
+createTrigger<S>({
+  events: ['messageReceived'],
+  required: ['settings'],
+  handler: ({ event, check, actions }) => {
+    if (check.is('settings', s => s.notifications)) actions.showToast?.(event.payload);
+  },
+});
+```
+
+```ts title="useEffect"
+useEffect(() => {
+  if (msg && settings.notifications) showToast(msg);
+}, [msg, settings.notifications]);
+```
+
+```ts title="Redux Saga"
+function* watch() { yield takeLatest('messageReceived', function* (a) {
+  const s = yield select(x => x.settings);
+  if (s.notifications) yield put(showToast(a.payload));
+});}
+```
+
+```ts title="redux-observable"
+const epic = (action$, state$) => action$.pipe(
+  ofType('messageReceived'),
+  withLatestFrom(state$),
+  filter(([, s]) => s.settings.notifications),
+  map(([a]) => showToast(a.payload)),
+);
+```
+
+```ts title="XState (invoke)"
+on: { messageReceived: { actions: 'showToastIfEnabled', cond: 'notificationsOn' } }
+```
+
+```ts title="Effector"
+sample({ clock: messageReceived, source: $settings, filter: s => s.notifications, fn: (_, p) => p, target: showToast });
+```
+
+The differences below explain *which* of these you should pick.
+
+---
+
+## vs `useEffect`
+
+`useEffect` is React's general-purpose hook for "do this thing after render". It is the right tool for synchronising a component with the DOM, a ref, or a tightly scoped subscription. It is the wrong tool for orchestrating side effects across feature boundaries — but it gets used for that anyway, which is the original problem Triggery exists to fix.
+
+The mental-model gap is short: `useEffect` runs on every dep change, with cleanup; a Triggery handler runs on every event, with lazy condition reads. Once the rule involves more than one feature, the `useEffect` dep array becomes a leak — capture-by-value semantics, manual `useCallback`, "you forgot a dep" warnings — and the cleanup function leaks the other way.
+
+| | useEffect | Triggery |
+|---|---|---|
+| Mental model | "When deps change, re-run with cleanup" | "When this event fires, if these conditions hold, do these things" |
+| Owns state | No | No |
+| Owns side effects | Inline | Separated into reactors |
+| Cross-component coordination | Manual (context, prop drilling) | Built in |
+| Re-renders the host on change | Yes | No (conditions are pull-only) |
+| Tested without rendering | No | Yes |
+
+<details>
+<summary>Pick `useEffect` if…</summary>
+The side effect is tightly coupled to one component, won't grow, and the dep array is small. Triggers add a file and a runtime concept — for a three-line `useEffect` that's overhead, not insight.
+</details>
+
+<details>
+<summary>Pick Triggery if…</summary>
+The side effect crosses a feature boundary, the dep array is growing, or you want to read the rule top-to-bottom in one file. See [migrating from useEffect](/migration/from-useeffect/) for the patterns.
+</details>
+
+---
+
+## vs Redux Saga
+
+Sagas are generator-based effects coordinators. They were a great answer to "how do I express a long-running cancelable async flow over the action stream" in 2016, and they're still good at it. They are not a great answer to "how do I express a scenario across three features" — for that they tend to grow into one big root saga that nobody touches.
+
+The big conceptual difference: a saga is a *generator that yields effects*, with the runtime sitting under it deciding what `call`/`put`/`select` mean. A trigger is a *plain function* that gets a pre-built context. Generators win at expressing long-lived multi-step flows ("take this, then take that, then race"). Plain functions win at the 90% of scenarios that are "one event, some guards, some outputs".
+
+| | Saga | Triggery |
+|---|---|---|
+| Mental model | Generator yields effects | Plain function reads ctx |
+| Multi-step long flows | Native (`yield take`, `yield race`) | Manual (`Promise.race`, explicit loops) |
+| Cancellation | `cancel(task)` / takeLatest implicit | `signal` + `take-latest` (default) |
+| State access | `yield select` | `conditions.foo` (lazy) |
+| Dispatch | `yield put` | `actions.foo?.(payload)` |
+| Reads as a spec | No — you read the saga top-to-bottom | Yes — the trigger file is the spec |
+| Test ergonomics | Mature (`redux-saga-test-plan`) | Pure function with mocks |
+
+<details>
+<summary>Pick Redux Saga if…</summary>
+You have long-lived flows with explicit `yield take`/`yield race` steps that resemble a state machine, and the team already knows generators.
+</details>
+
+<details>
+<summary>Pick Triggery if…</summary>
+Most of your "sagas" are one-event watchers (`takeLatest` + a small worker). The mechanical mapping is in [migrating from Redux Saga](/migration/from-redux-saga/) — until the dedicated codemod lands, you do this by hand. For the common shapes that takes one well-aimed sed pass.
+</details>
+
+---
+
+## vs redux-observable
+
+Epics are RxJS pipelines over the action stream. Where sagas use generators, epics use operators. The fit-for-purpose case is the same: long stream-shaped transformations.
+
+| | redux-observable | Triggery |
+|---|---|---|
+| Mental model | Action stream piped through operators | Plain function reacts to one event |
+| Per-event filtering | `ofType('x')` | `events: ['x']` (indexed) |
+| `switchMap` / `mergeMap` / `concatMap` / `exhaustMap` | Operator-level | `concurrency: 'take-latest' / 'take-every' / 'queue' / 'exhaust'` |
+| `combineLatest`, `withLatestFrom` | Stream-native | `conditions` (lazy pull) — `combineLatest` of >2 streams has no direct mapping |
+| Backpressure / buffering | Native operators | Not provided |
+| Bundle | RxJS is large (~30 kB gz) | Core is ~5 kB gz |
+
+<details>
+<summary>Pick redux-observable / RxJS if…</summary>
+You compose multi-source streams, need backpressure, or you already have a domain (animation, real-time signals) where streams are the natural model.
+</details>
+
+<details>
+<summary>Pick Triggery if…</summary>
+Most of your epics are "filter by type, async thing, dispatch result" — that's a trigger. See [migrating from redux-observable](/migration/from-redux-observable/).
+</details>
+
+---
+
+## vs RxJS
+
+This is the same point as redux-observable but framed without Redux. RxJS is a reactive primitives library; Triggery is a side-effect orchestrator. They solve adjacent problems and frequently cohabit in the same app.
+
+```ts title="RxJS-ish — stream"
+fromEvent(input, 'input').pipe(
+  debounceTime(300),
+  switchMap(q => from(searchApi(q))),
+).subscribe(setResults);
+```
+
+```ts title="Triggery — orchestration"
+createTrigger<{ events: { q: string }; actions: { runSearch: string } }>({
+  events: ['q'], required: [],
+  handler({ event, actions }) {
+    actions.debounce(300).runSearch?.(event.payload);
+  },
+});
+```
+
+The RxJS version composes the *data transformation* and emits results to a subscriber. The Triggery version *invokes a side effect* and lets a reactor decide what to do with it. If you mostly need transformation, RxJS wins. If you mostly need orchestration with cross-feature wiring, Triggery wins.
+
+<details>
+<summary>Pick RxJS if…</summary>
+You need rich stream composition (`combineLatest`, `switchMap`, `share`), backpressure, or you're inside a domain (audio, complex realtime) where streams beat scenarios.
+</details>
+
+<details>
+<summary>Pick Triggery if…</summary>
+You're mostly wiring "when X happens, if Y, do Z" across features. Triggery does that in fewer concepts and integrates with your existing store. They cohabit fine — a trigger handler can `.subscribe()` to an observable; an epic can `dispatch()` an action a trigger listens to.
+</details>
+
+---
+
+## vs XState
+
+XState is the right tool for finite-state-machine logic — a user navigates `idle → loading → success / error`, with legal transitions, guards and entry/exit actions. A statechart is the artefact that explains the *machine's identity over time*. Triggers describe *scenarios*: discrete cause-and-effect rules that don't carry persistent state.
+
+There is no contradiction. A trigger handler can `send()` to an XState service to advance a machine; an XState service can `dispatch` an action that a trigger reacts to. Picking between them is a question of "is the problem stateful or transactional?".
+
+| | XState | Triggery |
+|---|---|---|
+| Mental model | Statechart with explicit states and transitions | Event → conditions → actions, no states |
+| Identity over time | Yes — the machine *is* a thing | No — handler runs are ephemeral |
+| Guards | `cond:` predicates | `check.is` / handler `if`s |
+| Side effects | Actions, services (`invoke`) | `useAction` reactors |
+| Visualisation | World-class (statechart visualiser) | Trigger graph (`triggery graph`) — list/DOT, not a chart |
+| Test ergonomics | Model-based testing | Pure handler + mocks |
+
+<details>
+<summary>Pick XState if…</summary>
+The problem is a state machine. You have legal transitions, illegal transitions you want to reject, and the chart itself is the spec.
+</details>
+
+<details>
+<summary>Pick Triggery if…</summary>
+The problem is "thing happened, do something". Most app side effects are this — toasts, analytics, debounced saves, optimistic UI. Triggery doesn't replace XState; it sits next to it.
+</details>
+
+---
+
+## vs Effector
+
+Effector is a typed reactive library: stores, events, effects, with statically typed graphs and a tiny runtime. It overlaps with Triggery more than the others because both target the orchestration layer with a typed-first design. The difference is the *direction* of reactivity.
+
+Effector pushes: when an event hits a `$store`, every downstream `sample` / `combine` recomputes immediately. Triggery pulls: when an event fires, the handler asks for `conditions.x` exactly once. Effector excels at high-frequency derived state (counters, indicators, "this view always shows the current value of these five things"); Triggery excels at "rule that runs at fire time, no continuous derivation".
+
+| | Effector | Triggery |
+|---|---|---|
+| Mental model | Push graph of stores, events, effects | Pull-only handler reads ctx |
+| State ownership | Yes — `$store` lives in Effector | No — state stays in your store |
+| Sampling / combining | First-class (`sample`, `combine`) | Manual in handler |
+| Memoised derivations | First-class | Not provided (run the derivation in the host store) |
+| Bundle | ~10 kB gz | ~5 kB gz core, ~6 kB with bindings |
+| Cancellation | Per-effect | Per-handler `signal` + concurrency |
+
+<details>
+<summary>Pick Effector if…</summary>
+You're starting fresh, want store + orchestration in one library, and the derived-state patterns (`combine`, `sample`) fit your data shape.
+</details>
+
+<details>
+<summary>Pick Triggery if…</summary>
+You already use Zustand / Redux / Jotai / MobX / signals for state and want to add a side-effect layer that doesn't ask you to re-platform. Triggery's adapters wrap any of those as conditions in ~30 lines.
+</details>
+
+---
+
+## vs MobX
+
+MobX is fine-grained reactivity for *observable state*. Components subscribe automatically to whatever they read; mutations re-render exactly the right things. The problem MobX is excellent at (incremental UI from mutable state) is not the problem Triggery is for (running a rule at the moment an event fires).
+
+| | MobX | Triggery |
+|---|---|---|
+| Mental model | Observable state with auto-tracked reads | Event → conditions → actions |
+| Owns state | Yes | No |
+| Derivations | `computed` — incremental, memoised | Not provided |
+| Side effects | `reaction`, `autorun`, `when` | Handler + reactors |
+| Cross-feature coordination | Indirect (everyone reads the same observable) | Direct (trigger names the scenario) |
+| Tested without rendering | Yes (MobX core is framework-free) | Yes |
+
+`reaction` and `when` are the MobX primitives closest to Triggery. They run "when this expression becomes truthy" — same role as a guard inside a handler. If your app already has 200 lines of `reaction(...)` registrations sprinkled across stores, Triggery's `<one trigger file>` model is usually clearer.
+
+<details>
+<summary>Pick MobX if…</summary>
+You want a state library with auto-tracked derivations and your "scenarios" are mostly "this observable changed, recompute these". `reaction` is sufficient.
+</details>
+
+<details>
+<summary>Pick Triggery if…</summary>
+You want named scenarios, you want them in one file each, and you want the rule to be testable without setting up observables. The [`@triggery/mobx`](/packages/mobx/) adapter wraps MobX observables as conditions without re-rendering the host.
+</details>
+
+---
+
+## Practical scenarios — same problem, three tools
+
+The short snippets at the top of this page compare libraries on a one-liner scenario. Below are four realistic scenarios with full code. They are the ones Triggery is most consistently shorter / clearer on.
+
+### Scenario 1 — Debounced search with cancellation
+
+User types in a search box. Every keystroke fires a query. If a new query arrives while the previous one is in flight, the old one is aborted. Results land in a store regardless of which keystroke triggered them.
+
+```ts title="Triggery"
+export const searchTrigger = createTrigger<{
+  events:  { 'search-query': string };
+  actions: { setResults: SearchHit[] };
+}>({
+  id: 'search',
+  events: ['search-query'],
+  concurrency: 'take-latest',                  // 1) declare it
+  async handler({ event, actions, signal }) {  // 2) signal is plumbed in
+    const r = await fetch(`/api/search?q=${event.payload}`, { signal });
+    if (signal.aborted) return;
+    actions.setResults?.(await r.json());
+  },
+});
+// Producer:  const fire = useEvent(searchTrigger, 'search-query');
+// Reactor:   useAction(searchTrigger, 'setResults', setResults);
+// Anywhere:  <input onChange={e => fire(e.target.value)} />
+```
+
+```ts title="RxJS"
+fromEvent<InputEvent>(input, 'input').pipe(
+  map(e => (e.target as HTMLInputElement).value),
+  debounceTime(300),
+  switchMap(q => from(fetch(`/api/search?q=${q}`).then(r => r.json()))),
+).subscribe(setResults);
+// You also wire setResults to your store, the input ref, and handle teardown
+// when the component unmounts. cancellation: AbortSignal isn't built-in —
+// you build it with takeUntil(unmount$) or a custom abortable wrapper.
+```
+
+```ts title="Effector"
+const queryChanged   = createEvent<string>();
+const searchFx       = createEffect(async (q: string) => {
+  const r = await fetch(`/api/search?q=${q}`);
+  return r.json();
+});
+const $results       = createStore<SearchHit[]>([]).on(searchFx.doneData, (_, r) => r);
+
+sample({ clock: queryChanged, target: searchFx });
+// Debouncing: use patronum's `debounce` operator: debounce({ source: queryChanged, timeout: 300, target: searchFx });
+// Cancellation: searchFx aborts on every new call only if you use `abortable` from patronum
+// (Effector does NOT cancel previous effects by default — easy footgun.)
+```
+
+What stands out: **Triggery names the strategy in the config (`concurrency: 'take-latest'`) and the signal is wired automatically**. RxJS makes you compose operators by hand; Effector requires `patronum` and explicit abort wiring. One line versus several.
+
+---
+
+### Scenario 2 — Modal stack coordination
+
+Open a modal. Close any other modal first. When a modal closes, focus returns to the last trigger element. Closing the stack to zero clears the body scroll lock.
+
+```ts title="Triggery"
+export const modalTrigger = createTrigger<{
+  events: { 'modal:open': ModalSpec; 'modal:close': string };
+  conditions: { stack: ModalSpec[] };
+  actions: { setStack: ModalSpec[]; restoreFocus: HTMLElement | null; setScrollLock: boolean };
+}>({
+  id: 'modal-coordinator',
+  events: ['modal:open', 'modal:close'],
+  required: ['stack'],
+  handler({ event, conditions, actions }) {
+    const stack = conditions.stack ?? [];
+    if (event.name === 'modal:open') {
+      actions.setStack?.([...stack, event.payload]);
+      actions.setScrollLock?.(true);
+    } else {
+      const next = stack.filter(m => m.id !== event.payload);
+      actions.setStack?.(next);
+      actions.restoreFocus?.(stack[stack.length - 1]?.triggerEl ?? null);
+      if (next.length === 0) actions.setScrollLock?.(false);
+    }
+  },
+});
+```
+
+```ts title="Reatom"
+const stackAtom = atom<ModalSpec[]>([], 'stack');
+const openModal = action((ctx, m: ModalSpec) => {
+  stackAtom(ctx, s => [...s, m]);
+  scrollLockAtom(ctx, true);
+}, 'openModal');
+const closeModal = action((ctx, id: string) => {
+  const stack = ctx.get(stackAtom);
+  const next = stack.filter(m => m.id !== id);
+  stackAtom(ctx, next);
+  // Restore focus from the closed modal's triggerEl — but you have to keep a
+  // separate map of id → triggerEl somewhere because the closed modal is gone.
+  // And don't forget the scroll-lock toggle.
+  if (next.length === 0) scrollLockAtom(ctx, false);
+});
+// All four side-effect levers (stack, scroll lock, focus, the modal map) end up
+// either inside this action or spread across actions on neighbouring atoms.
+```
+
+```ts title="Effector"
+const $stack        = createStore<ModalSpec[]>([]);
+const modalOpened   = createEvent<ModalSpec>();
+const modalClosed   = createEvent<string>();
+const scrollLock    = createEvent<boolean>();
+const focusRestored = createEvent<HTMLElement | null>();
+
+$stack.on(modalOpened, (s, m) => [...s, m]).on(modalClosed, (s, id) => s.filter(m => m.id !== id));
+sample({ clock: modalOpened, fn: () => true,  target: scrollLock });
+sample({
+  clock: modalClosed,
+  source: $stack,
+  fn: (s, id) => s.find(m => m.id === id)?.triggerEl ?? null,
+  target: focusRestored,
+});
+sample({ clock: modalClosed, source: $stack, filter: s => s.length === 0, fn: () => false, target: scrollLock });
+```
+
+The Triggery handler reads top-to-bottom as the rule. The Effector version is correct and elegant — but you need three `sample` calls to express what Triggery does with three lines of `if/else`. Reatom flattens into one action but loses the per-event branching that makes the modal coordinator easy to read.
+
+---
+
+### Scenario 3 — Cascading cleanup on logout
+
+User clicks logout. All cached queries are dropped, all open modals close, all in-flight uploads abort, the user is redirected to `/login`.
+
+```ts title="Triggery"
+export const logoutTrigger = createTrigger<{
+  events:  { 'auth:logout': void };
+  actions: { dropAllQueries: void; closeAllModals: void; abortAllUploads: void; navigate: string };
+}>({
+  id: 'auth-logout',
+  events: ['auth:logout'],
+  handler({ actions }) {
+    actions.abortAllUploads?.();
+    actions.dropAllQueries?.();
+    actions.closeAllModals?.();
+    actions.navigate?.('/login');
+  },
+});
+```
+
+```ts title="Redux Saga"
+function* logoutSaga() {
+  yield takeLatest('auth:logout', function* () {
+    yield call(abortAllUploads);
+    yield put(dropAllQueries());
+    yield put(closeAllModals());
+    yield put(push('/login'));
+  });
+}
+// Plus: rootSaga.fork(logoutSaga), all the imports for closeAllModals/dropAllQueries actions,
+// and you wire each to its slice's reducer separately.
+```
+
+```ts title="Effector"
+const logoutClicked   = createEvent();
+const allUploadsAborted = createEffect(abortAllUploads);
+sample({ clock: logoutClicked, target: allUploadsAborted });
+sample({ clock: logoutClicked, target: dropAllQueriesFx });
+sample({ clock: logoutClicked, target: closeAllModalsFx });
+sample({ clock: logoutClicked, fn: () => '/login', target: navigateFx });
+```
+
+The Triggery version is what most teams will recognise as the obvious answer. The Saga version is fine but uses a generator function and asks you to write the worker as a closure. The Effector version repeats `sample({ clock: logoutClicked, … })` four times — at three reactions this is acceptable; at ten it becomes its own thing to maintain.
+
+---
+
+### Scenario 4 — Dependent fetch (combineLatest-flavoured)
+
+When both `userId` and `period` are set, fetch the user's statistics for that period. If either changes, refetch with the latest of both. Take-latest cancellation.
+
+```ts title="Triggery"
+export const statsTrigger = createTrigger<{
+  events:     { 'period-changed': string; 'user-changed': string };
+  conditions: { userId: string | null; period: string | null };
+  required:   ['userId', 'period'];
+  actions:    { setStats: Stats };
+}>({
+  id: 'fetch-stats',
+  events: ['period-changed', 'user-changed'],
+  required: ['userId', 'period'],
+  concurrency: 'take-latest',
+  async handler({ conditions, actions, signal }) {
+    if (!conditions.userId || !conditions.period) return;
+    const r = await fetch(`/api/users/${conditions.userId}/stats/${conditions.period}`, { signal });
+    if (signal.aborted) return;
+    actions.setStats?.(await r.json());
+  },
+});
+// Producers fire 'user-changed' / 'period-changed'; providers register `userId` and `period`
+// conditions. The required-gate makes sure nothing fetches until both are present.
+```
+
+```ts title="RxJS"
+combineLatest([userId$.pipe(distinctUntilChanged()), period$.pipe(distinctUntilChanged())])
+  .pipe(
+    filter(([u, p]) => Boolean(u) && Boolean(p)),
+    switchMap(([u, p]) => from(fetch(`/api/users/${u}/stats/${p}`).then(r => r.json()))),
+  )
+  .subscribe(setStats);
+```
+
+```ts title="Effector"
+const $userId = createStore<string | null>(null).on(userChanged, (_, id) => id);
+const $period = createStore<string | null>(null).on(periodChanged, (_, p) => p);
+const fetchStats = createEffect(({ u, p }: { u: string; p: string }) => fetch(`/api/users/${u}/stats/${p}`).then(r => r.json()));
+
+sample({
+  clock: [userChanged, periodChanged],
+  source: { u: $userId, p: $period },
+  filter: ({ u, p }) => Boolean(u) && Boolean(p),
+  fn: ({ u, p }) => ({ u: u!, p: p! }),
+  target: fetchStats,
+});
+```
+
+RxJS handles this with two operators and is arguably the cleanest if you already think in streams. Effector's `sample` covers it with a single declaration but you have to know `filter`/`fn` and trust the non-null branch. Triggery sits in between: the `required` gate is the filter, conditions are the latest values, take-latest cancels the previous fetch automatically.
+
+The DX win for Triggery: **the rule reads as English**. "When the user or period changes, if we have both, fetch and set." No new vocabulary; no operator chain to compose; no `sample` parameter that has four roles.
+
+---
+
+## How to mix Triggery with another library
+
+In practice you rarely pick one. The common pairings:
+
+| Pairing | What lives where |
+|---|---|
+| Redux + Triggery | Redux owns store + slices; triggers replace listenerMiddleware as the side-effect mechanism. `@triggery/redux` exposes selectors as conditions. |
+| Zustand + Triggery | Same — Zustand stores selectors as conditions via `@triggery/zustand`. |
+| RxJS + Triggery | RxJS handles stream composition; an `.subscribe(fireEvent)` bridges streams into triggers. |
+| XState + Triggery | XState owns finite-state machines; triggers handle ambient side effects and call `service.send(...)` from `useAction`. |
+| Effector + Triggery | Pick one as the orchestrator — they overlap too much to use both for the same role. Effector for stores + sample, Triggery elsewhere, or vice versa. |
+| MobX + Triggery | MobX owns observable state; `@triggery/mobx` wraps observables as conditions without tracking. |
+
+For each, the answer to *"which one names the scenario?"* tends to be **Triggery** — every other library is good at its primary thing, but none of them produce a single file that reads like a spec for "when X happens, if Y, do Z".
+
+<CardGrid>
+  <LinkCard title="From useEffect" description="The mechanical mapping." href="/migration/from-useeffect/" />
+  <LinkCard title="From Redux Saga" description="takeLatest / put / select." href="/migration/from-redux-saga/" />
+  <LinkCard title="From redux-observable" description="Epics → triggers." href="/migration/from-redux-observable/" />
+  <LinkCard title="Why Triggery" description="The problem this library exists to solve." href="/guide/why-triggery/" />
+</CardGrid>

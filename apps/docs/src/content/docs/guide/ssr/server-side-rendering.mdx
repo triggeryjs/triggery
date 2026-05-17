@@ -1,0 +1,243 @@
+---
+title: Server-side rendering
+description: "What Triggery does — and doesn't do — during SSR in V1, why hydration is safe by construction, and the patterns for streaming SSR with Next.js, Remix and SolidStart."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery is a **client-side orchestration runtime** in V1. That sentence is the whole policy, and it pays off in three places: there are no hydration mismatches, there's no double-firing on the server, and trigger modules import cleanly into a server bundle without throwing. The cost: server-side handler dispatch — actually running trigger logic during SSR — lives in V2 with `@triggery/server`.
+
+This page covers exactly what happens on the server in V1, why those choices were made, the patterns for streaming SSR (Next.js App Router, Remix, SolidStart), and the roadmap.
+
+## V1 behaviour at a glance
+
+| Surface | On the server | On the client |
+|---|---|---|
+| `createTrigger(config)` | Registers the trigger against the runtime. | Same. |
+| `createRuntime()` | Creates a runtime object (no DOM access). | Same. |
+| `useEvent(trigger, name)` | Returns a stable no-op function. `fire(payload)` is a silent no-op. | Returns the real emitter. |
+| `useCondition(trigger, name, getter, deps)` | Returns `undefined`. The getter is **not** invoked. | Registers in `useEffect`. |
+| `useAction(trigger, name, handler)` | Returns `undefined`. The handler is **not** registered. | Registers in `useEffect`. |
+| `runtime.fire(name, payload)` | Queues on the microtask scheduler. Handlers don't run if no `useAction` has registered (i.e. always, on the server). | Real dispatch. |
+| `runtime.fireSync(name, payload)` | Dispatches synchronously. With no action handlers registered, no side effects happen. | Real dispatch. |
+| `trigger.inspect()` | Returns `undefined` on the server (no run history). | Returns the latest snapshot. |
+| `useInspect` / `useInspectHistory` | Return `undefined` / `[]`. | Real values once the runtime fires. |
+
+The hooks don't crash on the server. They return safe defaults and **defer their real work to `useEffect`** — which is the lifecycle hook that does not run during SSR. That's the whole trick.
+
+## Why this design
+
+Three things would break if Triggery tried to run handlers on the server:
+
+1. **Hydration mismatches.** If a server render fires `'app:ready'` and a client render fires it too, the actions that ran on the server need to *not* run again, or run for the second time, or be deduplicated by run id — none of which has a satisfying answer in V1. Choosing "do nothing on the server" makes hydration trivially safe.
+2. **No `useEffect` on the server.** React (and Solid, and Vue) don't run effect callbacks during SSR. Triggery's hooks register in effects on purpose — that's where lifecycle is well-defined. Skipping the server side means a `useCondition` on the server doesn't register, doesn't read, doesn't cause a state change.
+3. **No DOM, no event sources.** A trigger's job is to react to events from the browser (clicks, WebSocket frames, intersection observers). The server has none of those.
+
+The combination is "the trigger module is inert on the server" — and that's exactly the contract.
+
+## What does work on the server
+
+Quite a lot, actually. Importing a trigger module, instantiating a runtime, calling `runtime.graph()` to extract metadata — all of these are pure work that doesn't depend on the DOM.
+
+```ts title="server.ts"
+import { createRuntime } from '@triggery/core';
+import { messageTrigger } from './triggers/message.trigger';
+
+const runtime = createRuntime();
+console.log(runtime.graph()); // valid: returns the static trigger metadata
+console.log(messageTrigger.id); // valid: returns 'message-received'
+```
+
+The runtime itself is a plain JS object — no DOM access, no `setTimeout` calls on construction, no `window` or `document` references. `createRuntime` is **idempotent across server renders**: each call creates a fresh runtime, with its own private inspector buffer.
+
+That's how server-rendered framework integrations (Next.js, Remix, SolidStart) wire a per-request runtime: build it inside the request handler, drop it when the response is sent.
+
+## Where hooks land on the server
+
+Each binding's hooks have the same shape on the server: they're either a stable noop or they short-circuit out of the registration path because the host framework hasn't reached the effect phase.
+
+```tsx title="@triggery/react — useCondition"
+export function useCondition(trigger, name, getter, deps = []) {
+  const runtime = useRuntime();
+  const scope = useScope();
+  const getterRef = useRef(getter);
+  getterRef.current = getter;
+  const stableGetter = useCallback(() => getterRef.current(), deps);
+
+  useEffect(() => {
+    // ← This block does not run during SSR. The `register / unregister` lifecycle
+    //    is therefore entirely client-side. On the server, the hook returns
+    //    `undefined`, no registration happens, no getter is called.
+    const token = runtime.registerCondition(trigger.id, name, stableGetter, { scope });
+    return () => token.unregister();
+  }, [runtime, trigger.id, name, stableGetter, scope]);
+}
+```
+
+`useEvent` returns a `useCallback`-wrapped emitter. On the server the emitter is still callable — but if your component code calls `fire(payload)` during render (don't), it dispatches into a runtime that has no registered action handlers (since `useAction` hasn't run its `useEffect`), so nothing happens. **Don't fire from render**, server or client — that's a normal React rule that Triggery doesn't bend.
+
+Solid and Vue have analogous behaviours:
+
+- **Solid** — `onCleanup` and the `registerCondition` call live inside the component's setup function. During SSR with `renderToString` from `solid-js/web`, Solid runs setup but treats reactive primitives as inert; the register path does run, but the runtime instance is request-scoped and disposed at the end of the request. No hydration data crosses over.
+- **Vue** — `onScopeDispose` and the registration happen inside `setup()`. Server-side, `setup` runs; the runtime sees the registration and immediately throws it away with the request. No persistent state.
+
+The React behaviour is the strictest of the three (effects don't run at all on the server), so it's the model we describe most carefully. The other two land in the same place by virtue of disposing the runtime per request.
+
+## Streaming SSR with Next.js (App Router)
+
+The pattern is: **mark trigger-bearing components `'use client'`** and let SSR render their static markup but defer trigger work to the client. The `TriggerRuntimeProvider` is itself a client component.
+
+```tsx title="src/components/triggery-root.tsx"
+'use client';
+
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { useState, type ReactNode } from 'react';
+
+export function TriggeryRoot({ children }: { children: ReactNode }) {
+  // Per-tab runtime, created lazily in the browser on first render.
+  const [runtime] = useState(() => createRuntime());
+  return <TriggerRuntimeProvider runtime={runtime}>{children}</TriggerRuntimeProvider>;
+}
+```
+
+```tsx title="src/app/layout.tsx — server component"
+import { TriggeryRoot } from '../components/triggery-root';
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <TriggeryRoot>{children}</TriggeryRoot>
+      </body>
+    </html>
+  );
+}
+```
+
+Then any component using `useEvent` / `useCondition` / `useAction` lives in a `'use client'` file. Server components further up the tree can compose them freely — Next will serialize the boundary and the client tree hydrates the runtime.
+
+<Aside type="caution">
+Don't import `@triggery/react` (or your `*.trigger.ts` files) from a server component that *also* uses server-only APIs (like `next/headers`). The package itself is server-safe, but mixing client-only hooks and server-only APIs in the same file confuses the bundler. Keep the trigger code on its own `'use client'` island.
+</Aside>
+
+See [React Server Components](/guide/ssr/react-server-components/) for the dedicated RSC walkthrough.
+
+## Remix and Tanstack Start
+
+Remix routes are full-React components — same model as Next's Pages Router. Wrap the root layout in a `<TriggerRuntimeProvider>`; trigger code runs in the browser only because the hooks register in `useEffect`.
+
+```tsx title="app/root.tsx (Remix)"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { useState } from 'react';
+import { Outlet } from '@remix-run/react';
+
+export default function App() {
+  const [runtime] = useState(() => createRuntime());
+  return (
+    <html lang="en">
+      <body>
+        <TriggerRuntimeProvider runtime={runtime}>
+          <Outlet />
+        </TriggerRuntimeProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+There's nothing Remix-specific to worry about — the SSR pass renders the static HTML, the client hydrates, `useEffect` callbacks run, conditions and actions register. Tanstack Start follows the same shape.
+
+## SolidStart
+
+SolidStart's SSR is similar in spirit but uses `renderToStream` from `solid-js/web`. The `TriggerRuntimeProvider` for Solid is a regular component that uses the context API, no extra ceremony. Mount it once at the root.
+
+```tsx title="src/entry-server.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/solid';
+import { App } from './App';
+
+export default function ServerEntry() {
+  // Per-request runtime — disposed when the response finishes.
+  const runtime = createRuntime();
+  return (
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  );
+}
+```
+
+Solid's SSR is more eager than React's about running setup functions, so the registrations do execute on the server — but because the runtime is per-request and never receives a `fire`, those registrations have no observable effect. The runtime is garbage-collected at the end of the request along with any intermediate state.
+
+## Hydration mismatch avoidance
+
+There's a single rule: **the markup rendered on the server must equal the markup rendered on the first client commit**. Triggery's hooks return the same default values on both sides:
+
+- `useEvent` returns the same `useCallback`-wrapped emitter shape — fires that happen during render are no-ops on both server and client (and you shouldn't fire from render anyway).
+- `useCondition` and `useAction` return `undefined` everywhere.
+- `useInspect(trigger)` returns `undefined` on the server *and* on the very first client commit (the runtime hasn't fired anything yet).
+- `useInspectHistory(limit)` returns an empty array on the server and on the first commit; the live tail starts after the first fire.
+
+If you build a debug panel that reads `useInspectHistory` and renders nothing when the list is empty, the server HTML and the first client HTML are identical — no mismatch.
+
+The one place to be careful: don't try to derive *visible* output from `trigger.inspect()` during the first render. The server saw no runs (returns `undefined`); the client also saw no runs at first render (also `undefined`). After the first effect commit + first fire, the client diverges from the server — but that's the normal post-hydration update path, not a mismatch.
+
+## What about fire-and-render scenarios?
+
+If you fire an event from `useEffect(() => fire('app:ready'), [])`, that effect runs **only on the client**. The server render is unaffected; the client commits, runs the effect, fires, the runtime dispatches on the microtask scheduler, reactors run. This is the normal "did mount" pattern and it works without ceremony.
+
+If you want to fire from a server-only context (e.g. a data-fetched server component) and have the reactor know about it on the client — V1 has no transport. You'd serialize the "to do" into the page (e.g. via a `dehydrate`-style hook) and re-fire it on the client. That's a recipe-level pattern, not a runtime feature.
+
+## Where the V2 server runtime fits in
+
+`@triggery/server` (V2, on the roadmap) addresses the question this page mostly sidesteps: **what if I want trigger logic to actually run on the server, with persistent timers, retries, and a transport to the browser?**
+
+In broad strokes, V2 introduces:
+
+- **A server runtime** with its own scheduler that survives the request — backed by Redis / Postgres / your queue of choice.
+- **A transport layer** that ships fires from one runtime to another (browser → server → other browsers, server → server within a cluster).
+- **Server-only action types** for talking to databases, queues, third-party APIs.
+- **An async-correlation primitive** that ties a server-scheduled fire back to the originating client run.
+
+None of that is in V1. V1's promise is narrower: a client-side coordination layer that doesn't get in your way when you SSR. V2 is a separate package, opt-in, additive — V1 trigger modules will continue to work unchanged.
+
+See the [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) for the current shape.
+
+## TL;DR — patterns by framework
+
+| Framework | Provider placement | Per-request runtime? |
+|---|---|---|
+| **Next.js (App Router)** | Inside a `'use client'` boundary near the root layout. | Yes — `useState(() => createRuntime())` in the provider's client component. |
+| **Next.js (Pages Router)** | In `_app.tsx`. | Yes — same `useState` lazy initializer. |
+| **Remix / Tanstack Start** | In `root.tsx`. | Yes. |
+| **SolidStart** | In `entry-server.tsx` and `entry-client.tsx`. | Yes, per request on the server side; once-on-mount on the client. |
+| **Nuxt (Vue)** | In `app.vue`. | Yes — Nuxt creates a fresh runtime per request automatically with `useState`-style composables. |
+| **Astro islands** | Inside the React/Solid/Vue island component. | Per island — each island owns its runtime. |
+| **Static export (`output: 'export'`)** | Anywhere — there's no server runtime, just a build-time render. | One runtime per browser session, same as any client-only SPA. |
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="React Server Components"
+    description="'use client' boundaries, trigger files as client modules, hybrid pages."
+    href="/guide/ssr/react-server-components/"
+  />
+  <LinkCard
+    title="StrictMode (React)"
+    description="Why double-invocation of effects is safe by construction in Triggery."
+    href="/guide/ssr/strict-mode/"
+  />
+  <LinkCard
+    title="Provider"
+    description="TriggerRuntimeProvider — the wrapper SSR pages mount once, near the root."
+    href="/api/react/trigger-runtime-provider/"
+  />
+  <LinkCard
+    title="Roadmap"
+    description="@triggery/server (V2), transport, persistent timers, server-side actions."
+    href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md"
+  />
+</CardGrid>

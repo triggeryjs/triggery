@@ -1,0 +1,225 @@
+---
+import { Code } from 'astro:components';
+/**
+ * <PackageManagers pkg="..." [dev] [type="add|run|exec"] [title="..."] />
+ *
+ * Drop-in for the `starlight-package-managers` plugin (which fails to build
+ * under Astro 5 because of JSX-spread in its bundled `.astro` file). Renders
+ * Starlight's own `<Tabs>` with 4 `<TabItem>`s (pnpm/npm/yarn/bun) and lets a
+ * tiny post-mount script inject the brand SVG icon next to each tab label.
+ *
+ * Using Starlight's components directly means we get all of their tab logic
+ * (click switching, keyboard navigation, sync across the page, view-transitions
+ * re-init) for free — no duplicated custom-element class.
+ */
+import { TabItem, Tabs } from '@astrojs/starlight/components';
+
+interface Props {
+  /** Space-separated package list (or script/binary name when type='run'/'exec'). */
+  pkg: string;
+  /** Use the dev-dep flag (-D / --save-dev). */
+  dev?: boolean;
+  /** Operation. Default: 'add'/'install'. */
+  type?: 'add' | 'run' | 'exec';
+  /** Optional Code frame title (e.g. a filename). */
+  title?: string;
+}
+
+const { pkg, dev = false, type = 'add', title } = Astro.props;
+
+type PM = 'pnpm' | 'npm' | 'yarn' | 'bun';
+
+function command(pm: PM): string {
+  if (type === 'run') return pm === 'npm' ? `npm run ${pkg}` : `${pm} ${pkg}`;
+  if (type === 'exec') {
+    if (pm === 'npm') return `npx ${pkg}`;
+    if (pm === 'pnpm') return `pnpm dlx ${pkg}`;
+    if (pm === 'yarn') return `yarn dlx ${pkg}`;
+    return `bunx ${pkg}`;
+  }
+  const flag = dev ? (pm === 'npm' || pm === 'yarn' ? ' --save-dev' : ' -D') : '';
+  if (pm === 'npm') return `npm install${flag} ${pkg}`;
+  if (pm === 'pnpm') return `pnpm add${flag} ${pkg}`;
+  if (pm === 'yarn') return `yarn add${flag} ${pkg}`;
+  return `bun add${flag} ${pkg}`;
+}
+
+// Brand SVG glyphs. Colours match each tool's official logo guidelines.
+// The plain `fill="..."` on each <svg> sets the default; CSS overrides can
+// adjust per-theme (see `:root[data-theme='light'] [data-pm='bun']` below).
+const ICONS: Record<PM, string> = {
+  pnpm: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#F69220" aria-hidden="true" style="flex-shrink:0;"><path d="M0 0v7.5h7.5V0H0Zm8.25 0v7.5h7.498V0H8.25Zm8.25 0v7.5H24V0h-7.5ZM8.25 8.25v7.5h7.498v-7.5H8.25Zm8.25 0v7.5H24v-7.5h-7.5ZM0 16.5V24h7.5v-7.5H0Zm8.25 0V24h7.498v-7.5H8.25Zm8.25 0V24H24v-7.5h-7.5Z"/></svg>',
+  npm: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#CB3837" aria-hidden="true" style="flex-shrink:0;"><path d="M24 7.296L0 7.296L0 15.296L6.816 15.296L6.816 16.704L12.096 16.704L12.096 15.392L24 15.392L24 7.296ZM6.592 8.704L6.592 13.984L5.312 13.984L5.312 10.112L4 10.112L4 13.984L1.312 13.984L1.312 8.704L6.592 8.704ZM13.184 13.984L13.216 13.984L10.496 13.984L10.496 15.392L7.808 15.392L7.808 8.800L13.088 8.800Q13.216 10.400 13.184 13.984L13.184 13.984ZM22.592 8.704L22.592 13.984L21.312 13.984L21.312 10.112L20 10.112L20 13.984L18.592 13.984L18.592 10.112L17.312 10.112L17.312 13.984L14.592 13.984L14.592 8.704L22.592 8.704ZM11.904 12.704L11.904 10.112L10.592 10.112L10.592 12.704L11.904 12.704Z"/></svg>',
+  yarn: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#2C8EBB" aria-hidden="true" style="flex-shrink:0;"><path d="M6.729 21.545Q6.393 21.377 6.225 21.041Q6.099 20.915 6.078 20.915Q6.057 20.915 5.973 21.041Q5.889 21.167 5.826 21.419Q5.763 21.671 5.679 21.839Q5.385 22.805 4.839 23.141Q4.293 23.477 3.327 23.267Q3.075 23.267 2.529 23.015Q1.731 22.595 2.151 21.839Q2.151 21.755 2.214 21.629Q2.277 21.503 2.277 21.419Q1.563 21.419 1.353 20.789Q0.849 19.445 1.017 18.416Q1.185 17.387 2.151 16.421L2.235 16.253Q2.403 15.959 2.403 15.791Q2.403 14.363 2.697 13.313Q3.033 12.053 3.831 11.045Q4.503 10.163 5.427 9.617Q5.595 9.533 5.616 9.407Q5.637 9.281 5.553 9.071Q4.839 8.189 4.629 6.971Q4.545 6.635 4.671 6.215Q4.755 5.921 5.007 5.417L5.175 5.039Q5.427 4.745 5.553 4.745Q5.931 4.661 6.561 4.199L6.855 3.989Q8.157 2.645 10.131 2.645Q10.341 2.645 10.446 2.582Q10.551 2.519 10.551 2.393Q10.719 1.595 11.307 0.839L11.727 0.419Q11.937 0.209 12.168 0.230Q12.399 0.251 12.525 0.545Q12.777 1.007 13.155 1.847L13.407 2.393Q13.617 2.729 13.827 2.519Q14.331 2.309 14.499 2.288Q14.667 2.267 14.751 2.393Q14.835 2.519 15.003 3.065Q16.011 7.265 13.701 10.919Q13.617 11.045 13.428 11.318Q13.239 11.591 13.155 11.759Q13.071 11.927 13.092 12.053Q13.113 12.179 13.281 12.389Q14.163 13.145 14.751 14.195Q15.339 15.245 15.507 16.421Q15.717 17.891 15.507 19.319Q15.423 19.697 15.507 19.760Q15.591 19.823 15.927 19.739Q17.397 19.277 18.531 18.521L18.867 18.353Q19.623 17.891 20.043 17.723Q20.673 17.429 21.303 17.345L21.681 17.345Q22.101 17.261 22.374 17.366Q22.647 17.471 22.836 17.723Q23.025 17.975 23.025 18.269Q23.025 18.857 22.353 19.067Q20.631 19.403 18.804 20.726Q16.977 22.049 14.457 22.721Q14.373 22.721 14.205 22.805Q14.037 22.889 13.953 23.015Q13.659 23.225 13.323 23.309Q13.113 23.393 12.651 23.435L12.231 23.519L11.895 23.561Q9.375 23.771 8.031 23.771Q7.275 23.771 6.729 23.645Q5.973 23.393 5.805 22.889Q5.595 22.091 6.225 21.671Q6.351 21.671 6.519 21.608Q6.687 21.545 6.729 21.545Z"/></svg>',
+  bun: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="#FBF0DF" aria-hidden="true" style="flex-shrink:0;" data-pm-icon="bun"><path d="M11.966 22.566c6.609 0 11.966-4.326 11.966-9.661 0-3.308-2.051-6.23-5.204-7.963-1.283-.713-2.291-1.353-3.13-1.885-1.58-1.004-2.555-1.623-3.632-1.623-1.094 0-2.327.783-3.955 1.816a49.78 49.78 0 0 1-2.808 1.692C2.051 6.675 0 9.597 0 12.905c0 5.335 5.357 9.66 11.966 9.66Zm-1.397-17.83a5.885 5.885 0 0 0 .497-2.403c0-.144.201-.186.229-.028.656 2.775-.9 4.15-2.051 4.61-.124.048-.199-.12-.103-.208a5.748 5.748 0 0 0 1.428-1.971Zm2.052-.102a5.795 5.795 0 0 0-.78-2.3v-.015c-.068-.123.086-.263.185-.172 1.956 2.105 1.303 4.055.554 5.037-.082.102-.229-.003-.188-.126a5.837 5.837 0 0 0 .229-2.424Zm1.771-.559a5.708 5.708 0 0 0-1.607-1.801V2.26c-.112-.085-.024-.274.113-.218 2.588 1.084 2.766 3.171 2.452 4.395a.116.116 0 0 1-.048.071.11.11 0 0 1-.153-.026.118.118 0 0 1-.022-.083 5.864 5.864 0 0 0-.735-2.324Zm-5.072.559c-.616.544-1.279.758-2.058.997-.116 0-.194-.078-.155-.18 1.747-.907 2.369-1.645 2.99-2.771 0 0 .155-.117.188.085 0 .303-.348 1.325-.965 1.869Zm4.931 11.205a2.949 2.949 0 0 1-.935 1.549 2.16 2.16 0 0 1-1.282.618 2.167 2.167 0 0 1-1.323-.618 2.95 2.95 0 0 1-.923-1.549.243.243 0 0 1 .064-.197.23.23 0 0 1 .192-.069h3.954a.226.226 0 0 1 .19.07.239.239 0 0 1 .063.196Zm-5.443-2.17a1.85 1.85 0 0 1-2.377-.244 1.969 1.969 0 0 1-.233-2.44c.207-.318.502-.565.846-.711a1.84 1.84 0 0 1 1.089-.11c.365.075.701.26.964.53.264.27.443.616.515.99a1.98 1.98 0 0 1-.108 1.118 1.923 1.923 0 0 1-.696.866Zm8.471.005a1.849 1.849 0 0 1-2.374-.252 1.956 1.956 0 0 1-.546-1.362c0-.383.11-.758.319-1.076.207-.318.502-.566.847-.711a1.84 1.84 0 0 1 1.09-.108c.366.076.702.261.965.533s.44.617.512.993a1.98 1.98 0 0 1-.113 1.118 1.922 1.922 0 0 1-.7.865Z"/></svg>',
+};
+---
+
+<div class="pm-tabs" data-pm-tabs>
+  <Tabs syncKey="pm">
+    <TabItem label="pnpm">
+      <Code code={command('pnpm')} lang="sh" {title} frame="terminal" />
+    </TabItem>
+    <TabItem label="npm">
+      <Code code={command('npm')} lang="sh" {title} frame="terminal" />
+    </TabItem>
+    <TabItem label="yarn">
+      <Code code={command('yarn')} lang="sh" {title} frame="terminal" />
+    </TabItem>
+    <TabItem label="bun">
+      <Code code={command('bun')} lang="sh" {title} frame="terminal" />
+    </TabItem>
+  </Tabs>
+</div>
+
+<style is:global>
+  /* Bun's brand cream (#FBF0DF) is invisible on a white background.
+   * Darken the glyph on the light theme so the silhouette stays readable. */
+  :root[data-theme='light'] .pm-tabs [data-pm-icon='bun'] {
+    fill: #c4a47d;
+  }
+  .pm-tabs [role='tab'] {
+    display: inline-flex;
+    align-items: center;
+  }
+</style>
+
+<script is:inline define:vars={{ ICONS }}>
+  // See FrameworkTabs.astro for why this fallback exists — Starlight's own
+  // `starlight-tabs` custom-element registration sometimes doesn't make it
+  // into the production bundle, leaving the element with no click handlers.
+  // Registration is deferred to `DOMContentLoaded` so every `<starlight-tabs>`
+  // is fully parsed (with its tablist and tabpanels) before the upgrade fires.
+  function defineStarlightTabs() {
+    if (typeof customElements === 'undefined') return;
+    if (customElements.get('starlight-tabs')) return;
+    const STORAGE_PREFIX = 'starlight-synced-tabs__';
+    class StarlightTabs extends HTMLElement {
+      static syncedTabs = new Map();
+      constructor() {
+        super();
+        const tablist = this.querySelector('[role="tablist"]');
+        if (!tablist) return;
+        this.tabs = Array.from(tablist.querySelectorAll('[role="tab"]'));
+        this.panels = Array.from(this.querySelectorAll(':scope > [role="tabpanel"]'));
+        this.syncKey = this.dataset.syncKey;
+        if (this.syncKey) {
+          const arr = StarlightTabs.syncedTabs.get(this.syncKey) || [];
+          arr.push(this);
+          StarlightTabs.syncedTabs.set(this.syncKey, arr);
+        }
+        this.tabs.forEach((tab, i) => {
+          tab.addEventListener('click', (e) => {
+            e.preventDefault();
+            const sel = tablist.querySelector('[aria-selected="true"]');
+            if (e.currentTarget !== sel) this.switchTab(e.currentTarget, i);
+          });
+          tab.addEventListener('keydown', (e) => {
+            const idx = this.tabs.indexOf(e.currentTarget);
+            const next =
+              e.key === 'ArrowLeft' ? idx - 1
+              : e.key === 'ArrowRight' ? idx + 1
+              : e.key === 'Home' ? 0
+              : e.key === 'End' ? this.tabs.length - 1
+              : null;
+            if (next === null || !this.tabs[next]) return;
+            e.preventDefault();
+            this.switchTab(this.tabs[next], next);
+          });
+        });
+      }
+      switchTab(newTab, idx, shouldSync) {
+        if (shouldSync === undefined) shouldSync = true;
+        const top = shouldSync ? this.getBoundingClientRect().top : 0;
+        this.tabs.forEach((t) => {
+          t.setAttribute('aria-selected', 'false');
+          t.setAttribute('tabindex', '-1');
+        });
+        this.panels.forEach((p) => (p.hidden = true));
+        if (this.panels[idx]) this.panels[idx].hidden = false;
+        newTab.removeAttribute('tabindex');
+        newTab.setAttribute('aria-selected', 'true');
+        if (!shouldSync) return;
+        newTab.focus();
+        const label = (newTab.textContent || '').trim();
+        if (this.syncKey && typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem(STORAGE_PREFIX + this.syncKey, label);
+          } catch (e) {}
+        }
+        const peers = StarlightTabs.syncedTabs.get(this.syncKey) || [];
+        for (let p = 0; p < peers.length; p++) {
+          const peer = peers[p];
+          if (peer === this) continue;
+          const j = peer.tabs.findIndex((t) => (t.textContent || '').trim() === label);
+          if (j >= 0) peer.switchTab(peer.tabs[j], j, false);
+        }
+        window.scrollTo({
+          top: window.scrollY + (this.getBoundingClientRect().top - top),
+          behavior: 'instant',
+        });
+      }
+    }
+    customElements.define('starlight-tabs', StarlightTabs);
+
+    if (!customElements.get('starlight-tabs-restore')) {
+      customElements.define(
+        'starlight-tabs-restore',
+        class extends HTMLElement {
+          connectedCallback() {
+            const tabs = this.closest('starlight-tabs');
+            if (!tabs || typeof localStorage === 'undefined') return;
+            const key = tabs.dataset.syncKey;
+            if (!key) return;
+            const label = localStorage.getItem(STORAGE_PREFIX + key);
+            if (!label) return;
+            const list = Array.from(tabs.querySelectorAll('[role="tab"]'));
+            const idx = list.findIndex((t) => (t.textContent || '').trim() === label);
+            if (idx < 1) return;
+            const panels = tabs.querySelectorAll(':scope > [role="tabpanel"]');
+            list[0] && list[0].setAttribute('aria-selected', 'false');
+            list[0] && list[0].setAttribute('tabindex', '-1');
+            panels[0] && panels[0].setAttribute('hidden', 'true');
+            list[idx] && list[idx].removeAttribute('tabindex');
+            list[idx] && list[idx].setAttribute('aria-selected', 'true');
+            panels[idx] && panels[idx].removeAttribute('hidden');
+          }
+        },
+      );
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', defineStarlightTabs, { once: true });
+  } else {
+    defineStarlightTabs();
+  }
+
+  (() => {
+    function decorate(root) {
+      root.querySelectorAll('.pm-tabs[data-pm-tabs] [role="tab"]').forEach((tab) => {
+        if (tab.dataset.pmIconified === '1') return;
+        const label = (tab.textContent || '').trim();
+        const svg = ICONS[label];
+        if (!svg) return;
+        const wrap = document.createElement('span');
+        wrap.style.display = 'inline-flex';
+        wrap.style.width = '1em';
+        wrap.style.height = '1em';
+        wrap.style.flexShrink = '0';
+        wrap.style.marginRight = '0.5em';
+        wrap.style.pointerEvents = 'none';
+        wrap.innerHTML = svg;
+        tab.insertBefore(wrap, tab.firstChild);
+        tab.dataset.pmIconified = '1';
+      });
+    }
+    const run = () => decorate(document);
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', run);
+    } else {
+      run();
+    }
+    document.addEventListener('astro:page-load', run);
+  })();
+</script>

@@ -1,0 +1,157 @@
+---
+title: "@triggery/react"
+description: "React 18+/19 bindings for Triggery — useEvent, useCondition, useAction, provider, scope."
+sidebar:
+  order: 2
+  badge:
+    text: Tier 1
+    variant: success
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+React bindings for [Triggery](https://github.com/triggeryjs/triggery). Same hook shape as `@triggery/solid` and `@triggery/vue`. **Zero runtime dependencies** — a thin lifecycle layer over `@triggery/core`.
+
+[![npm](https://img.shields.io/npm/v/@triggery/react?style=flat-square)](https://www.npmjs.com/package/@triggery/react)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/react?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/react)
+
+## Install
+
+<PackageManagers pkg="@triggery/core @triggery/react" />
+
+Peer deps: `react >= 18.0.0`, `react-dom >= 18.0.0`.
+
+## What's inside
+
+| Export | Purpose |
+|---|---|
+| [`useEvent`](/api/react/use-event/) | Typed event emitter, stable identity. |
+| [`useCondition`](/api/react/use-condition/) | Register a pull-only condition getter. |
+| [`useAction`](/api/react/use-action/) | Register an action handler. |
+| [`useInlineTrigger`](/api/react/use-inline-trigger/) | One-off triggers inside a component. |
+| [`useInspect`](/api/react/use-inspect/) / [`useInspectHistory`](/api/react/use-inspect-history/) | Snapshot of the latest run / ring-buffer history. |
+| [`createNamedHooks`](/api/react/create-named-hooks/) | Derive `useNewMessageEvent`, `useUserCondition`, … from a trigger. |
+| [`<TriggerRuntimeProvider>`](/api/react/trigger-runtime-provider/) | Inject a custom runtime into a subtree. |
+| [`<TriggerScope>`](/api/react/trigger-scope/) | Scope condition/action registrations to a feature subtree. |
+
+## Quick start
+
+Three small files. The trigger reads like a spec, components only know about their own port.
+
+### 1. Define the trigger
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { sound: boolean; notifications: boolean };
+
+export const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string; author: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { title: string; body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings) return;
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({
+      title: event.payload.author,
+      body:  event.payload.text,
+    });
+  },
+});
+```
+
+### 2. Wrap the tree
+
+```tsx title="src/main.tsx"
+import { createRuntime } from '@triggery/core';
+import { TriggerRuntimeProvider } from '@triggery/react';
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+
+const runtime = createRuntime();
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <TriggerRuntimeProvider runtime={runtime}>
+      <App />
+    </TriggerRuntimeProvider>
+  </StrictMode>,
+);
+```
+
+### 3. Wire components
+
+```tsx title="src/App.tsx"
+import { useAction, useCondition, useEvent } from '@triggery/react';
+import { useState } from 'react';
+import { messageTrigger } from './triggers/message.trigger';
+
+function SettingsProvider() {
+  const [settings] = useState({ sound: true, notifications: true });
+  useCondition(messageTrigger, 'settings', () => settings, [settings]);
+  return null;
+}
+
+function Chat() {
+  const fire = useEvent(messageTrigger, 'new-message');
+  return (
+    <button type="button" onClick={() => fire({ text: 'hi', author: 'Alice' })}>
+      send
+    </button>
+  );
+}
+
+function Toast() {
+  useAction(messageTrigger, 'showToast', ({ title, body }) => console.log(`[${title}] ${body}`));
+  return null;
+}
+
+export function App() {
+  return (
+    <>
+      <SettingsProvider />
+      <Chat />
+      <Toast />
+    </>
+  );
+}
+```
+
+Click the button — `Toast` logs. Toggle `settings.notifications` to false — silent.
+
+## Recipes
+
+<CardGrid>
+  <LinkCard title="Counter" description="The hello-world recipe." href="/recipes/react/counter/" />
+  <LinkCard title="Notification pipeline" description="Toast + sound + badge in three components." href="/recipes/react/notification-pipeline/" />
+  <LinkCard title="Debounced search" description="take-latest + AbortSignal for autocomplete." href="/recipes/react/debounced-search/" />
+  <LinkCard title="WebSocket sync" description="Real-time updates without component coupling." href="/recipes/react/websocket-sync/" />
+</CardGrid>
+
+## SSR / RSC
+
+The hooks return no-ops on the server. The actual subscription happens in `useEffect`, which means there's no hydration mismatch. See the [SSR guide](/guide/ssr/server-side-rendering/) and [React Server Components guide](/guide/ssr/react-server-components/).
+
+## Related packages
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="The runtime this binding wraps." href="/packages/core/" />
+  <LinkCard title="@triggery/solid" description="Identical hook shape for SolidJS." href="/packages/solid/" />
+  <LinkCard title="@triggery/vue" description="Identical hook shape for Vue 3." href="/packages/vue/" />
+  <LinkCard title="@triggery/zustand" description="Adapter: read a Zustand store from a condition." href="/packages/zustand/" />
+  <LinkCard title="@triggery/redux" description="Adapter: read a Redux store from a condition." href="/packages/redux/" />
+  <LinkCard title="@triggery/testing" description="Test the trigger without rendering React." href="/packages/testing/" />
+</CardGrid>
+
+## Source
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/react)
+- [npm](https://www.npmjs.com/package/@triggery/react)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/react/CHANGELOG.md)

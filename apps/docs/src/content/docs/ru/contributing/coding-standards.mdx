@@ -1,0 +1,61 @@
+---
+title: "Стандарты кода"
+description: "TypeScript strict, Biome, без any, только ESM — конвенции, которым следует каждый пакет в монорепо."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Triggery — это TypeScript-first монорепо со строгими настройками и небольшим набором мнений. Следуй им — и ревью PR будет фокусироваться на логике, а не на форматировании.
+
+## TypeScript
+
+- **`strict: true`** включён в корневом `tsconfig.json` и наследуется везде. Никакого `any`. Используй `unknown` + сужение, когда типы намеренно открыты.
+- **Никаких non-null assertion** (`!`) без комментария, объясняющего, почему значение в этой точке заведомо не null.
+- **Никаких type assertion** (`as Foo`), кроме случаев интеропа со сторонним API, где типы кривые; предпочитай type guard.
+- **Поле `exports`** в `package.json` — единственная истина в последней инстанции для входных точек. Используй его, не полагайся на эвристики `main`/`module`.
+
+## Именование
+
+- **Файлы**: kebab-case — `create-trigger.ts`, `inspector-buffer.ts`. Тесты лежат рядом с исходником как `*.test.ts`.
+- **Экспорты**: camelCase для значений (`createTrigger`, `getDefaultRuntime`), PascalCase для типов и компонентов React/Solid/Vue (`TriggerSchema`, `TriggerRuntimeProvider`).
+- **Идентификаторы триггеров**: существительные в kebab-case, описывающие сценарий (`message-received`, а не `on-new-message`).
+- **События**: глаголы в kebab-case, с colon-namespace если кросс-фичные (`chat:message-received`).
+- **Условия / действия**: существительные в camelCase (`activeChannelId`, `showToast`).
+
+## Формат модулей
+
+- **Только ESM**, никакого CommonJS. `"type": "module"` везде.
+- **Чистые модули** — никаких побочных эффектов на этапе импорта. Рантайм лениво создаётся при первом использовании.
+- **Side-effect-free** — в каждом `package.json` стоит `"sideEffects": false` (кроме случаев, когда бандлам нужно иначе; такое бывает редко).
+
+## Зависимости
+
+- **У `@triggery/core` ноль рантайм-зависимостей**. Это жёсткое ограничение.
+- **Пакеты-адаптеры** берут целевую библиотеку как `peerDependency` (Zustand, Redux, Jotai, …). Они не бандлят библиотеку-хост.
+- **Биндинги для фреймворков** (`@triggery/react` и т.п.) берут фреймворк как peer.
+- Добавление новой зависимости в *любой* пакет требует явного обоснования в описании PR.
+
+## Форматирование и линт
+
+- **Biome** — единственный источник истины для форматирования и базового линта. Запускай `pnpm format` (запись) или `pnpm lint` (проверка).
+- CI запускает `pnpm lint` на каждом PR и отклоняет диффы, не совпадающие с выводом Biome. Натрави «format on save» в редакторе на Biome.
+- **Никаких комментариев, повторяющих код.** Комментируй только *почему* — скрытый инвариант, осознанный компромисс, известный браузерный косяк. Подстраивайся под стиль вокруг.
+
+## Соглашения по публичному API
+
+Поверхность публичного API у `@triggery/core` короткая — `createTrigger`, `createRuntime`, `getDefaultRuntime`, `setDefaultRuntime`, `createCheck`, `createInspector`, `createScheduler` и горстка типов. Всё новое в `core` — изменение публичного API и идёт через [RFC-процесс](/ru/contributing/rfc-process/).
+
+Для биндингов фреймворков: держи паритет. Если хук появляется в `@triggery/react`, он должен появиться в `@triggery/solid` и `@triggery/vue` с той же сигнатурой. Гарантия «API работает в трёх фреймворках» — и маркетинговое обещание, и бюджет на сопровождение. Уважай оба.
+
+## Атрибуция
+
+**Не** добавляй AI-атрибуцию (`Co-Authored-By: Claude …` и т.п.) в коммиты или PR. Атрибутируй работу людям.
+
+<CardGrid>
+  <LinkCard title="Настройка окружения" description="Клонировать, установить, собрать, протестировать." href="/ru/contributing/development-setup/" />
+  <LinkCard title="Написание тестов" description="Vitest, fakeScheduler, контрактные тесты." href="/ru/contributing/writing-tests/" />
+  <LinkCard title="Написание документации" description="Руководство по стилю для этого сайта." href="/ru/contributing/writing-docs/" />
+  <LinkCard title="Плагин для ESLint" description="Правила, которые кодовая база требует от пользовательского кода." href="/ru/packages/eslint-plugin/" />
+</CardGrid>

@@ -4,7 +4,7 @@
   "description": "Signals adapter for Triggery — read a signal's value from a trigger condition without engaging signal-tracking on the host component",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
-  "homepage": "https://triggeryjs.github.io/triggery",
+  "homepage": "https://triggeryjs.github.io",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/triggeryjs/triggery.git",
@@ -82,5 +82,7 @@
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"
-  }
+  },
+  "llms": "https://triggeryjs.github.io/llms.txt",
+  "llmsFull": "https://triggeryjs.github.io/llms-full.txt"
 }

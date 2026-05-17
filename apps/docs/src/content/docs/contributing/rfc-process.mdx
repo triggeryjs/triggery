@@ -1,0 +1,54 @@
+---
+title: "RFC process"
+description: "How to propose a breaking change, a new public API or any change that affects runtime semantics."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+For changes that affect public API surface, runtime semantics, or anything described in the README or docs, please open an RFC issue *before* writing the code. This avoids the "weeks of work, rejected at review" outcome that hurts contributors and maintainers equally.
+
+## When you need an RFC
+
+- New public export in any `@triggery/*` package.
+- Breaking change to an existing public API.
+- Change in runtime semantics (dispatch order, cascade behaviour, scheduler defaults, inspector format).
+- New middleware hook.
+- Renaming or moving any documented option.
+
+You don't need an RFC for:
+
+- Bug fixes that restore documented behaviour.
+- Internal refactors with no public-API change.
+- Doc improvements, test additions, dependency bumps.
+
+## The flow
+
+1. **Open an RFC issue** using the [rfc.yml template](https://github.com/triggeryjs/triggery/issues/new?template=rfc.yml). Sections to fill in:
+   - **Problem** — what's wrong today, with a concrete user story.
+   - **Proposal** — the change, as small as possible.
+   - **Alternatives** — at least one rejected alternative with the reason.
+   - **Migration** — how do existing users get to the new shape? A codemod is preferred where mechanical.
+2. **Get ≥ 1 maintainer approval** on the design before writing code. The approval is on the issue thread — not in the PR.
+3. **Open a PR** that implements the approved design and link it to the RFC issue with `Closes #N`.
+4. **Reviewers focus on implementation** — the *design* was already accepted. Material design changes during review mean re-opening the RFC.
+
+## Comment window
+
+Non-urgent RFCs sit for at least **7 days** to give the community time to weigh in. Security-sensitive changes can move faster, at the project lead's discretion.
+
+## Lazy consensus
+
+If no maintainer objects within 72 hours of an RFC reaching "ready to merge" status, the change is accepted. Objections re-open the discussion. The project lead breaks ties when consensus fails — see [`GOVERNANCE.md`](https://github.com/triggeryjs/triggery/blob/main/GOVERNANCE.md).
+
+## After 1.0
+
+Post-1.0, breaking changes ship only in major versions with at least 30 days of pre-release window for community testing. Pre-1.0, minor versions can include breaking changes — codemods are shipped where mechanical.
+
+<CardGrid>
+  <LinkCard title="Governance" description="How decisions are made." href="https://github.com/triggeryjs/triggery/blob/main/GOVERNANCE.md" />
+  <LinkCard title="Coding standards" description="What an implementation PR looks like." href="/contributing/coding-standards/" />
+  <LinkCard title="Roadmap" description="What's planned, what's shipped." href="https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md" />
+  <LinkCard title="Open an RFC" description="rfc.yml issue template." href="https://github.com/triggeryjs/triggery/issues/new?template=rfc.yml" />
+</CardGrid>

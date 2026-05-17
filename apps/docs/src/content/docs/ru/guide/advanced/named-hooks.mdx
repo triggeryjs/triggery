@@ -1,0 +1,228 @@
+---
+title: "Именованные хуки"
+description: "createNamedHooks превращает схему триггера в хуки по портам — useNewMessageEvent, useShowToastAction — без шага codegen."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Обобщённые хуки `useEvent` / `useCondition` / `useAction` нормально читаются в небольших файлах. Но как только у триггера четыре-пять портов, каждый компонент-соединитель начинает выглядеть одинаково: тут `useEvent(trigger, 'foo')`, там `useCondition(trigger, 'bar', …)`. Имя триггера и строковый литерал повторяются и превращаются в шум. **Именованные хуки** — эргономичное лекарство: один хелпер превращает схему в плоский объект пер-портовых хуков, без codegen и дополнительных шагов сборки.
+
+## Форма
+
+`createNamedHooks(trigger)` возвращает объект, ключи которого выведены из схемы. Для такого триггера:
+
+```ts title="src/triggers/message.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string; channelId: string } };
+  conditions: { user: { id: string }; settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string }; playSound: void };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user', 'settings'],
+  handler({ event, conditions, actions, check }) {
+    if (!conditions.user || !conditions.settings) return;
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+  },
+});
+```
+
+ты получаешь пять хуков — по одному на порт:
+
+```ts title="src/triggers/message.hooks.ts"
+import { createNamedHooks } from '@triggery/react';
+import { messageTrigger } from './message.trigger';
+
+export const {
+  useNewMessageEvent,    // useEvent(messageTrigger, 'new-message')
+  useUserCondition,      // useCondition(messageTrigger, 'user', …)
+  useSettingsCondition,  // useCondition(messageTrigger, 'settings', …)
+  useShowToastAction,    // useAction(messageTrigger, 'showToast', …)
+  usePlaySoundAction,    // useAction(messageTrigger, 'playSound', …)
+} = createNamedHooks(messageTrigger);
+```
+
+Каждый оборачивает соответствующий обобщённый хук с заранее подставленными в него триггером и именем порта. Никаких type-ассершенов, никакого рантайм-парсинга — имена статичны и выведены из схемы системой template-literal-типов TypeScript.
+
+## Как это выглядит в компоненте
+
+Сравни одно и то же подключение, написанное двумя способами. С обобщёнными хуками:
+
+```tsx title="Chat.tsx (generic hooks)"
+import { useEvent, useCondition } from '@triggery/react';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function Chat({ channelId, user }: Props) {
+  const fireNewMessage = useEvent(messageTrigger, 'new-message');
+  useCondition(messageTrigger, 'user', () => user, [user]);
+  // …
+}
+```
+
+С именованными хуками:
+
+```tsx title="Chat.tsx (named hooks)"
+import { useNewMessageEvent, useUserCondition } from '../triggers/message.hooks';
+
+export function Chat({ channelId, user }: Props) {
+  const fireNewMessage = useNewMessageEvent();
+  useUserCondition(() => user, [user]);
+  // …
+}
+```
+
+На три строковых литерала меньше, `messageTrigger` не повторяется, а места вызова читаются как обычные доменные хуки. Переименуй `new-message` → `message-received` в схеме — TypeScript сломает `useNewMessageEvent` в месте импорта.
+
+## TS-механика (один mapped-тип, один template-literal)
+
+Имена хуков вычисляются системой типов, а не генерируются на диск. Релевантный кусок `@triggery/core/types.ts` небольшой:
+
+```ts title="Inside @triggery/core"
+type CapFirst<S extends string> =
+  S extends `${infer A}${infer B}` ? `${Uppercase<A>}${B}` : S;
+
+type KebabToCamel<S extends string> =
+  S extends `${infer A}-${infer B}` ? `${A}${CapFirst<KebabToCamel<B>>}` : S;
+
+export type ToPascal<S extends string> = CapFirst<KebabToCamel<S>>;
+
+export type NamedHooks<S extends TriggerSchema> = {
+  readonly [K in EventKey<S> as `use${ToPascal<K>}Event`]: EventHook<EventMap<S>[K]>;
+} & {
+  readonly [K in ConditionKey<S> as `use${ToPascal<K>}Condition`]: ConditionHook<ConditionMap<S>[K]>;
+} & {
+  readonly [K in ActionKey<S> as `use${ToPascal<K>}Action`]: ActionHook<ActionMap<S>[K]>;
+};
+```
+
+Три mapped-типа поверх трёх карт схемы, каждый перемапленный через `as` в ключ-template-literal. Правила преобразования:
+
+| Ключ схемы | Имя хука |
+|------------|-----------|
+| `'new-message'` (event)       | `useNewMessageEvent` |
+| `'app:ready'` (event)         | `useApp:readyEvent` — **избегай таких ключей** (используй обобщённый хук для `'app:ready'`) |
+| `'user'` (condition)          | `useUserCondition` |
+| `'currentUserId'` (condition) | `useCurrentUserIdCondition` |
+| `'showToast'` (action)        | `useShowToastAction` |
+| `'play-sound'` (action)       | `usePlaySoundAction` |
+
+Двухшаговое правило для kebab-case: каждый `-` удаляется, следующая буква переводится в верхний регистр, после чего вся строка проходит `CapFirst`. У camelCase-ключей первая буква переводится в верхний регистр; двоеточия, точки и слэши проходят как есть — поэтому ключи с двоеточием порождают странные имена (см. следующий раздел).
+
+### Подводные камни именования
+
+Некоторые валидные JS-строки порождают имена хуков, которые невозможно набрать в месте вызова:
+
+- Ключи с двоеточием, точкой или слэшем (`'app:ready'`, `'router.transition'`) — template-literal сохраняет пунктуацию. Тип существует, но вызвать свойство как `useApp:readyEvent` в исходниках нельзя. Используй обобщённый `useEvent(trigger, 'app:ready')`.
+- Ключи, начинающиеся с цифры (`'2fa-required'`), — та же проблема. Избегай.
+- Зарезервированные JS-идентификаторы в `as`-ключах (`'class'` → `useClassCondition`) — нормально, потому что итоговый идентификатор `useClassCondition`, а не `class`.
+
+ESLint-правило [`prefer-named-hook`](https://github.com/triggeryjs/triggery/tree/main/packages/eslint-plugin) предлагает именованный хук только когда итоговое имя — валидный JS-идентификатор; на ключах с пунктуацией оно молчит.
+
+## Когда использовать именованные хуки
+
+Грубое правило:
+
+- **2–3 порта** в триггере — обобщённые хуки читаются нормально, именованные добавляют файл реэкспортов ради небольшого выигрыша.
+- **4+ порта** или два компонента, трогающие один триггер — именованные хуки окупаются. Плоский список импортов гораздо проще искать grep'ом и рефакторить, чем россыпь вызовов `useEvent(trigger, 'literal')`.
+- **Триггер живёт в shared-пакете** — всегда экспортируй именованные хуки. Потребители пакета получают хук-эргономику, не зная самого объекта триггера.
+- **Inline и одноразовые триггеры** — не стоит; триггер и так локален. Используй обобщённые хуки или `useInlineTrigger`.
+
+Масштабируемый паттерн: положи триггер и его именованные хуки рядом, реэкспортируй оба из barrel-файла фичи:
+
+```ts title="src/features/chat/index.ts"
+export { messageTrigger } from './message.trigger';
+export {
+  useNewMessageEvent,
+  useUserCondition,
+  useSettingsCondition,
+  useShowToastAction,
+  usePlaySoundAction,
+} from './message.hooks';
+```
+
+Consumer-код больше не реимпортит `messageTrigger` напрямую, кроме вызова `trigger.disable()` для feature-флага или в тестах.
+
+## Подсказка от ESLint
+
+`@triggery/eslint-plugin` поставляет правило `prefer-named-hook`, которое флагает такое:
+
+```tsx
+// ⚠ prefer-named-hook
+const fire = useEvent(messageTrigger, 'new-message');
+```
+
+…и предлагает автофикс:
+
+```tsx
+const fire = useNewMessageEvent();
+```
+
+Правило срабатывает только когда (а) в том же графе модулей есть named-hooks-экспорт и (б) итоговое имя хука — валидный JS-идентификатор. Отключай пер-файлом через `// eslint-disable-next-line`, если у тебя намеренное исключение (например, динамические имена событий в собственной обёртке-хуке).
+
+## Производительность — стоит ли беспокоиться о Proxy?
+
+Нет. Proxy — это одна аллокация на вызов `createNamedHooks(trigger)` (как правило, один раз на приложение), и каждое обращение к свойству кеширует получившийся хук, так что React видит одну и ту же функцию между рендерами. В точке вызова именованный хук делает буквально одно: зовёт обобщённый хук с одним дополнительным строковым аргументом. Стоимость теряется на фоне самого React-рендера.
+
+В двух словах о реализации:
+
+- Один `Proxy` на `createNamedHooks(trigger)`.
+- Один `Map` по имени хука; первый lookup создаёт функцию хука, каждый последующий возвращает закешированную ссылку.
+- Функция хука — однострочный форвардер в `useEvent` / `useCondition` / `useAction`.
+
+Никакого codegen, никакого `eval`, никакого парсинга строк на горячем пути.
+
+## Solid и Vue: та же форма
+
+Биндинги Solid и Vue экспортируют `createNamedHooks` с идентичной типизацией. Хуки внутри зовут фреймворк-специфичные `useEvent` / `useCondition` / `useAction` — поверхность остаётся той же:
+
+```ts title="Solid — src/triggers/message.hooks.ts"
+import { createNamedHooks } from '@triggery/solid';
+import { messageTrigger } from './message.trigger';
+
+export const { useNewMessageEvent, useUserCondition, useShowToastAction } =
+  createNamedHooks(messageTrigger);
+```
+
+```vue title="Vue — Chat.vue"
+<script setup lang="ts">
+import { useNewMessageEvent } from '../triggers/message.hooks';
+const fireNewMessage = useNewMessageEvent();
+</script>
+```
+
+Кроссфреймворковые проекты (React-оболочка с микрофронтендами на Solid, например) получают одинаковые имена именованных хуков с обеих сторон — удобно при поиске по кодовой базе.
+
+## Антипаттерны
+
+- **Сборка Proxy внутри компонента.** `createNamedHooks(trigger)` должен запускаться один раз на верхнем уровне модуля, как `createTrigger`. Вызов внутри функционального компонента ломает стабильность имени хука между рендерами.
+- **Смешение именованных и обобщённых хуков в одном файле без причины.** Выбирай одно на файл. Цена — несогласованность.
+- **Реэкспорт самого proxy** (`export const messageHooks = createNamedHooks(messageTrigger)`). Тогда места вызова превращаются в `messageHooks.useNewMessageEvent()` — почти то, с чего мы начинали. Деструктурируй на месте экспорта.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Анатомия триггера"
+    description="Полный schema-generic — во что превращается каждая карта в именах хуков."
+    href="/ru/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Inline-триггеры"
+    description="useInlineTrigger для случаев, когда *.trigger.ts плюс именованные хуки — это перебор."
+    href="/ru/guide/advanced/inline-triggers/"
+  />
+  <LinkCard
+    title="Типизация схемы"
+    description="Как schema-generic подаётся в NamedHooks<S> через template-literal-типы."
+    href="/ru/guide/typescript/schema-typing/"
+  />
+  <LinkCard
+    title="@triggery/eslint-plugin"
+    description="prefer-named-hook, no-dynamic-id, exhaustive-conditions и компания."
+    href="/ru/packages/eslint-plugin/"
+  />
+</CardGrid>

@@ -1,0 +1,124 @@
+---
+title: useCondition
+description: "Register a pull-only getter for a trigger condition. Components don't re-render when the runtime reads it."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Registers a pull-only condition getter on a trigger. The runtime calls `getter()` **only at fire time** — there is no subscription, and the component does not re-render when the trigger fires.
+
+`deps` works like `useMemo`: when any element changes, the runtime sees the updated closure.
+
+## Import
+
+```ts
+import { useCondition } from '@triggery/react';
+```
+
+## Signature
+
+```ts
+function useCondition<S extends TriggerSchema, K extends ConditionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  getter: () => ConditionMap<S>[K],
+  deps?: readonly unknown[],
+): void;
+```
+
+## Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `trigger` | `Trigger<S>` | The trigger returned by [`createTrigger`](/api/core/create-trigger/). |
+| `name` | `K extends ConditionKey<S>` | A condition declared in the trigger's schema. |
+| `getter` | `() => ConditionMap<S>[K]` | A synchronous function returning the current value. |
+| `deps` | `readonly unknown[]` (default `[]`) | Same semantics as `useMemo` — when any element changes, the captured closure is refreshed. |
+
+## Returns
+
+`void`. Registration is performed in `useEffect` and cleaned up on unmount.
+
+## Examples
+
+### Basic provider
+
+```tsx
+import { createTrigger } from '@triggery/core';
+import { useCondition } from '@triggery/react';
+import { useState } from 'react';
+
+const trigger = createTrigger<{
+  events: { ping: void };
+  conditions: { user: { id: string; name: string } | null };
+}>({
+  id: 'demo',
+  events: ['ping'],
+  required: ['user'],
+  handler({ conditions }) {
+    if (!conditions.user) return;
+    console.log('user', conditions.user.name);
+  },
+});
+
+function UserProvider() {
+  const [user, setUser] = useState<{ id: string; name: string } | null>(null);
+  useCondition(trigger, 'user', () => user, [user]);
+  return null;
+}
+```
+
+### Without deps (a stable getter)
+
+If your getter reads from a ref or a module-level value, `deps` is unnecessary:
+
+```tsx
+import { useCondition } from '@triggery/react';
+import { trigger } from './x.trigger';
+
+const settingsRef = { current: { sound: true } };
+
+function StableProvider() {
+  useCondition(trigger, 'settings', () => settingsRef.current);
+}
+```
+
+### From an external store (Zustand example)
+
+```tsx
+import { useCondition } from '@triggery/react';
+import { useStore } from 'zustand';
+import { settingsStore } from './stores/settings';
+import { trigger } from './x.trigger';
+
+function Provider() {
+  const settings = useStore(settingsStore);
+  useCondition(trigger, 'settings', () => settings, [settings]);
+}
+```
+
+For a zero-rerender adapter that bypasses the React state path, use [`@triggery/zustand`](/packages/zustand/).
+
+## Notes
+
+<Aside type="caution" title="Pull-only">
+The runtime calls the getter once per run — not on every keystroke, scroll, or unrelated re-render. If the value is heavy to compute, memoize it inside the getter. If you need event-shaped updates (push), the right primitive is `useEvent`, not `useCondition`.
+</Aside>
+
+<Aside type="tip" title="Last-mount-wins">
+Mounting two providers for the same condition is allowed — the most recently mounted wins, and a DEV warn-once is emitted. On unmount the previous registration is restored. See [Ownership](/guide/architecture/ownership/).
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="useEvent" description="Fire events from producers." href="/api/react/use-event/" />
+  <LinkCard title="useAction" description="Register an action handler." href="/api/react/use-action/" />
+  <LinkCard title="Conditions guide" description="The full narrative on pull-only, snapshots and ownership." href="/guide/essentials/conditions/" />
+  <LinkCard title="@triggery/zustand" description="Use a Zustand store as a condition without re-rendering." href="/packages/zustand/" />
+</CardGrid>

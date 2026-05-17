@@ -1,0 +1,177 @@
+---
+title: "mockAction"
+description: "Подменить обработчик действия триггера в тестовом рантайме. Обычно принимает vi.fn() / jest.fn()."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Метод [`TestRuntime`](/ru/api/testing/create-test-runtime/), возвращаемого `createTestRuntime`. Регистрирует обработчик действия для триггера. Тестовый аналог [`useAction`](/ru/api/react/use-action/) — тот же механизм регистрации, без React.
+
+Обработчик обычно — это `vi.fn()` или `jest.fn()`, чтобы напрямую утверждать счётчики вызовов и аргументы.
+
+## Импорт
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+const rt = createTestRuntime();
+rt.mockAction(/* ... */);
+```
+
+## Сигнатура
+
+```ts
+mockAction<S extends TriggerSchema, K extends ActionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  handler: ActionFn<ActionMap<S>[K]>,
+): RegistrationToken;
+
+type ActionFn<P> = [P] extends [void] ? () => void : (payload: P) => void;
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `trigger` | `Trigger<S>` | Триггер, чьё действие подменяешь. |
+| `name` | `K extends ActionKey<S>` | Действие, объявленное в схеме триггера. |
+| `handler` | `ActionFn<P>` | Реализация подмены. Действия с void-полезной нагрузкой принимают `() => void`. |
+
+## Возвращает
+
+`RegistrationToken` со `{ unregister(): void }`.
+
+## Примеры
+
+### Утверждение аргументов вызова
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('calls showToast with the right payload', () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events:  { 'new-message': { author: string; text: string } };
+    actions: { showToast: { title: string } };
+  }>(
+    {
+      id: 'demo',
+      events: ['new-message'],
+      handler({ event, actions }) {
+        actions.showToast?.({ title: event.payload.author });
+      },
+    },
+    rt,
+  );
+
+  const showToast = vi.fn();
+  rt.mockAction(t, 'showToast', showToast);
+
+  rt.fireSync('new-message', { author: 'Alice', text: 'hi' });
+  expect(showToast).toHaveBeenCalledExactlyOnceWith({ title: 'Alice' });
+});
+```
+
+### Void-полезная нагрузка
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { vi } from 'vitest';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { close: void };
+  actions: { onClose: void };
+}>(
+  {
+    id: 'demo',
+    events: ['close'],
+    handler({ actions }) {
+      actions.onClose?.();
+    },
+  },
+  rt,
+);
+
+const onClose = vi.fn();
+rt.mockAction(t, 'onClose', onClose);
+rt.fireSync('close');
+```
+
+### Async-обработчик
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { vi } from 'vitest';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { save: { id: string } };
+  actions: { persist: { id: string } };
+}>(
+  {
+    id: 'demo',
+    events: ['save'],
+    async handler({ event, actions }) {
+      await actions.persist?.(event.payload);
+    },
+  },
+  rt,
+);
+
+const persist = vi.fn(async (_payload: { id: string }) => {
+  await Promise.resolve();
+});
+rt.mockAction(t, 'persist', persist);
+```
+
+### Очистка между тестами через unregister
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+
+const rt = createTestRuntime();
+const t = createTrigger<{
+  events: { ping: void };
+  actions: { log: void };
+}>(
+  { id: 'demo', events: ['ping'], handler({ actions }) { actions.log?.(); } },
+  rt,
+);
+
+const first = rt.mockAction(t, 'log', () => console.log('first'));
+rt.fireSync('ping'); // "first"
+
+first.unregister();
+rt.mockAction(t, 'log', () => console.log('second'));
+rt.fireSync('ping'); // "second"
+```
+
+## Замечания
+
+<Aside type="tip">
+Не забывай про `?.` при вызове действий внутри обработчика. Triggery считает каждое действие необязательным — обработчик триггера должен страховаться от незарегистрированного действия. Тесты должны подменять каждое действие, которое обработчик может вызвать; пропущенные заглушки превращаются в тихие no-op'ы и могут скрывать реальные баги.
+</Aside>
+
+<Aside type="caution">
+Исключение в моке всплывает в рантайме как `status: 'errored'` в снепшоте инспектора и пробрасывается в `onError` middleware. Сам fire не падает — оборачивай в `expect(...).rejects` только если тест прокидывает действие через цепочку `Promise`, которой ты сам управляешь.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTestRuntime" description="Рантайм, который предоставляет этот метод." href="/ru/api/testing/create-test-runtime/" />
+  <LinkCard title="mockCondition" description="Подменить условие — вторая половина тестовой обвязки." href="/ru/api/testing/mock-condition/" />
+  <LinkCard title="useAction" description="Рантайм-аналог в React." href="/ru/api/react/use-action/" />
+  <LinkCard title="Руководство по тестированию" description="Trigger-first паттерны тестов." href="/ru/guide/testing/unit-testing/" />
+</CardGrid>

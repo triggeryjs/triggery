@@ -1,0 +1,306 @@
+---
+title: Inspector
+description: "The per-run ring buffer, useInspect / useInspectHistory, debug panels, and how the inspector auto-disables in production."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Every runtime records a short, structured log of what just happened — what fired, what was skipped, what threw. That log is the **inspector**. It's the data source behind `useInspect`, `useInspectHistory`, `<InspectorView>`, the Redux DevTools bridge, the BroadcastChannel bridge and the replay tool. This page covers what's in a snapshot, the two React hooks, the ring buffer, and how to keep it out of your production bundle.
+
+## What's in a snapshot
+
+Each run of a trigger produces one `TriggerInspectSnapshot`. The shape is stable and JSON-friendly — safe to ship across a `postMessage` bridge or persist to disk:
+
+```ts
+type TriggerInspectSnapshot = {
+  readonly triggerId: string;
+  readonly runId: string;
+  readonly eventName: string;
+  readonly status: 'fired' | 'skipped' | 'errored' | 'aborted';
+  readonly reason?: string;                   // e.g. 'missing-required: settings'
+  readonly durationMs: number;
+  readonly executedActions: readonly string[]; // action names called by the handler
+  readonly snapshotKeys: readonly string[];   // condition names visible at fire-time
+};
+```
+
+The four statuses are mutually exclusive:
+
+| Status     | When the runtime records it |
+|------------|------|
+| `fired`    | The handler ran to completion (sync) or its promise settled (async). |
+| `skipped`  | A `required` condition wasn't registered, the trigger was disabled, or a middleware cancelled the fire. `reason` tells you which. |
+| `errored`  | The handler threw, or one of its actions threw. |
+| `aborted`  | Under `take-latest`, a newer run superseded this one. |
+
+`durationMs` is the wall time from "dispatch picked this trigger" to "handler returned". `executedActions` lists the action names actually invoked — useful for asserting in tests that a debounce really did suppress the second call.
+
+## The ring buffer
+
+Per runtime, snapshots go into a **ring buffer** of fixed size (default 50). When the buffer fills up, the oldest entry is overwritten. The data structure is allocation-free on the hot path: writes are O(1), and the buffer materialises a newest-first array only when someone calls `getInspectorBuffer()`.
+
+You configure the size when you create the runtime:
+
+```ts title="src/main.tsx"
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  inspectorBufferSize: 200, // default: 50
+});
+```
+
+A larger buffer costs nothing per fire and a few KB of memory total — bump it if you're investigating a flaky scenario and need more history.
+
+<Aside type="tip">
+The buffer is shared across all triggers in the runtime, not per-trigger. If you have 30 triggers and a buffer size of 50, a chatty trigger can crowd quieter ones out. Use a bigger buffer or filter by `triggerId` in your panel.
+</Aside>
+
+## `useInspect(trigger)` — the latest run of one trigger
+
+`useInspect` returns the most recent snapshot for a single trigger, or `undefined` if it hasn't run yet.
+
+```tsx title="src/dev/MessageTriggerStatus.tsx"
+import { useInspect } from '@triggery/react';
+import { messageTrigger } from '../triggers/message.trigger';
+
+export function MessageTriggerStatus() {
+  const last = useInspect(messageTrigger);
+  if (!last) return <p>no runs yet</p>;
+  return (
+    <p>
+      {last.eventName} — {last.status} in {last.durationMs.toFixed(1)} ms
+    </p>
+  );
+}
+```
+
+The hook doesn't subscribe. It reads `trigger.inspect()` on each render — fine for a panel that re-renders on user interaction, not enough for a live tail. Use `useInspectHistory` when you want updates as fires happen.
+
+## `useInspectHistory(limit)` — live tail of recent runs
+
+`useInspectHistory` subscribes to the runtime's inspector and returns the last `limit` snapshots, newest first. The component re-renders whenever a new run is recorded.
+
+```tsx title="src/dev/RecentRuns.tsx"
+import { useInspectHistory } from '@triggery/react';
+
+export function RecentRuns() {
+  const history = useInspectHistory(50);
+  return (
+    <table>
+      <thead>
+        <tr><th>trigger</th><th>event</th><th>status</th><th>ms</th></tr>
+      </thead>
+      <tbody>
+        {history.map((s) => (
+          <tr key={s.runId} data-status={s.status}>
+            <td>{s.triggerId}</td>
+            <td>{s.eventName}</td>
+            <td>{s.status}{s.reason ? ` (${s.reason})` : ''}</td>
+            <td>{s.durationMs.toFixed(1)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+```
+
+The hook is cheap — the subscription is a single `Set` membership; the only React work happens on a real fire. The `limit` argument truncates the visible slice; the buffer itself remembers up to `inspectorBufferSize` entries.
+
+<Aside type="tip">
+Solid and Vue bindings expose the same two hooks: `useInspect` and `useInspectHistory`. The implementation differs (Solid uses a signal, Vue uses a `ref`) but the call shape and types are identical.
+</Aside>
+
+## Building a debug panel
+
+Three patterns, increasing in commitment.
+
+### One-line drop-in: `<InspectorView>`
+
+`@triggery/devtools-panel` ships a pre-styled panel that works out of the box. Mount it under your runtime provider in development and you have a working inspector:
+
+```tsx title="src/App.tsx"
+import { InspectorView } from '@triggery/devtools-panel';
+
+export function App() {
+  return (
+    <>
+      <YourRealApp />
+      {import.meta.env.DEV && <InspectorView limit={50} />}
+    </>
+  );
+}
+```
+
+It's plain inline styles, no CSS imports, no external deps beyond `@triggery/react`. Useful for a quick "wire it up and forget".
+
+### Custom panel with filters
+
+When you want a real product-style devtool — search, status filters, trigger-by-trigger drill-down — drive it off `useInspectHistory` and a piece of local state:
+
+```tsx title="src/dev/DebugPanel.tsx"
+import { useInspectHistory } from '@triggery/react';
+import { useMemo, useState } from 'react';
+
+type StatusFilter = 'all' | 'fired' | 'skipped' | 'errored' | 'aborted';
+
+export function DebugPanel() {
+  const all = useInspectHistory(200);
+  const [status, setStatus] = useState<StatusFilter>('all');
+  const [search, setSearch] = useState('');
+
+  const visible = useMemo(
+    () =>
+      all.filter(
+        (s) =>
+          (status === 'all' || s.status === status) &&
+          (!search ||
+            s.triggerId.includes(search) ||
+            s.eventName.includes(search)),
+      ),
+    [all, status, search],
+  );
+
+  return (
+    <aside className="debug-panel">
+      <header>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="filter…" />
+        <select value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
+          <option value="all">all</option>
+          <option value="fired">fired</option>
+          <option value="skipped">skipped</option>
+          <option value="errored">errored</option>
+          <option value="aborted">aborted</option>
+        </select>
+        <span>{visible.length} / {all.length}</span>
+      </header>
+      <ul>
+        {visible.map((s) => (
+          <li key={s.runId} data-status={s.status}>
+            <strong>{s.triggerId}</strong> · {s.eventName} · {s.durationMs.toFixed(1)} ms
+            {s.reason && <em> — {s.reason}</em>}
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+```
+
+This is enough to debug 90 % of trigger problems. The remaining 10 % — diff-ing two runs, replaying a sequence — is what the standalone replay tool is for.
+
+### Replay and time-travel — `@triggery/devtools-replay`
+
+<Aside type="caution" title="Planned for V2">
+The standalone replay UI (record a session, scrub forward / back, re-fire any run with an edited payload) lives in `@triggery/devtools-replay` and ships with V2. In V1, snapshots are read-only — you can read history, you can't yet feed it back into the runtime. The data shape on the wire is already stable, so today's recordings will replay against V2 runtimes without re-instrumentation.
+</Aside>
+
+## Production: the inspector auto-disables
+
+By default the inspector is **on in development, off in production**. The check looks at `process.env.NODE_ENV` (which Vite, Webpack, Rollup, esbuild and Next all replace at build time). In a production build the runtime swaps the real inspector for a no-op:
+
+- `record()` is a no-op — no allocation, no `Map` write, no listener fan-out.
+- `subscribe()` returns a token whose callback never fires.
+- `getInspectorBuffer()` returns a frozen shared empty array.
+- `useInspect(trigger)` returns `undefined`.
+- `useInspectHistory()` returns the empty array on every render.
+
+The hot path saves ~30–40 % throughput on a trivial dispatch. The runtime exposes a boolean for tooling that needs to know:
+
+```ts
+runtime.inspectorEnabled; // true in dev, false in prod (with defaults)
+```
+
+### Selectively re-enabling in production
+
+Sometimes you want it on in production — a hidden support flow, a `?debug=1` flag for a beta cohort, a Sentry breadcrumb. Pass `inspector: true` to `createRuntime`:
+
+```ts title="src/main.tsx"
+import { createRuntime } from '@triggery/core';
+
+const runtime = createRuntime({
+  inspector: true, // always on, regardless of NODE_ENV
+});
+```
+
+Or pass an object to override per environment — handy when you want one branch of an A/B test to record:
+
+```ts
+const runtime = createRuntime({
+  inspector: {
+    dev: true,  // unchanged from the auto default
+    prod: location.search.includes('debug=1'),
+  },
+});
+```
+
+Possible values:
+
+| Value | Behaviour |
+|-------|-----------|
+| `undefined` (default) | DEV on, PROD off — auto. |
+| `true` | Always on. |
+| `false` | Always off. |
+| `{ dev?: boolean; prod?: boolean }` | Override per environment. Unset fields fall back to the auto default. |
+
+When the inspector is off, devtools that subscribe to it (`@triggery/devtools-redux`, `@triggery/devtools-bridge`, `useInspectHistory`) emit a one-time DEV warning so you don't waste time wondering why your panel is empty.
+
+## Custom buffers with `createInspector`
+
+The default ring buffer is what you want 99 % of the time. For specialised tooling — a multi-runtime aggregator, a custom replay format, a session-recorder — you can build your own and feed it through middleware. The public factory mirrors the runtime's internal API:
+
+```ts
+import type { InspectorImpl, TriggerInspectSnapshot } from '@triggery/core';
+
+function createSentryBreadcrumbInspector(): InspectorImpl {
+  return {
+    record(snapshot) {
+      Sentry.addBreadcrumb({
+        category: 'triggery',
+        type: snapshot.status === 'errored' ? 'error' : 'info',
+        message: `${snapshot.triggerId} ${snapshot.eventName}`,
+        data: snapshot,
+      });
+    },
+    getBuffer() { return []; },
+    getLastForTrigger() { return undefined; },
+    subscribe() { return () => {}; },
+    clear() {},
+  };
+}
+```
+
+Wire it via a middleware whose `onActionEnd` / `onSkip` / `onError` hooks call your custom `record`. The built-in inspector remains active for `useInspectHistory`; your inspector adds an extra side-channel. See the [Middleware](/guide/advanced/middleware/) page for the full lifecycle.
+
+## Pairs well with
+
+- **`@triggery/devtools-panel`** — `<InspectorView>`, `<TriggerSnapshotView>` for drop-in UIs.
+- **`@triggery/devtools-redux`** — render Triggery runs in Redux DevTools (they look like dispatched actions).
+- **`@triggery/devtools-bridge`** — postMessage bridge to a standalone window, useful for SSR / iframe debugging.
+
+All three subscribe to the same inspector. Mount as many as you like — the buffer fans out to every listener.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Middleware"
+    description="Hook into onFire / onSkip / onActionEnd / onError — the events the inspector itself listens to."
+    href="/guide/advanced/middleware/"
+  />
+  <LinkCard
+    title="Auto-discovery"
+    description="Use @triggery/vite so every *.trigger.ts file registers itself — inspector history survives HMR reloads."
+    href="/guide/advanced/auto-discovery/"
+  />
+  <LinkCard
+    title="@triggery/devtools-panel"
+    description="Pre-styled InspectorView / TriggerSnapshotView components."
+    href="/packages/devtools-panel/"
+  />
+  <LinkCard
+    title="Cascades"
+    description="parentRunId, parentTriggerId — how the inspector lets you follow an event chain."
+    href="/guide/architecture/cascade/"
+  />
+</CardGrid>

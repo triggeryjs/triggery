@@ -1,0 +1,41 @@
+---
+title: "Адаптеры"
+description: "Менеджеры состояния и источники событий, обёрнутые в условия и события Triggery — официальные, фреймворк-агностичные, по ~30 строк каждый."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Адаптеры подключают существующий менеджер состояния или источник событий к Triggery, не подписывая компоненты-хосты на обновления. Каждый — это тонкий хук, регистрирующий условие или событие в рантайме.
+
+## Адаптеры состояния
+
+| Пакет | Хук | Назначение |
+|---|---|---|
+| [`@triggery/zustand`](/ru/packages/zustand/) ![npm](https://img.shields.io/npm/v/@triggery/zustand?label=&style=flat-square) | `useZustandCondition(trigger, name, store, selector)` | Выставить срез Zustand как условие. |
+| [`@triggery/redux`](/ru/packages/redux/) ![npm](https://img.shields.io/npm/v/@triggery/redux?label=&style=flat-square) | `useReduxCondition(trigger, name, store, selector)` | Выставить селектор Redux как условие. |
+| [`@triggery/jotai`](/ru/packages/jotai/) ![npm](https://img.shields.io/npm/v/@triggery/jotai?label=&style=flat-square) | `useJotaiCondition(trigger, name, store, atom, selector?)` | Лениво читать атом Jotai. |
+| [`@triggery/mobx`](/ru/packages/mobx/) ![npm](https://img.shields.io/npm/v/@triggery/mobx?label=&style=flat-square) | `useMobxCondition(trigger, name, () => observable)` | Без трекинга зависимостей на компоненте-хосте. |
+| [`@triggery/reatom`](/ru/packages/reatom/) ![npm](https://img.shields.io/npm/v/@triggery/reatom?label=&style=flat-square) | `useReatomCondition(trigger, name, atom, selector?)` | Атомы Reatom v3 (v1000+). |
+| [`@triggery/signals`](/ru/packages/signals/) ![npm](https://img.shields.io/npm/v/@triggery/signals?label=&style=flat-square) | `useSignalCondition(trigger, name, signal, selector?)` | `@preact/signals-core`, `alien-signals`, любой сигнал с `peek()` / `.value`. |
+| [`@triggery/query`](/ru/packages/query/) ![npm](https://img.shields.io/npm/v/@triggery/query?label=&style=flat-square) | `useQueryCondition(trigger, name, queryClient, queryKey, selector?)` | Кэш TanStack Query. |
+
+## Адаптеры источников событий
+
+Прокидывают события извне рендер-дерева React/Solid/Vue в триггеры.
+
+| Пакет | Хук | Назначение |
+|---|---|---|
+| [`@triggery/dom`](/ru/packages/dom/) ![npm](https://img.shields.io/npm/v/@triggery/dom?label=&style=flat-square) | `useDomEvent`, `useResizeObserver`, `useIntersectionObserver` | Подключение DOM-событий и observer'ов к эмиттеру `useEvent`. |
+| [`@triggery/socket`](/ru/packages/socket/) ![npm](https://img.shields.io/npm/v/@triggery/socket?label=&style=flat-square) | `useSocketIoEvent`, `useWebSocketEvent` | Подключение `socket.io-client` или нативных WebSocket-кадров. |
+
+<Aside type="tip">
+Адаптеры намеренно крошечные — большинство по ~30 строк. Если нужно поддержать менеджер состояния, которого нет в списке, копирование одного из существующих адаптеров (например, `@triggery/zustand`) — самый быстрый путь. PR'ы приветствуются.
+</Aside>
+
+<CardGrid>
+  <LinkCard title="Интеграции" description="Сборщики, ESLint, codemod, CLI, devtools." href="/ru/ecosystem/integrations/" />
+  <LinkCard title="Витрина" description="Проекты с Triggery в продакшене." href="/ru/ecosystem/showcase/" />
+  <LinkCard title="Руководство по условиям" description="Роль адаптеров в сценарии." href="/ru/guide/essentials/conditions/" />
+</CardGrid>

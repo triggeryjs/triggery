@@ -1,0 +1,197 @@
+---
+title: Inline triggers
+description: "useInlineTrigger declares a one-off effect inside a component without spawning a *.trigger.ts file. When to use it, and when to graduate."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+A full `*.trigger.ts` file is the right home for any rule that's reused across the codebase, owned by a feature, or worth showing to a non-engineer. Most rules deserve that ceremony. **Some don't.** A modal that wants to close itself on a global `'esc:pressed'` event. A panel that records an analytics ping the moment a particular page becomes visible. A dev-only flag that re-runs a feature flow when a hot-key is hit.
+
+For these, the right tool is `useInlineTrigger` — a hook that declares a trigger inline, in the same file as the component that owns the side effect.
+
+## The shape
+
+```tsx title="src/features/CtaBanner.tsx"
+import { useInlineTrigger } from '@triggery/react';
+
+export function CtaBanner() {
+  useInlineTrigger<{ events: { 'cta:click': { id: string; placement: string } } }>({
+    on: 'cta:click',
+    do: ({ event }) => {
+      analytics.track('cta_click', event.payload);
+    },
+  });
+
+  return <button onClick={() => fireCta()}>Sign up</button>;
+}
+```
+
+Three things to notice:
+
+- The schema generic is the same as `createTrigger` — the events / conditions / actions maps. Most inline triggers only use `events`, so the other two are usually omitted.
+- `on` is the event name (must match one of the keys in `events`). It must be stable across renders.
+- `do` is the handler. It receives the same `ctx` argument as a normal trigger (`event`, `conditions`, `actions`, `check`, `signal`, `meta`).
+
+The hook is fire-and-forget: the trigger is created on mount, registered with the active runtime, and disposed on unmount. While the component is in the tree, the rule is live.
+
+## What the hook handles for you
+
+- **Stable id.** If you don't supply one, the hook generates a debug id (`inline:<counter>`) the first time it runs and pins it for the component's lifetime. That id appears in inspector entries so you can identify which inline trigger fired.
+- **Stable handler reference.** Internally the hook keeps a ref to your latest `do` callback. The trigger object itself is created once; subsequent re-renders update the handler without unregistering. So a closure over local state is fine — the freshest closure runs every time.
+- **Unmount cleanup.** When the component unmounts, the trigger is unregistered (`trigger.dispose()`). Any in-flight async run is aborted via `signal.aborted = true`.
+- **Scope inheritance.** If the hook is mounted inside a `<TriggerScope id="…">`, the inline trigger inherits that scope automatically.
+
+## When to use it
+
+The four cases that come up most often:
+
+### 1. Tiny analytics taps
+
+The component fires no actions; it just wants to react to a single event already flying through the app.
+
+```tsx
+function PricingPage() {
+  useInlineTrigger<{ events: { 'route:visible': { path: string } } }>({
+    on: 'route:visible',
+    do: ({ event }) => {
+      if (event.payload.path === '/pricing') analytics.page('pricing');
+    },
+  });
+  return <PricingContent />;
+}
+```
+
+### 2. Modal-stack glue
+
+A modal closes itself when the route changes. The rule is local to this component — there's no scenario worth naming.
+
+```tsx
+function ConfirmDialog({ onClose }: Props) {
+  useInlineTrigger<{ events: { 'route:change': void } }>({
+    on: 'route:change',
+    do: onClose,
+  });
+  return <Dialog>…</Dialog>;
+}
+```
+
+The `do` closure captures the latest `onClose` automatically via the ref.
+
+### 3. Dev-only flag-driven effects
+
+Press <kbd>Cmd-K</kbd>, fire `'devtools:open'`. A dev-only panel reacts to that event, no production cost.
+
+```tsx
+function DevToolbar() {
+  const [open, setOpen] = useState(false);
+
+  useInlineTrigger<{ events: { 'devtools:open': void } }>({
+    on: 'devtools:open',
+    do: () => setOpen(true),
+  });
+
+  if (!import.meta.env.DEV) return null;
+  return open ? <DevPanel onClose={() => setOpen(false)} /> : null;
+}
+```
+
+### 4. One-off integration with a library
+
+A new library you're evaluating fires an event you want to translate into a trigger-style scenario for half a day, before deciding whether it's worth a full `.trigger.ts` file.
+
+```tsx
+useInlineTrigger<{
+  events: { 'fancy-lib:event': { kind: string; data: unknown } };
+}>({
+  on: 'fancy-lib:event',
+  do: ({ event, signal }) => {
+    if (event.payload.kind !== 'ready') return;
+    if (signal.aborted) return;
+    initializeIntegration(event.payload.data);
+  },
+});
+```
+
+If it survives a day, promote to a full trigger.
+
+## When NOT to use it — the graduation rule of thumb
+
+`useInlineTrigger` is an escape hatch, not a default. Promote to a `*.trigger.ts` file as soon as any of these become true:
+
+- **The rule has `conditions` or `actions`.** Inline triggers can technically use both, but at that point you're hiding scenario logic inside a UI component. Move it out.
+- **More than one component would want to read this rule.** Once you'd consider extracting it, extract it.
+- **The handler grows past ~10 lines.** Inline triggers are meant to be visually small. Anything bigger turns the component file into a scenario file in disguise.
+- **You want named hooks for it.** Named hooks key off a separate trigger module — `createNamedHooks(trigger)` doesn't apply to inline triggers.
+- **You want it in the static `runtime.graph()`.** Inline triggers register at mount time and aren't visible to build-time graph extractors.
+- **You want it tested without rendering React.** Inline triggers live inside a hook — testing them means rendering the host component. A separate `.trigger.ts` file is straight-up testable.
+
+In other words: if the rule wants any of "a name product people would recognise", "tests", "reuse", "named hooks", "static graph" — it's a `createTrigger` rule, not a `useInlineTrigger` rule.
+
+## Custom id for stable inspector entries
+
+By default the hook auto-generates `inline:<counter>`. Two re-mounts of the same component get the same id within one session because the counter doesn't reset; cross-session ids are not stable. If you want a meaningful id in the inspector — useful when the inline trigger fires often and you grep the panel — pass one explicitly:
+
+```tsx
+useInlineTrigger({
+  id: 'cta-banner:cta-click',
+  on: 'cta:click',
+  do: ({ event }) => analytics.track('cta_click', event.payload),
+});
+```
+
+Ids must still be unique across the runtime. The same `id` mounted twice triggers Triggery's last-mount-wins behaviour: the second mount silently replaces the first. Useful for double-mounts under React StrictMode, but in production it means two separate `<CtaBanner>`s would step on each other — pick an id that includes the component instance discriminator, or stick with the auto-id.
+
+## What the hook doesn't do
+
+- **It doesn't auto-discover `*.trigger.ts` files.** That's [`@triggery/vite`](/guide/advanced/auto-discovery/)'s job. Inline triggers always register at mount, period.
+- **It doesn't accept `required`, `schedule`, `concurrency` or `scope`** in V1. The trigger runs on the active runtime's defaults (`microtask` schedule, `take-latest` concurrency, no `required`, inherits scope from the surrounding `<TriggerScope>`). If you need those knobs, that's another signal to graduate to a full `createTrigger` file.
+- **It doesn't dedupe.** Two components calling `useInlineTrigger` with the same auto-id pattern in the same render tree each create their own trigger. They both fire on a matching event.
+
+## TypeScript: avoid retyping the schema everywhere
+
+If two components share the same inline schema, lift it to a type:
+
+```tsx
+type CtaEvents = { events: { 'cta:click': { id: string; placement: string } } };
+
+function CtaBanner() {
+  useInlineTrigger<CtaEvents>({ on: 'cta:click', do: ({ event }) => {/* … */} });
+  // …
+}
+
+function CtaFooter() {
+  useInlineTrigger<CtaEvents>({ on: 'cta:click', do: ({ event }) => {/* … */} });
+  // …
+}
+```
+
+At which point you should ask yourself: is this still inline, or should there be a `cta.trigger.ts` and `useCtaClickEvent` named hook? The rule of thumb says yes — but the shared-type pattern is a perfectly fine intermediate step.
+
+## A subtle thing: the `on` field
+
+Internally the hook captures `on` at first render and pins it. Changing `on` between renders fires a DEV-only warning and has no effect on the registered trigger — the old event name still wins. This is intentional: a trigger whose event name flips between renders would create a registration churn that's not worth supporting. Pick the event at the call site; if you have to flip, mount two different inline triggers behind a conditional.
+
+## What's next
+
+<CardGrid>
+  <LinkCard
+    title="Trigger anatomy"
+    description="The full createTrigger shape — what you graduate to when an inline trigger outgrows its host component."
+    href="/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Named hooks"
+    description="Once you have a *.trigger.ts file, createNamedHooks gives you per-port hooks for it."
+    href="/guide/advanced/named-hooks/"
+  />
+  <LinkCard
+    title="Scopes"
+    description="Inline triggers inherit the surrounding scope — what scopes mean and when to use them."
+    href="/guide/architecture/scopes/"
+  />
+  <LinkCard
+    title="Anti-spaghetti"
+    description="How to keep handler files (inline or not) from sprawling."
+    href="/guide/architecture/anti-spaghetti/"
+  />
+</CardGrid>

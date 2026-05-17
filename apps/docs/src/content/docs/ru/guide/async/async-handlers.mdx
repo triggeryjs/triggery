@@ -1,0 +1,328 @@
+---
+title: "Асинхронные обработчики"
+description: "Пишем асинхронные обработчики триггеров, прокидываем AbortSignal, обрабатываем ошибки и избегаем зомби-сетевых-вызовов."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Обработчик триггера может быть `sync` или `async`. Асинхронные обработчики существуют ради одной причины: сценарий должен подождать что-то — `fetch`, чтение из IndexedDB, парсинг файла кусками, сообщение из воркера. Всё остальное (set state, диспатч действия, выпусти follow-up события) должно оставаться синхронным.
+
+Async также меняет жизненный цикл. Sync-обработчик доходит до конца за один тик; async-обработчик имеет *длительность*, может быть *superseded* более новым прогоном и владеет `AbortSignal` всё окно между первым `await` и `return`.
+
+## Когда использовать async-обработчик
+
+Когда сценарий не может решить, что делать, не дождавшись результата I/O.
+
+```ts title="src/triggers/search.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Hit = { id: string; title: string };
+
+export const searchTrigger = createTrigger<{
+  events:     { 'query-changed': { q: string } };
+  conditions: { apiBase: string };
+  actions:    { showResults: readonly Hit[]; showError: { message: string } };
+}>({
+  id: 'search-query',
+  events: ['query-changed'],
+  required: ['apiBase'],
+  async handler({ event, conditions, actions, signal }) {
+    if (!conditions.apiBase) return;
+    const url = `${conditions.apiBase}/search?q=${encodeURIComponent(event.payload.q)}`;
+    const res = await fetch(url, { signal });
+    const hits = (await res.json()) as readonly Hit[];
+    actions.showResults?.(hits);
+  },
+});
+```
+
+Обработчик `async`, `fetch` получает `{ signal }`, действие запускается только после возврата сетевого ответа. Это и есть весь паттерн — 13 строк, никаких лишних примитивов.
+
+## Когда async-обработчик не нужен
+
+Не делай обработчик `async`, если он ничего не `await`'ит. Три причины:
+
+1. Весь прогон становится промисом, который рантайм считает в полёте, что взаимодействует с `concurrency`. Sync-сценарий внезапно начинает вести себя как async.
+2. Ошибки, кинутые внутри `async`, ловятся как rejection'ы, а не синхронные throws. Поведение идентичное (см. [Поток ошибок](#поток-ошибок)), но ты теряешь более простые стек-трейсы.
+3. Обработчик кажется "в полёте" один microtask, что может замаскировать баги, где ты ждал, что `concurrency: 'take-first'` пропустит следующий прогон.
+
+Правило большого пальца: если нет `await`, убирай ключевое слово `async`.
+
+## Получаем и пробрасываем signal
+
+`ctx.signal` — это [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal). Рантайм им владеет, флипает его по трём причинам (разбираются в [Отмена](/ru/guide/async/cancellation/)) и **никогда** не глотает ошибки твоего обработчика при этом.
+
+Передавай `signal` в каждый async API, который его принимает:
+
+```ts
+async handler({ event, signal, actions }) {
+  const res = await fetch(event.payload.url, { signal });
+  const blob = await res.blob();
+  // Некоторые API принимают signal напрямую:
+  const bitmap = await createImageBitmap(blob);
+  actions.show?.({ bitmap });
+}
+```
+
+`fetch`, `Request`, `Response.body.getReader().read()`, `setTimeout` (через `AbortSignal.timeout`), `Worker.postMessage` с `AbortSignal`-обёртками, большинство клиентов баз и почти все современные stream API принимают `AbortSignal`. Используй его везде.
+
+<Aside type="tip">
+Если нужно объединить сигнал триггера со своим (например, per-fetch таймаут), используй [`AbortSignal.any`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/any_static):
+
+```ts
+const composite = AbortSignal.any([signal, AbortSignal.timeout(5000)]);
+const res = await fetch(event.payload.url, { signal: composite });
+```
+
+`AbortSignal.any` есть во всех evergreen-браузерах с 2024 года и в Node 20.3+.
+</Aside>
+
+## Идиома `signal.throwIfAborted()`
+
+Между границами `await` рантайм не может прервать твой код — JavaScript однопоточный. Проверка — твоя ответственность. Самый дешёвый, идиоматичный способ — `signal.throwIfAborted()` сразу после каждого `await`:
+
+```ts
+async handler({ event, conditions, actions, signal }) {
+  const profile = await fetchProfile(event.payload.userId, { signal });
+  signal.throwIfAborted();
+
+  const friends = await fetchFriends(profile.id, { signal });
+  signal.throwIfAborted();
+
+  const enriched = friends.map((f) => ({ ...f, viewerId: profile.id }));
+  actions.showFriends?.(enriched);
+}
+```
+
+Throw ловится рантаймом, распознаётся как abort (потому что `signal.aborted` == true), и прогон помечается `aborted` в инспекторе — **не** `errored`. Никакого `console.error`, никакого вызова `onError` в middleware. См. [Поток ошибок](#поток-ошибок).
+
+Почему throw, а не `if (signal.aborted) return`? Throw короткозамыкает всю работу после него без необходимости тащить early-return по каждому хелперу, который ты зовёшь. С несколькими await'ами лесенка `if/return` становится шумной. `throwIfAborted` — одна строка.
+
+## Связь между возвращаемым значением обработчика и жизненным циклом прогона
+
+Прогон считается завершённым **когда возвращённый промис обработчика устаканивается**. Никакого другого сигнала "конец прогона" нет. Три следствия:
+
+- **Не делай fire-and-forget.** Если ты зовёшь `fetch(...)` и не await'ишь — прогон резолвится до завершения запроса; рантайм не прервёт этот орфанный запрос, когда придёт следующее событие. Ты увидишь "зомби" сетевые вызовы в Network-вкладке.
+- **Не сохраняй промис снаружи замыкания обработчика.** Что переживёт обработчик — переживёт и `signal`.
+- **Возвращаемое значение игнорируется.** Обработчик возвращает `void | Promise<void>`. Возврат чего-то ещё — TS-ошибка.
+
+Конкретно, вот так — сломано:
+
+```ts
+async handler({ event, signal, actions }) {
+  // ✗ — орфанный запрос. `signal` не пробрасывается, и прогон закончится сейчас.
+  fetch(`/log?event=${event.name}`);
+
+  const res = await fetch(event.payload.url, { signal });
+  actions.show?.(await res.json());
+}
+```
+
+Фикс — одна строка:
+
+```ts
+async handler({ event, signal, actions }) {
+  // ✓ — запрос принадлежит прогону; прерывается вместе с ним.
+  await fetch(`/log?event=${event.name}`, { signal }).catch(() => {});
+
+  const res = await fetch(event.payload.url, { signal });
+  actions.show?.(await res.json());
+}
+```
+
+Или, если лог реально best-effort и блокироваться на нём не хочется: запусти его из отдельного триггера с `concurrency: 'take-every'`, тогда прогон завершится мгновенно, а лог пройдёт свой жизненный цикл.
+
+## Поток ошибок
+
+Рантайм различает три терминальных статуса прогона, записывает их в инспектор и роутит в middleware:
+
+| Статус       | Когда | Хук middleware |
+|---|---|---|
+| `'fired'`   | Обработчик вернулся / зарезолвился нормально. | `onActionEnd` для каждого действия |
+| `'aborted'` | Обработчик реджектнулся **и** `signal.aborted === true`. | (нет — молча) |
+| `'errored'` | Обработчик реджектнулся **и** `signal.aborted === false`. | `onError` |
+
+Разница между `'aborted'` и `'errored'` — единственное, что рантайм решает за тебя. Всё остальное — что логать, ретраить ли, как сообщать пользователю — живёт в middleware и хендлерах действий.
+
+```ts title="кастомный error-middleware"
+import type { Middleware } from '@triggery/core';
+
+export const errorReporter: Middleware = {
+  name: 'error-reporter',
+  onError({ triggerId, runId, error, actionName }) {
+    // До этого хука доходят только настоящие ошибки — aborts молча сбрасываются.
+    sentry.captureException(error, {
+      tags: { triggerId, runId, actionName },
+    });
+  },
+};
+```
+
+<Aside type="caution">
+Рантайм **никогда** не глотает ошибки обработчика молча. Обработчик, который кидает *и не abort*, всегда:
+
+1. Пишет снепшот со `status: 'errored'` и stringify'нутой ошибкой в `reason`.
+2. Зовёт `console.error('[triggery] handler "<id>" failed:', error)` как последнюю линию обороны.
+3. Зовёт `onError` на каждом зарегистрированном middleware.
+
+Если не хочешь, чтобы конкретная ошибка ушла наружу — лови её внутри обработчика. Рантайм рассматривает непойманный throw как реальную проблему, заслуживающую репорта.
+</Aside>
+
+## Последовательные await'ы с переплетёнными проверками
+
+Самый чистый async-обработчик читается сверху вниз: за каждым `await` сразу проверка abort. Никаких вложенных цепочек промисов, никаких `.then`.
+
+```ts title="src/triggers/onboarding.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type CurrentUser = { id: string };
+
+export const onboardingTrigger = createTrigger<{
+  events:     { 'user-signed-in': { userId: string } };
+  conditions: { apiBase: string; currentUser: CurrentUser };
+  actions:    {
+    setProfile: { name: string; email: string };
+    setOrgs:    readonly { id: string; name: string }[];
+    setBilling: { plan: string; trialEndsAt: number };
+    markReady:  void;
+  };
+}>({
+  id: 'onboarding-load',
+  events: ['user-signed-in'],
+  required: ['apiBase', 'currentUser'],
+  concurrency: 'take-latest',
+  async handler({ event, conditions, actions, signal }) {
+    if (!conditions.apiBase || !conditions.currentUser) return;
+    const base = conditions.apiBase;
+
+    const profile = await fetch(`${base}/users/${event.payload.userId}`, { signal }).then((r) =>
+      r.json(),
+    );
+    signal.throwIfAborted();
+    actions.setProfile?.(profile);
+
+    const orgs = await fetch(`${base}/users/${event.payload.userId}/orgs`, { signal }).then((r) =>
+      r.json(),
+    );
+    signal.throwIfAborted();
+    actions.setOrgs?.(orgs);
+
+    const billing = await fetch(`${base}/orgs/${orgs[0]?.id}/billing`, { signal }).then((r) =>
+      r.json(),
+    );
+    signal.throwIfAborted();
+    actions.setBilling?.(billing);
+
+    actions.markReady?.();
+  },
+});
+```
+
+Если пользователь разлогинился посреди загрузки, следующее событие прервёт этот прогон между двумя await'ами. Частичное состояние (profile, может быть orgs) уже окажется в твоём сторе через хендлеры действий — и это *правильно*. Триггер документировал, что именно коммитит каждый await.
+
+Если хочешь, чтобы *вся* последовательность была атомарной ("либо всё, либо ничего") — собирай в локальные переменные и диспатчи действия только после последнего await:
+
+```ts
+async handler({ event, conditions, actions, signal }) {
+  const [profile, orgs] = await Promise.all([
+    fetch(`${conditions.apiBase}/users/${event.payload.userId}`, { signal }).then((r) => r.json()),
+    fetch(`${conditions.apiBase}/users/${event.payload.userId}/orgs`, { signal }).then((r) => r.json()),
+  ]);
+  signal.throwIfAborted();
+  const billing = await fetch(`${conditions.apiBase}/orgs/${orgs[0]?.id}/billing`, { signal }).then((r) =>
+    r.json(),
+  );
+  signal.throwIfAborted();
+
+  actions.setProfile?.(profile);
+  actions.setOrgs?.(orgs);
+  actions.setBilling?.(billing);
+  actions.markReady?.();
+}
+```
+
+Два трейдоффа: первая версия раньше показывает частичный прогресс (выигрыш UX); вторая атомарная, но кажется медленнее. Выбирай по сценарию.
+
+## Распространённая ловушка: забыли передать `signal` в `fetch`
+
+Самый частый async-баг. Обработчик выглядит правильно, типы компилируются, happy path работает — а потом под нагрузкой пользователь видит устаревшие результаты от запроса, который должен был быть отменён три нажатия клавиш назад.
+
+```ts
+// ✗ Сломано — работает, но течёт.
+async handler({ event, actions }) {
+  const res = await fetch(`/search?q=${event.payload.q}`);
+  actions.show?.(await res.json());
+}
+```
+
+```ts
+// ✓ Починено.
+async handler({ event, signal, actions }) {
+  const res = await fetch(`/search?q=${event.payload.q}`, { signal });
+  signal.throwIfAborted();
+  actions.show?.(await res.json());
+}
+```
+
+Что ты увидишь со сломанной версией под `take-latest`:
+
+- 5 нажатий → 5 сетевых запросов, все в полёте.
+- Рантайм прерывает первые 4 обработчика через `signal.aborted = true`, но `fetch`-вызовы сигнал не видят — они продолжают.
+- Все 5 `await fetch(...)` в итоге резолвятся. Первые 4 кинут `AbortError` из `signal.throwIfAborted()`, если он есть. Без него все 5 зовут `actions.show` в порядке прибытия, **не** в порядке нажатий клавиш.
+- Пользователь видит мерцающие результаты, иногда заканчивающиеся не на том запросе.
+
+`@triggery/eslint-plugin` поставляет opt-in правило (`fetch-signal`), которое флагает вызовы `fetch()` внутри async-обработчиков без `{ signal }`.
+
+## Распространённая ловушка: ловить `AbortError` и продолжать
+
+```ts
+async handler({ event, signal, actions }) {
+  try {
+    const res = await fetch(event.payload.url, { signal });
+    actions.show?.(await res.json());
+  } catch (err) {
+    // ✗ Глотает abort — превращает чистую отмену в шумный путь ошибки.
+    console.error('failed', err);
+    actions.showError?.({ message: 'failed' });
+  }
+}
+```
+
+`AbortError` — это *не* ошибка в твоём сценарии, это значит, что рантайм отменил прогон. Перекинь её, чтобы рантайм классифицировал прогон как `'aborted'`, а не `'errored'`:
+
+```ts
+async handler({ event, signal, actions }) {
+  try {
+    const res = await fetch(event.payload.url, { signal });
+    actions.show?.(await res.json());
+  } catch (err) {
+    if (signal.aborted) throw err;             // пусть рантайм разберётся
+    actions.showError?.({ message: String(err) });
+  }
+}
+```
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Стратегии параллелизма"
+    description="Пять стратегий (take-latest, take-every, take-first, exhaust, queue) и когда какую брать."
+    href="/ru/guide/async/concurrency/"
+  />
+  <LinkCard
+    title="Отмена"
+    description="Откуда берётся abort signal, как чистить ресурсы и как интероп'иться со своими контроллерами."
+    href="/ru/guide/async/cancellation/"
+  />
+  <LinkCard
+    title="Debounce и throttle"
+    description="Прокси-цепочки actions.debounce / throttle / defer для расписания отдельных побочных эффектов."
+    href="/ru/guide/async/debouncing-throttling/"
+  />
+  <LinkCard
+    title="Обработчики"
+    description="Полный справочник ctx — event, conditions, actions, check, signal, meta."
+    href="/ru/guide/essentials/handlers/"
+  />
+</CardGrid>

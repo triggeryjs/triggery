@@ -1,0 +1,309 @@
+---
+title: "Типизация схемы"
+description: "Generic TriggerSchema, EventKey / ConditionKey / ActionKey, цепочка ctx обработчика, void-payload, брендированные id и советы для очень больших схем."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Вся типобезопасность Triggery идёт из **одного inline-generic** на `createTrigger`: это `TriggerSchema`, перечисляющий, какие у триггера события, условия и действия. Этот один тип питает восемь производных типов под капотом, сигнатуры хуков каждого фреймворк-биндинга и proxy именованных хуков. Эта страница ведёт по generic, по производным типам, которые иногда нужно называть явно, и по паттернам, масштабирующимся на большие схемы.
+
+## Generic TriggerSchema
+
+У `TriggerSchema` три необязательные карты:
+
+```ts
+type TriggerSchema = {
+  events?:     Record<string, unknown>;  // payload type per event name
+  conditions?: Record<string, unknown>;  // value type per condition name
+  actions?:    Record<string, unknown>;  // payload type per action name
+};
+```
+
+Все три необязательны, но у полезного триггера всегда есть как минимум `events` — без событий обработчик никогда не запускается. Схемы только с conditions или только с actions легальны, но редки.
+
+```ts
+import { createTrigger } from '@triggery/core';
+
+export const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { user: { id: string; name: string }; settings: { sound: boolean } };
+  actions:    { showToast: { title: string }; playSound: void };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user'],
+  handler({ event, conditions, actions, check }) {
+    if (!conditions.user) return;
+    if (check.is('settings', s => s.sound)) actions.playSound?.();
+    actions.showToast?.({ title: event.payload.author });
+  },
+});
+```
+
+Схема **и есть контракт**. Каждый ключ, каждый payload, каждый аргумент действия типизируется этим одним generic. Переименуй здесь `'new-message'` — и TS сломает каждый вызов `useEvent(messageTrigger, 'new-message')`.
+
+## Void-payload
+
+События и действия без данных используют `void`:
+
+```ts
+events:  { 'app:ready': void; 'message-received': { author: string } };
+actions: { incrementBadge: number; playSound: void };
+```
+
+`void` специально обрабатывается по всему API:
+
+```ts
+// Producer side
+const fireAppReady = useEvent(trigger, 'app:ready');
+fireAppReady();                         // ✓ no payload
+fireAppReady({ x: 1 });                 // ✗ TS error
+
+const fireMessage = useEvent(trigger, 'message-received');
+fireMessage({ author: 'Alice' });       // ✓ payload required
+fireMessage();                          // ✗ TS error
+
+// Action side
+actions.incrementBadge?.(1);            // ✓ payload required
+actions.playSound?.();                  // ✓ no payload
+```
+
+Поведение обеспечено небольшим conditional-типом в публичном API: `ActionFn<P> = [P] extends [void] ? () => void : (payload: P) => void`. Та же форма у хука продьюсера событий.
+
+## Производные типы, которые можно именовать
+
+Их редко приходится называть — inline-generic на `createTrigger` всё прокидывает сам. Но иногда пишешь generic-обёртку для компонента или тест-хелпер, и тогда они важны:
+
+```ts
+import type {
+  EventKey, ConditionKey, ActionKey,
+  EventMap, ConditionMap, ActionMap,
+  EventOf, TriggerCtx, TriggerHandler,
+} from '@triggery/core';
+
+type S = {
+  events:     { 'new-message': Message; 'urgent-message': Message };
+  conditions: { user: User };
+  actions:    { showToast: ToastPayload };
+};
+
+type Ev   = EventKey<S>;        // 'new-message' | 'urgent-message'
+type Cond = ConditionKey<S>;    // 'user'
+type Act  = ActionKey<S>;       // 'showToast'
+
+type EvMap   = EventMap<S>;     // { 'new-message': Message; 'urgent-message': Message }
+type EvUnion = EventOf<S>;      // { name: 'new-message';     payload: Message }
+                                // | { name: 'urgent-message'; payload: Message }
+
+type Ctx     = TriggerCtx<S, 'user'>;        // handler ctx with `user` required
+type Handler = TriggerHandler<S, 'user'>;
+```
+
+`EventOf<S>` — **discriminated union** из пар `(name, payload)`. Внутри обработчика свич по `event.name` автоматически сужает `event.payload`:
+
+```ts
+handler({ event }) {
+  switch (event.name) {
+    case 'new-message':    /* event.payload is Message */     break;
+    case 'urgent-message': /* event.payload is Message */     break;
+  }
+}
+```
+
+## Цепочка типа `ctx` обработчика
+
+Обработчик получает `TriggerCtx<S, R>`, где `R` — объединение обязательных условий. Шесть полей, каждое выведено из схемы или из `R`:
+
+```ts
+type TriggerCtx<S, R> = {
+  readonly event:      EventOf<S>;
+  readonly conditions: ConditionsCtx<ConditionMap<S>, R>;
+  readonly actions:    ActionsCtx<ActionMap<S>>;
+  readonly check:      CheckCtx<ConditionMap<S>>;
+  readonly meta:       MetaCtx;
+  readonly signal:     AbortSignal;
+};
+```
+
+`ConditionsCtx` делает ключи `R` обязательными, остальные — опциональными:
+
+```ts
+type ConditionsCtx<C, R extends keyof C = never> =
+  & { readonly [K in R]: C[K] }
+  & { readonly [K in Exclude<keyof C, R>]?: C[K] };
+```
+
+`ActionsCtx` делает каждый ключ действия опциональным (реактор может быть не смонтирован) и добавляет цепочку модификаторов:
+
+```ts
+type ActionsCtx<A> =
+  & { readonly [K in keyof A]?: ActionFn<A[K]> }
+  & {
+      debounce(ms: number): ActionsCtx<A>;
+      throttle(ms: number): ActionsCtx<A>;
+      defer(ms: number):    ActionsCtx<A>;
+    };
+```
+
+Это и есть type-system-причина, по которой каждый вызов действия в обработчике выглядит как `actions.foo?.(payload)` — `?` покрывает случай «реактор пока не зарегистрирован». Страница [Strict mode](/ru/guide/typescript/strict-mode/) объясняет, почему это намеренно и как читать это без раздражения.
+
+<Aside type="caution" title="V1 — required не сужает типы">
+В V1 `required: ['user']` обеспечивается **только в рантайме**. TypeScript всё равно типизирует `conditions.user` как `User | undefined`. Два безопасных способа прочитать обязательное условие:
+
+1. Ранний выход — `if (!conditions.user) return;` сужает остаток функции.
+2. `check.is('user', u => u.isActive)` — типобезопасный предикат, `u` имеет тип `NonNullable<User>`.
+
+Builder-API (`createTrigger<S>().require(['user']).handle(...)`) появится в V1.1 и сужает автоматически. Гард в рантайме идентичен — меняется только типизация.
+</Aside>
+
+## Переиспользование схемы — поделись один раз, уточняй пер-триггер
+
+В реальном приложении несколько триггеров ссылаются на одни и те же доменные типы. Вынеси их один раз:
+
+```ts title="src/domain/types.ts"
+export type User = { id: string; name: string; isActive: boolean };
+export type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
+export type Message = { author: string; text: string; channelId: string };
+```
+
+Тогда схема каждого триггера — на один экран и очевидна:
+
+```ts title="src/triggers/message.trigger.ts"
+import type { Message, Settings, User } from '../domain/types';
+
+createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { user: User; settings: Settings };
+  actions:    { showToast: { title: string }; playSound: void };
+}>({ /* … */ });
+```
+
+```ts title="src/triggers/badge.trigger.ts"
+import type { Message, User } from '../domain/types';
+
+createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { user: User; activeChannelId: string | null };
+  actions:    { incrementBadge: string };
+}>({ /* … */ });
+```
+
+Триггерам не обязательно делить схемы — одинаковые доменные типы и разные поверхности портов — это нормальный случай.
+
+## Брендированные id — защита кросс-API-вызовов
+
+Распространённый класс багов со строковыми id — передать `customerId` туда, где ждут `channelId`. TypeScript не отличает `string` от `string`. Брендированные типы — однострочное лекарство:
+
+```ts title="src/domain/ids.ts"
+declare const channelIdBrand: unique symbol;
+declare const userIdBrand: unique symbol;
+
+export type ChannelId = string & { readonly [channelIdBrand]: never };
+export type UserId    = string & { readonly [userIdBrand]:    never };
+
+export const channelId = (s: string): ChannelId => s as ChannelId;
+export const userId    = (s: string): UserId    => s as UserId;
+```
+
+Использование в схеме:
+
+```ts
+type Message = { author: UserId; channelId: ChannelId; text: string };
+
+createTrigger<{
+  events:     { 'new-message': Message };
+  conditions: { activeChannelId: ChannelId | null };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  handler({ event, conditions }) {
+    // ✓ branded-vs-branded comparison
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    // ✗ TS error: would catch a swap of UserId for ChannelId
+    // if (event.payload.author === conditions.activeChannelId) return;
+  },
+});
+```
+
+Рантайм видит обычные строки (бренд — это phantom-поле, исчезающее на этапе компиляции). Единственная цена — одна функция-конструктор на каждый брендированный тип и одно место, куда положить валидацию, если она нужна.
+
+## Глубина generic — почему мы используем интерфейсы вместо глубоких generic
+
+Публичные типы Triggery намеренно — **shallow-generic + mapped-типы**, а не вложенные conditional-лестницы. Причина: TypeScript-овский лимит глубины (`Type instantiation is excessively deep …`) на некоторых схемах включается уже на ~50 уровнях, а глубоко зацепленные `infer`-паттерны заметно подтормаживают IDE даже когда работают.
+
+В своём коде:
+
+- **Не прокидывай схему через три слоя generic-обёрток.** Каждый слой умножает стоимость.
+- **Предпочитай `type`-алиасы computed property mapped-типам**, когда нужно лишь назвать кусочек схемы.
+- **Используй производные типы** (`EventKey<S>`, `ActionMap<S>`) вместо переоткрытия их через свои conditional.
+
+Полезный smell-test: если редактору нужно больше полусекунды, чтобы показать hover-info на теле обработчика, — ты перешёл черту. Лечение почти всегда — ввести именованный промежуточный алиас.
+
+## Советы для очень больших схем
+
+Когда у одного сценария легитимно 8+ событий и десяток действий, литерал схемы становится трудночитаемым. Помогают два паттерна.
+
+### Разделение по ролям
+
+```ts title="src/triggers/checkout.trigger.ts"
+type CheckoutEvents = {
+  'checkout:started':    { cartId: string };
+  'checkout:abandoned':  { cartId: string; reason: string };
+  'checkout:completed':  { orderId: string };
+  'checkout:errored':    { cartId: string; error: string };
+};
+
+type CheckoutConditions = {
+  cart:    Cart;
+  user:    User;
+  payment: PaymentMethod | null;
+};
+
+type CheckoutActions = {
+  logAnalytics:  AnalyticsPayload;
+  showToast:     ToastPayload;
+  redirectTo:    string;
+  rollbackCart:  string;
+};
+
+createTrigger<{
+  events:     CheckoutEvents;
+  conditions: CheckoutConditions;
+  actions:    CheckoutActions;
+}>({ /* … */ });
+```
+
+Бонус: схема становится переиспользуемой для тестов, где нужно типизировать stub-`ctx`.
+
+### Разделение самого триггера
+
+Если у одного триггера 4 события, делающие несвязанные вещи — это не один сценарий, это четыре. Разрежь на четыре файла `.trigger.ts`. Лимит размера неформальный, но реальный: большинство сценариев укладываются в 30–80 строк файла триггера вместе с импортами.
+
+## Solid и Vue: та же схема, те же типы
+
+Биндинги реэкспортируют те же `TriggerSchema`, `EventKey`, `Trigger`, `TriggerCtx` и т.д. из `@triggery/core`. Схема, которую ты пишешь для React-приложения, идентична для Solid и Vue — отличается только реализация хуков на фреймворк. Кроссфреймворковые кодовые базы получают ровно одно место для поиска имён портов.
+
+## Дальше
+
+<CardGrid>
+  <LinkCard
+    title="Strict mode"
+    description="Почему каждое действие опциональное, почему каждое условие может быть undefined и как писать обработчики без `as any`."
+    href="/ru/guide/typescript/strict-mode/"
+  />
+  <LinkCard
+    title="Валидация"
+    description="Runtime-валидация payload через Standard Schema — превращает типы в проверяемые инварианты."
+    href="/ru/guide/typescript/validation/"
+  />
+  <LinkCard
+    title="Анатомия триггера"
+    description="Каждое поле конфига createTrigger в контексте."
+    href="/ru/guide/essentials/trigger-anatomy/"
+  />
+  <LinkCard
+    title="Именованные хуки"
+    description="Template-literal-тип, превращающий схему в пер-портовые имена хуков."
+    href="/ru/guide/advanced/named-hooks/"
+  />
+</CardGrid>

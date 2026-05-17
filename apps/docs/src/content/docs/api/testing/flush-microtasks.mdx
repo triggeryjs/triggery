@@ -1,0 +1,148 @@
+---
+title: "flushMicrotasks"
+description: "Drain pending microtasks so async handlers run before the next assertion."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+A method on the [`TestRuntime`](/api/testing/create-test-runtime/). Awaits twice to drain the pending microtask queue — first the queue you know about, then any follow-up microtasks queued by handlers that already ran.
+
+Use this after `rt.fire(...)` when the trigger's `schedule` is `'microtask'` (the default) and the test needs the handler to complete before the next assertion. `fireSync` does **not** need it — it runs handlers in the caller's stack.
+
+## Import
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+const rt = createTestRuntime();
+await rt.flushMicrotasks();
+```
+
+## Signature
+
+```ts
+flushMicrotasks(): Promise<void>;
+```
+
+## Parameters
+
+None.
+
+## Returns
+
+A `Promise<void>` that resolves after two microtask ticks.
+
+## Examples
+
+### Async fire, then assert
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('completes a microtask-scheduled handler', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { tick: void };
+    actions: { log: void };
+  }>(
+    { id: 'demo', events: ['tick'], handler({ actions }) { actions.log?.(); } },
+    rt,
+  );
+
+  const log = vi.fn();
+  rt.mockAction(t, 'log', log);
+
+  rt.fire('tick');
+  expect(log).not.toHaveBeenCalled(); // handler not run yet
+
+  await rt.flushMicrotasks();
+  expect(log).toHaveBeenCalledOnce();
+});
+```
+
+### Async handler chain
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('awaits an async action chain', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { fetch: string };
+    actions: { setData: { value: string } };
+  }>(
+    {
+      id: 'demo',
+      events: ['fetch'],
+      async handler({ event, actions }) {
+        const value = await Promise.resolve(`got-${event.payload}`);
+        actions.setData?.({ value });
+      },
+    },
+    rt,
+  );
+
+  const setData = vi.fn();
+  rt.mockAction(t, 'setData', setData);
+
+  rt.fire('fetch', 'x');
+  await rt.flushMicrotasks();
+  expect(setData).toHaveBeenCalledWith({ value: 'got-x' });
+});
+```
+
+### Multiple fires, single flush
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('drains all queued runs together', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { tick: number };
+    actions: { log: number };
+  }>(
+    { id: 'demo', events: ['tick'], handler({ event, actions }) { actions.log?.(event.payload); } },
+    rt,
+  );
+
+  const log = vi.fn();
+  rt.mockAction(t, 'log', log);
+
+  rt.fire('tick', 1);
+  rt.fire('tick', 2);
+  rt.fire('tick', 3);
+
+  await rt.flushMicrotasks();
+  expect(log).toHaveBeenCalledTimes(3);
+});
+```
+
+## Notes
+
+<Aside type="tip" title="fireSync skips this">
+If your trigger uses `schedule: 'sync'` — or your test uses `rt.fireSync(...)` — the handler runs in the caller's stack and you don't need to flush. Reach for `flushMicrotasks` only when the dispatch is microtask-scheduled (the default).
+</Aside>
+
+<Aside type="caution" title="Long async chains need timers">
+`flushMicrotasks` only drains microtasks, not `setTimeout`. If your handler uses `actions.debounce(ms)` or any timer-based action wrapper, pair it with [`createFakeScheduler`](/api/testing/fake-scheduler/) and call `advance(ms)` to drive the virtual clock.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTestRuntime" description="The runtime that exposes this method." href="/api/testing/create-test-runtime/" />
+  <LinkCard title="createFakeScheduler" description="Virtual clock for timer-based handlers." href="/api/testing/fake-scheduler/" />
+  <LinkCard title="createScheduler" description="The microtask scheduler being drained." href="/api/core/create-scheduler/" />
+  <LinkCard title="Testing guide" description="Async test patterns." href="/guide/testing/unit-testing/" />
+</CardGrid>

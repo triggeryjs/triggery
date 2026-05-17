@@ -1,0 +1,113 @@
+---
+title: "createCheck"
+description: "Строит DSL check, привязанный к снепшоту условий. Внутренний хелпер, экспортируемый для продвинутых сценариев."
+sidebar:
+  order: 5
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Строит хелпер `check`, который обработчики получают через `ctx.check`. Рантайм собирает его за тебя на каждом запуске — `createCheck` экспортируется только для редких случаев, когда нужно использовать тот же предикатный DSL вне контекста обработчика (кастомные middleware, тестирование по условиям, панели devtools).
+
+`is`, `all` и `any` принимают предикаты над `NonNullable<C[K]>`. Когда значение условия равно `undefined` или `null`, предикат не вызывается, а результат по этому ключу — `false`.
+
+## Импорт
+
+```ts
+import { createCheck } from '@triggery/core';
+```
+
+## Сигнатура
+
+```ts
+function createCheck<C extends Record<string, unknown>>(
+  conditions: C,
+): CheckCtx<C>;
+```
+
+## Параметры
+
+| Параметр | Тип | Описание |
+|---|---|---|
+| `conditions` | `Record<string, unknown>` | Карта-снепшот значений условий. Передавай ту же форму, которую рантайм даёт обработчикам. |
+
+## Возвращает
+
+Объект [`CheckCtx`](/ru/api/core/types/):
+
+| Метод | Сигнатура | Результат |
+|---|---|---|
+| `is(key, predicate)` | `(key, value => boolean) => boolean` | `true`, когда условие существует (не null) и предикат вернул truthy. |
+| `all(map)` | `({ key: predicate, … }) => boolean` | Каждое перечисленное условие должно существовать и проходить свой предикат. |
+| `any(map)` | `({ key: predicate, … }) => boolean` | Хотя бы одно перечисленное условие должно существовать и проходить свой предикат. |
+
+## Примеры
+
+### Внутри обработчика (обычный случай)
+
+Обычно ты используешь `ctx.check` вместо ручной сборки:
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+createTrigger<{
+  events: { ping: void };
+  conditions: { user: { active: boolean } | null; tenant: string | null };
+}>({
+  id: 'demo',
+  events: ['ping'],
+  handler({ check }) {
+    if (check.all({ user: u => u.active, tenant: t => t.length > 0 })) {
+      console.log('go');
+    }
+  },
+});
+```
+
+### Standalone (продвинутый — вне обработчика)
+
+```ts twoslash
+import { createCheck } from '@triggery/core';
+
+const check = createCheck({
+  user:   { active: true,  name: 'Alice' } as { active: boolean; name: string } | null,
+  tenant: 'acme-corp'                       as string | null,
+});
+
+check.is('user', u => u.active);                 // true
+check.all({ user: u => u.active, tenant: t => t.length > 0 }); // true
+check.any({ user: u => !u.active });             // false
+```
+
+### Null-safety
+
+```ts twoslash
+import { createCheck } from '@triggery/core';
+
+const check = createCheck({ user: null as { active: boolean } | null });
+
+// Predicate is never invoked when the value is null — no NPE risk.
+check.is('user', u => u.active); // false
+```
+
+## Замечания
+
+<Aside type="tip">
+`check.is/all/any` несут сужение `NonNullable<C[K]>` в типе параметра предиката — это обход ограничения V1, при котором `required: [...]` не сужает объект `conditions` внутри обработчика. Предпочитай `check` ручным null-guard'ам, когда это допустимо по читаемости.
+</Aside>
+
+<Aside type="caution">
+`createCheck` создаёт свежий объект DSL при каждом вызове. Рантайм уже делает это один раз за запуск; повторный вызов внутри горячего цикла добавляет лишние аллокации. Для предикатов, вычисляемых вне обработчиков (например, в тестах миддлвэров), переиспользуй возвращённый объект.
+</Aside>
+
+## См. также
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="Обработчик получает экземпляр `check` автоматически." href="/ru/api/core/create-trigger/" />
+  <LinkCard title="TriggerCtx" description="Полный тип контекста обработчика, включая `check`." href="/ru/api/core/types/trigger-ctx/" />
+  <LinkCard title="Руководство по условиям" description="Когда читать условия напрямую, а когда через `check`." href="/ru/guide/essentials/conditions/" />
+  <LinkCard title="Ограничение required" description="Зачем вообще существует `check` — заметки по сужению типов в V1." href="/ru/guide/essentials/trigger-anatomy/" />
+</CardGrid>

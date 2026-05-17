@@ -1,0 +1,98 @@
+---
+title: "@triggery/zustand"
+description: "Адаптер Zustand для Triggery — хук useZustandCondition подключает Zustand-стор как условие триггера."
+sidebar:
+  order: 7
+  badge:
+    text: Tier 2
+    variant: note
+---
+
+import { Aside, LinkCard, CardGrid, TabItem } from '@astrojs/starlight/components';
+
+import PackageManagers from '~/components/PackageManagers.astro';
+
+Читай [Zustand](https://github.com/pmndrs/zustand)-стор из условия Triggery. Pull-only — селектор вызывается в момент срабатывания, а не на каждое обновление стора, поэтому хост-компонент никогда не ререндерится из-за этого хука.
+
+[![npm](https://img.shields.io/npm/v/@triggery/zustand?style=flat-square)](https://www.npmjs.com/package/@triggery/zustand)
+[![bundle](https://img.shields.io/bundlephobia/minzip/@triggery/zustand?style=flat-square&label=gzip)](https://bundlephobia.com/package/@triggery/zustand)
+
+## Установка
+
+<PackageManagers pkg="@triggery/core @triggery/react @triggery/zustand zustand" />
+
+Peer-зависимости: `react >= 18.0.0`, `zustand ^4 || ^5`.
+
+## Что внутри
+
+| Экспорт | Назначение |
+|---|---|
+| `useZustandCondition(trigger, name, store, selector)` | Регистрирует условие, читающее Zustand. Работает и со сторами на `create` (хук), и на `createStore` (vanilla). |
+
+## Быстрый пример
+
+```tsx
+import { create } from 'zustand';
+import { createTrigger } from '@triggery/core';
+import { useZustandCondition } from '@triggery/zustand';
+
+type Settings = { sound: boolean; notifications: boolean };
+
+const useSettings = create<Settings>(() => ({
+  sound: true,
+  notifications: true,
+}));
+
+const messageTrigger = createTrigger<{
+  events: { 'new-message': { text: string } };
+  conditions: { settings: Settings };
+  actions: { showToast: { body: string } };
+}>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions }) {
+    if (!conditions.settings.notifications) return;
+    actions.showToast?.({ body: event.payload.text });
+  },
+});
+
+function SettingsBridge() {
+  useZustandCondition(messageTrigger, 'settings', useSettings, (s) => s);
+  return null;
+}
+```
+
+## Как это работает
+
+Рантайм pull-only: `selector(store.getState())` вызывается **только** при срабатывании триггера, а не при изменении стора. То есть:
+
+1. Ничего в React-дереве не ререндерится из-за этого хука. Если компоненту нужен тот же срез — рядом вызови собственный `useStore(store, selector)` Zustand.
+2. Триггер всегда видит актуальное состояние в момент срабатывания — без подписок и без риска устаревшего снимка.
+
+## API
+
+```ts
+useZustandCondition<T, S, K>(
+  trigger: Trigger<S>,
+  name: K,
+  store: { getState(): T },
+  selector: (state: T) => ConditionMap<S>[K],
+): void
+```
+
+## Связанные пакеты
+
+<CardGrid>
+  <LinkCard title="@triggery/core" description="Экспортирует Trigger<S>." href="/ru/packages/core/" />
+  <LinkCard title="@triggery/react" description="useZustandCondition — это React-хук." href="/ru/packages/react/" />
+  <LinkCard title="@triggery/redux" description="Альтернативный адаптер для Redux-сторов." href="/ru/packages/redux/" />
+  <LinkCard title="@triggery/jotai" description="Альтернативный адаптер для Jotai-атомов." href="/ru/packages/jotai/" />
+  <LinkCard title="@triggery/mobx" description="Альтернативный адаптер для MobX-observable." href="/ru/packages/mobx/" />
+</CardGrid>
+
+## Исходники
+
+- [GitHub](https://github.com/triggeryjs/triggery/tree/main/packages/zustand)
+- [npm](https://www.npmjs.com/package/@triggery/zustand)
+- [Changelog](https://github.com/triggeryjs/triggery/blob/main/packages/zustand/CHANGELOG.md)

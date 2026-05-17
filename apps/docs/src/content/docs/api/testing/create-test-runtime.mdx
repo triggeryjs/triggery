@@ -1,0 +1,178 @@
+---
+title: "createTestRuntime"
+description: "Build an isolated runtime extended with mockCondition / mockAction / flushMicrotasks."
+sidebar:
+  order: 1
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.1.0" />
+
+Constructs a `Runtime` extended with three test helpers — `mockCondition`, `mockAction`, and `flushMicrotasks`. This is the standard entry point for writing trigger tests without React: every test gets its own runtime, every condition and action is stubbed explicitly, and the microtask queue is drained on demand.
+
+The base runtime accepts the same [`RuntimeOptions`](/api/core/types/runtime-options/) as `createRuntime`.
+
+## Import
+
+```ts
+import { createTestRuntime } from '@triggery/testing';
+```
+
+## Signature
+
+```ts
+function createTestRuntime(options?: TestRuntimeOptions): TestRuntime;
+
+type TestRuntimeOptions = RuntimeOptions;
+
+type TestRuntime = Runtime & {
+  mockCondition<S, K>(
+    trigger: Trigger<S>,
+    name: K,
+    valueOrGetter: ConditionMap<S>[K] | (() => ConditionMap<S>[K]),
+  ): RegistrationToken;
+
+  mockAction<S, K>(
+    trigger: Trigger<S>,
+    name: K,
+    handler: ActionFn<ActionMap<S>[K]>,
+  ): RegistrationToken;
+
+  flushMicrotasks(): Promise<void>;
+};
+```
+
+## Parameters
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `options` | `RuntimeOptions` | `{}` | Same options as [`createRuntime`](/api/core/create-runtime/). |
+
+## Returns
+
+A `TestRuntime` — `Runtime` plus three helpers. See [`mockCondition`](/api/testing/mock-condition/), [`mockAction`](/api/testing/mock-action/), [`flushMicrotasks`](/api/testing/flush-microtasks/).
+
+## Examples
+
+### Basic test
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { describe, expect, it, vi } from 'vitest';
+
+describe('demo trigger', () => {
+  it('fires the action when the condition matches', () => {
+    const rt = createTestRuntime();
+    const t = createTrigger<{
+      events: { tick: number };
+      conditions: { enabled: boolean };
+      actions: { log: number };
+    }>(
+      {
+        id: 'demo',
+        events: ['tick'],
+        required: ['enabled'],
+        handler({ event, conditions, actions }) {
+          if (!conditions.enabled) return;
+          actions.log?.(event.payload);
+        },
+      },
+      rt,
+    );
+
+    rt.mockCondition(t, 'enabled', true);
+    const log = vi.fn();
+    rt.mockAction(t, 'log', log);
+
+    rt.fireSync('tick', 42);
+    expect(log).toHaveBeenCalledWith(42);
+  });
+});
+```
+
+### Async dispatch with microtask flush
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime } from '@triggery/testing';
+import { expect, it, vi } from 'vitest';
+
+it('drains microtasks before assertion', async () => {
+  const rt = createTestRuntime();
+  const t = createTrigger<{
+    events: { tick: void };
+    actions: { log: void };
+  }>(
+    {
+      id: 'demo',
+      events: ['tick'],
+      handler({ actions }) {
+        actions.log?.();
+      },
+    },
+    rt,
+  );
+
+  const log = vi.fn();
+  rt.mockAction(t, 'log', log);
+
+  rt.fire('tick');            // microtask scheduler — handler not yet ran
+  await rt.flushMicrotasks();
+  expect(log).toHaveBeenCalledTimes(1);
+});
+```
+
+### Cleanup between tests
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+import { createTestRuntime, type TestRuntime } from '@triggery/testing';
+import { afterEach, beforeEach } from 'vitest';
+
+let rt: TestRuntime;
+
+beforeEach(() => {
+  rt = createTestRuntime();
+});
+afterEach(() => {
+  rt.dispose(); // aborts in-flight handlers, drops registrations
+});
+```
+
+### With middleware
+
+```ts twoslash
+import { createTestRuntime } from '@triggery/testing';
+import type { Middleware } from '@triggery/core';
+
+const trace: Middleware = {
+  name: 'trace',
+  onActionEnd({ actionName, durationMs }) {
+    console.log(actionName, durationMs);
+  },
+};
+
+const rt = createTestRuntime({ middleware: [trace] });
+```
+
+## Notes
+
+<Aside type="tip">
+Pair `createTestRuntime` with [`createFakeScheduler`](/api/testing/fake-scheduler/) when your trigger uses `actions.debounce / throttle / defer`. The fake scheduler replaces `setTimeout` so you can `advance(N)` instead of waiting on real time.
+</Aside>
+
+<Aside type="caution">
+The `value | getter` overload in `mockCondition` uses a heuristic — a zero-arity function is treated as a getter. If your condition's value type is itself a zero-arity function, pass an explicit getter (`() => myFn`) to avoid the ambiguity.
+</Aside>
+
+## Related
+
+<CardGrid>
+  <LinkCard title="mockCondition" description="Stub a condition for tests." href="/api/testing/mock-condition/" />
+  <LinkCard title="mockAction" description="Stub an action handler." href="/api/testing/mock-action/" />
+  <LinkCard title="flushMicrotasks" description="Drain pending microtasks." href="/api/testing/flush-microtasks/" />
+  <LinkCard title="createFakeScheduler" description="Virtual-clock scheduler for debounce / throttle tests." href="/api/testing/fake-scheduler/" />
+</CardGrid>

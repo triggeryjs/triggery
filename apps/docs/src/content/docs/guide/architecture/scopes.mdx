@@ -1,0 +1,293 @@
+---
+title: Scopes
+description: "Run the same trigger logic in multiple isolated panels without conditions and actions stomping on each other."
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+A scope is a string id you pin to part of your component tree. Inside that subtree, conditions and actions are registered into a private bucket. A trigger declared with the same `scope` only sees that bucket — it does not see registrations made elsewhere, and other triggers don't see registrations made inside.
+
+That's it. Scopes are the smallest tool Triggery offers for "I need two instances of the same scenario without them stomping on each other".
+
+## When you reach for a scope
+
+The classic case: you render the same feature **N times** in parallel, and each instance has its own state. Three chat panels in a productivity app. Five workspace tabs in a designer tool. Two modal stacks layered on top of each other. With one runtime and no scope, every condition registered by a chat panel is visible to every chat-notification trigger — including the trigger instance handling another panel's messages. You end up firing the wrong toast on the wrong tab.
+
+```tsx title="The wrong shape — one scope, four panels, all conditions collide"
+<App>
+  <ChatPanel channelId="general" />     {/* registers useCondition('activeChannelId', …) */}
+  <ChatPanel channelId="random" />      {/* same condition, last-mount-wins, only one survives */}
+  <ChatPanel channelId="hiring" />
+  <NotificationLayer />                 {/* sees one of the three, can't tell which */}
+</App>
+```
+
+```tsx title="The right shape — one scope per panel, no cross-pollination"
+<App>
+  <TriggerScope id="panel:general">
+    <ChatPanel channelId="general" />
+  </TriggerScope>
+  <TriggerScope id="panel:random">
+    <ChatPanel channelId="random" />
+  </TriggerScope>
+  <TriggerScope id="panel:hiring">
+    <ChatPanel channelId="hiring" />
+  </TriggerScope>
+</App>
+```
+
+Each `<ChatPanel>` registers its conditions in its own scope, and the notification trigger inside the same panel only sees that panel's view of the world.
+
+## Two halves of the contract
+
+A scope only works when **both sides** opt in:
+
+1. The trigger declares `scope: <id>` in its `createTrigger` config.
+2. The components mounting the conditions, actions, and (optionally) the event producer live under `<TriggerScope id={<id>}>`.
+
+```ts title="src/triggers/panel-notification.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const panelNotificationTrigger = createTrigger<{
+  events:     { 'panel:new-message': { author: string; text: string; channelId: string } };
+  conditions: { activeChannelId: string | null; settings: { notifications: boolean } };
+  actions:    { showToast: { title: string; body: string } };
+}>({
+  id: 'panel-notification',
+  scope: 'chat-panel',                  // ← half one: declare the scope
+  events: ['panel:new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (!check.is('settings', s => s.notifications)) return;
+    actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+  },
+});
+```
+
+```tsx title="src/features/ChatPanel.tsx"
+import { useAction, useCondition, useEvent, TriggerScope } from '@triggery/react';
+import { panelNotificationTrigger } from '../triggers/panel-notification.trigger';
+
+function ChatPanelInner({ channelId }: { channelId: string }) {
+  useCondition(panelNotificationTrigger, 'activeChannelId', () => channelId, [channelId]);
+  useCondition(panelNotificationTrigger, 'settings', () => ({ notifications: true }), []);
+
+  useAction(panelNotificationTrigger, 'showToast', payload =>
+    toast.success(`[${channelId}] ${payload.title}`, { description: payload.body }),
+  );
+
+  const fire = useEvent(panelNotificationTrigger, 'panel:new-message');
+  return <button onClick={() => fire({ author: 'a', text: 'hi', channelId: 'other' })}>poke</button>;
+}
+
+// ← half two: wrap usage sites in a scope id that matches the trigger's `scope`.
+export function ChatPanel({ id, channelId }: { id: string; channelId: string }) {
+  return (
+    <TriggerScope id="chat-panel">
+      <ChatPanelInner channelId={channelId} />
+    </TriggerScope>
+  );
+}
+```
+
+<Aside type="tip">
+The scope id is a free-form string, but a convention saves arguments later: name it after the **trigger group**, not after the feature instance (`chat-panel`, not `chat-panel-general`). The scope id pairs with the trigger's `scope` field; the *instance* identity is whatever data you put into the conditions inside it.
+</Aside>
+
+## Visibility rules
+
+The matching is strict, on purpose.
+
+| Trigger's `scope` | Registration's scope | Visible? |
+|---|---|---|
+| `'chat'` | `'chat'` | yes |
+| `'chat'` | `'panel:general'` | no |
+| `'chat'` | global (no `<TriggerScope>` wrapping) | no |
+| (no `scope`) | `'chat'` | no |
+| (no `scope`) | global (no `<TriggerScope>` wrapping) | yes |
+
+A trigger without `scope` is the **global** trigger. Global triggers see only global registrations. Scoped triggers see only registrations with the matching scope. There is no implicit fall-through from a scope to global, and no implicit broadcast from global to scopes — both halves explicitly opt in.
+
+In DEV, scope mismatches are reported with a warn-once message per registration so the wiring problem doesn't fail silently:
+
+```text
+[triggery] registerCondition: scope mismatch — trigger "panel-notification" has scope "chat-panel"
+but the registration came from scope "(global)". The registration is ignored.
+```
+
+If you see this, one of the two halves is missing. The most common variant is "I added the `scope:` to the trigger but forgot to wrap the usage site" — or vice versa.
+
+## Stacking and nesting
+
+`<TriggerScope>` can be nested. The **innermost** scope wins — there is no composition. From the registry's point of view, only one scope id is active at the point where a `useCondition` / `useAction` runs.
+
+```tsx
+<TriggerScope id="outer">
+  <TriggerScope id="inner">
+    {/* useCondition here registers in scope "inner" — "outer" is invisible */}
+  </TriggerScope>
+</TriggerScope>
+```
+
+This is intentional. Composition ("a registration in `inner` is also visible to a trigger scoped to `outer`") was tried in the design phase and quickly stopped being useful — the moment two parent scopes were both active you'd need a precedence rule, and the rule that least surprised people was *don't*. Triggers and scopes are 1:1 strings.
+
+If you genuinely need overlapping scopes, give each trigger its own. Two triggers can share a handler implementation:
+
+```ts title="One handler, two scopes"
+import { createTrigger } from '@triggery/core';
+
+function makeNotificationTrigger(scope: 'chat' | 'doc-comments') {
+  return createTrigger<Schema>({
+    id: `notification-${scope}`,
+    scope,
+    events: ['new-item'],
+    required: ['settings'],
+    handler: notificationHandler,            // shared
+  });
+}
+
+export const chatNotification         = makeNotificationTrigger('chat');
+export const commentsNotification     = makeNotificationTrigger('doc-comments');
+```
+
+`max-handler-size` and the rest of the ESLint plugin still apply to the shared handler — they see the function body, not the call site.
+
+## Disposal
+
+When a `<TriggerScope>` unmounts, every `useCondition` / `useAction` inside it unmounts too — the standard React effect cleanup path. The registrations are removed from the runtime's stacks. If a trigger was running with an in-flight async handler, **the abort signal is not flipped** by scope unmount alone — only by `take-latest` supersession or `runtime.dispose()`. Defensive handlers check `signal.aborted` after every `await` and exit early. See [Concurrency](/guide/async/concurrency/) for the full discussion.
+
+```tsx title="A scope that comes and goes"
+function PanelHost({ open, id, channelId }: { open: boolean; id: string; channelId: string }) {
+  if (!open) return null;
+  return <ChatPanel id={id} channelId={channelId} />;     // wraps internals in <TriggerScope>
+}
+
+// closing the panel unmounts <TriggerScope>, which unmounts every useCondition/useAction inside.
+// The trigger itself stays in the runtime — only its bucket of registrations for this scope
+// becomes empty. A new panel can mount and refill the bucket.
+```
+
+The trigger object itself is not scoped to a `<TriggerScope>`. Triggers live for the runtime's lifetime (or until `trigger.dispose()`). What goes away with the scope is the bucket of conditions and actions tied to that scope id.
+
+## Scopes vs. multiple runtimes
+
+`<TriggerRuntimeProvider>` is the heavier sibling of `<TriggerScope>`. Both create isolation; they live at different layers.
+
+| Concern | `<TriggerScope>` | Separate `createRuntime()` |
+|---|---|---|
+| Registry of triggers | shared (one map per runtime) | separate maps |
+| Inspector ring buffer | shared | separate, configurable per runtime |
+| Middleware stack | shared (one per runtime) | independent stacks |
+| `maxCascadeDepth`, scheduler | shared | per-runtime override |
+| Wiring cost | one prop per usage site | one provider, one root wiring |
+| Use case | parallel feature instances, panels, tabs | tests, multi-tenant, sandboxed micro-frontends |
+
+Rule of thumb: reach for a scope when the **scenarios** want to be siblings. Reach for a runtime when the **rules of the engine** want to be siblings (different middleware, different inspector capacity, different cascade depth, different default schedule).
+
+A test usually wants a fresh runtime — see [Unit testing](/guide/testing/unit-testing/) — because it wants the inspector buffer to start empty and the middleware stack to be the test's own.
+
+## A worked example: notifications in a multi-panel app
+
+Below is the full wiring for the chat-panel scenario from the top of the page. Each panel is its own scope id, each panel has its own active channel, and the three panels never see each other's events.
+
+```ts title="src/triggers/panel-notification.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Settings = { notifications: boolean; sound: boolean };
+type Message  = { author: string; text: string; channelId: string };
+
+export const panelNotificationTrigger = createTrigger<{
+  events:     { 'panel:new-message': Message };
+  conditions: { activeChannelId: string | null; settings: Settings };
+  actions:    { showToast: { title: string; body: string }; playSound: 'beep' };
+}>({
+  id: 'panel-notification',
+  scope: 'chat-panel',
+  events: ['panel:new-message'],
+  required: ['settings'],
+  handler({ event, conditions, actions, check }) {
+    if (event.payload.channelId === conditions.activeChannelId) return;
+    if (check.is('settings', s => s.notifications)) {
+      actions.showToast?.({ title: event.payload.author, body: event.payload.text });
+    }
+    if (check.is('settings', s => s.sound)) {
+      actions.debounce(800).playSound?.('beep');
+    }
+  },
+});
+```
+
+```tsx title="src/features/chat/ChatPanel.tsx"
+import { TriggerScope, useAction, useCondition, useEvent } from '@triggery/react';
+import { toast } from 'sonner';
+import { panelNotificationTrigger } from '../../triggers/panel-notification.trigger';
+
+function ChatPanelInner({ channelId, settings }: { channelId: string; settings: Settings }) {
+  useCondition(panelNotificationTrigger, 'activeChannelId', () => channelId, [channelId]);
+  useCondition(panelNotificationTrigger, 'settings', () => settings, [settings]);
+
+  useAction(panelNotificationTrigger, 'showToast', payload =>
+    toast.success(payload.title, { description: payload.body }),
+  );
+  useAction(panelNotificationTrigger, 'playSound', () => {
+    new Audio('/beep.mp3').play().catch(() => {});
+  });
+
+  const fire = useEvent(panelNotificationTrigger, 'panel:new-message');
+  // …subscribe to the panel's own socket and call `fire(...)` on incoming messages.
+  return null;
+}
+
+export function ChatPanel(props: { id: string; channelId: string; settings: Settings }) {
+  return (
+    <TriggerScope id="chat-panel">
+      <ChatPanelInner channelId={props.channelId} settings={props.settings} />
+    </TriggerScope>
+  );
+}
+```
+
+```tsx title="src/App.tsx"
+<TriggerRuntimeProvider runtime={runtime}>
+  <ChatPanel id="general" channelId="general" settings={settingsGeneral} />
+  <ChatPanel id="random"  channelId="random"  settings={settingsRandom} />
+  <ChatPanel id="hiring"  channelId="hiring"  settings={settingsHiring} />
+</TriggerRuntimeProvider>
+```
+
+Three panels, three scopes — each scope is its own bucket of conditions/actions. Each `<ChatPanel>` instance gets its own toasts; switching the active channel inside one panel does not silence notifications in the others.
+
+If, the next quarter, the product team also wants a fourth panel with **separate middleware and inspector** (say, a heavily-traced "support agent" panel where you want every fire logged), promote that one panel to its own `createRuntime()` — the other three keep their scopes.
+
+## Limitations and gotchas
+
+- **One scope id at a time per subtree.** Nested scopes replace; there is no merge.
+- **Cross-scope fires are top-level.** A scoped trigger calling `runtime.fire('x')` does not pass the scope through the new event — the cascade child is matched against *its own* `scope` field by the runtime. If you want one scope to talk to another, the receiving trigger's `scope` is what determines visibility.
+- **The DEV warning is per-`(label, triggerId, scope, name)`** — once you've seen it for one collision, the same wiring won't keep spamming the console on re-renders.
+- **Server-side rendering**: scope ids are stable strings, so there is no hydration drift. See [Server-side rendering](/guide/ssr/server-side-rendering/) if your scopes are derived from request data.
+
+## Next
+
+<CardGrid>
+  <LinkCard
+    title="Ownership"
+    description="When two providers register the same condition or action — what happens, why, and how to test it."
+    href="/guide/architecture/ownership/"
+  />
+  <LinkCard
+    title="Anti-spaghetti"
+    description="Litmus tests for when a trigger pulls its weight, and when to split a fat one."
+    href="/guide/architecture/anti-spaghetti/"
+  />
+  <LinkCard
+    title="Cascades"
+    description="When one trigger's action fires another event — depth limits and cycle detection."
+    href="/guide/architecture/cascade/"
+  />
+  <LinkCard
+    title="Runtime"
+    description="createRuntime, providers, multiple runtimes for tests and micro-frontends."
+    href="/guide/essentials/runtime/"
+  />
+</CardGrid>

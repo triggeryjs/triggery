@@ -1,0 +1,278 @@
+---
+title: "Поиск с debounce"
+description: "Автокомплит со стратегией take-latest, отменой через AbortSignal и debounce на 300 мс — без единого useEffect в компоненте поля ввода."
+sidebar:
+  order: 4
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+
+Классика автокомплита: пользователь печатает в поле поиска, приложение запрашивает подсказки у API, поздние ответы не должны перетирать свежие, сеть не должна задалбливаться. Без Triggery это сорокастрочный `useEffect` с ref'ами, ручным учётом гонок и `AbortController`, который таскаешь руками. С Triggery поле ввода запускает одно событие на нажатие клавиши, а триггер декларативно разбирается с concurrency, отменой и debounce.
+
+<StackBlitzButton path="examples/vite-react-debounced-search" label="Открыть в StackBlitz" />
+
+## Сценарий
+
+1. **Каждое нажатие запускает** `search-query` с текущим значением поля.
+2. **Триггер ставит debounce** на сетевой вызов на 300 мс — серия нажатий схлопывается в один запрос.
+3. **Стратегия `take-latest`** отменяет любой in-flight-запрос, как только приходит новое нажатие.
+4. **Триггер использует `ctx.signal`** — `fetch` отменяется на уровне сети, а не просто игнорируется при resolve.
+5. **Реактор пишет результаты** в стор, на который подписан дропдаун.
+
+## Раскладка по файлам
+
+<FileTree>
+- src/
+  - triggers/
+    - **search.trigger.ts** debounce + take-latest + fetch
+  - features/
+    - search/
+      - SearchInput.tsx продьюсер (`useEvent`)
+      - SuggestionDropdown.tsx реактор и UI
+  - stores/
+    - suggestions.ts простой стор
+</FileTree>
+
+## 1. Триггер
+
+```ts title="src/triggers/search.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+type Suggestion = { id: string; label: string };
+
+export const searchTrigger = createTrigger<{
+  events: {
+    'search-query': string;
+  };
+  actions: {
+    setSuggestions: readonly Suggestion[];
+    setError:       string;
+    setLoading:     boolean;
+  };
+}>({
+  id: 'search',
+  events: ['search-query'],
+  // Новые нажатия отменяют старые fetch'и через ctx.signal.
+  concurrency: 'take-latest',
+  async handler({ event, actions, signal }) {
+    const q = event.payload.trim();
+
+    if (q.length < 2) {
+      actions.setSuggestions?.([]);
+      actions.setLoading?.(false);
+      return;
+    }
+
+    // Debounce серии нажатий в один поход в сеть.
+    actions.debounce(300).setLoading?.(true);
+
+    try {
+      const url = `/api/search?q=${encodeURIComponent(q)}`;
+      const res = await fetch(url, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as readonly Suggestion[];
+
+      actions.setSuggestions?.(data);
+      actions.setError?.('');
+    } catch (err) {
+      // `take-latest` отменяет предыдущий запуск через `signal` — глотаем
+      // именно этот случай, чтобы не нарисовать фантомную ошибку отмены.
+      if ((err as Error).name === 'AbortError') return;
+      actions.setError?.((err as Error).message);
+    } finally {
+      actions.setLoading?.(false);
+    }
+  },
+});
+```
+
+<Aside type="caution">
+Чтобы отмена реально обрезала запрос, должны сойтись две вещи:
+
+1. **`concurrency: 'take-latest'`** — говорит рантайму отменять предыдущий запуск при новом событии.
+2. **`fetch(url, { signal })`** — пробрасывает `AbortSignal` рантайма в сетевой слой.
+
+Пропустишь любое — получишь тот самый баг автокомплита «результаты прыгнули обратно на старый запрос».
+</Aside>
+
+## 2. Продьюсер
+
+Поле запускает одно событие на нажатие. Весь компонент — вот он.
+
+```tsx title="src/features/search/SearchInput.tsx"
+import { useEvent } from '@triggery/react';
+import { useState } from 'react';
+import { searchTrigger } from '../../triggers/search.trigger';
+
+export function SearchInput() {
+  const [value, setValue] = useState('');
+  const fireQuery = useEvent(searchTrigger, 'search-query');
+
+  return (
+    <input
+      type="search"
+      placeholder="Type to search…"
+      value={value}
+      onChange={e => {
+        const next = e.target.value;
+        setValue(next);
+        fireQuery(next);
+      }}
+    />
+  );
+}
+```
+
+Никаких `useEffect`. Никаких `AbortController`. Никаких `setTimeout`. Никакого слежения за «id последнего запроса». Поле ввода вообще не знает, что где-то происходит fetch.
+
+## 3. Реактор
+
+Маленький стор хранит последний набор результатов. Реактор пишет в него; дропдаун подписан и рендерится.
+
+```ts title="src/stores/suggestions.ts"
+import { create } from 'zustand';
+
+type Suggestion = { id: string; label: string };
+
+type State = {
+  suggestions: readonly Suggestion[];
+  loading: boolean;
+  error: string;
+  setSuggestions: (next: readonly Suggestion[]) => void;
+  setLoading:     (next: boolean) => void;
+  setError:       (next: string) => void;
+};
+
+export const useSuggestionsStore = create<State>(set => ({
+  suggestions: [],
+  loading: false,
+  error: '',
+  setSuggestions: suggestions => set({ suggestions }),
+  setLoading:     loading => set({ loading }),
+  setError:       error => set({ error }),
+}));
+```
+
+```tsx title="src/features/search/SuggestionDropdown.tsx"
+import { useAction } from '@triggery/react';
+import { searchTrigger } from '../../triggers/search.trigger';
+import { useSuggestionsStore } from '../../stores/suggestions';
+
+export function SuggestionDropdown() {
+  const { suggestions, loading, error, setSuggestions, setLoading, setError } =
+    useSuggestionsStore();
+
+  useAction(searchTrigger, 'setSuggestions', setSuggestions);
+  useAction(searchTrigger, 'setLoading',     setLoading);
+  useAction(searchTrigger, 'setError',       setError);
+
+  if (error) return <p role="alert">{error}</p>;
+  if (loading && suggestions.length === 0) return <p>Searching…</p>;
+  if (suggestions.length === 0) return null;
+
+  return (
+    <ul role="listbox">
+      {suggestions.map(s => (
+        <li key={s.id} role="option">{s.label}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+Дропдаун — обычный React-компонент. Triggery владеет только *поведением*; UI — твой.
+
+## 4. Собираем вместе
+
+```tsx title="src/features/search/Search.tsx"
+import { SearchInput } from './SearchInput';
+import { SuggestionDropdown } from './SuggestionDropdown';
+
+export function Search() {
+  return (
+    <div className="search">
+      <SearchInput />
+      <SuggestionDropdown />
+    </div>
+  );
+}
+```
+
+## Тесты
+
+Сфокусированный vitest — без React, без DOM, без настоящей сети.
+
+```ts title="src/triggers/search.trigger.test.ts"
+import { createTestRuntime, mockAction } from '@triggery/testing';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { searchTrigger } from './search.trigger';
+
+describe('search', () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('aborts the previous fetch on a new keystroke', async () => {
+    const rt = createTestRuntime({ triggers: [searchTrigger] });
+    const setSuggestions = vi.fn();
+    mockAction(rt, searchTrigger, 'setSuggestions', setSuggestions);
+    mockAction(rt, searchTrigger, 'setLoading', () => {});
+
+    const aborted: string[] = [];
+    globalThis.fetch = vi.fn((url, init) =>
+      new Promise<Response>((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          aborted.push(String(url));
+          reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+        });
+        setTimeout(() => resolve(new Response('[]', { status: 200 })), 50);
+      }),
+    ) as typeof fetch;
+
+    rt.fire('search-query', 'tri');
+    await new Promise(r => setTimeout(r, 5));
+    rt.fire('search-query', 'trig');
+
+    await new Promise(r => setTimeout(r, 80));
+
+    expect(aborted.some(u => u.includes('q=tri&') || u.endsWith('q=tri'))).toBe(true);
+    expect(setSuggestions).toHaveBeenCalled();
+  });
+
+  it('does not fetch for queries shorter than 2 chars', async () => {
+    const rt = createTestRuntime({ triggers: [searchTrigger] });
+    const setSuggestions = vi.fn();
+    globalThis.fetch = vi.fn() as unknown as typeof fetch;
+    mockAction(rt, searchTrigger, 'setSuggestions', setSuggestions);
+
+    await rt.fire('search-query', 'a');
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(setSuggestions).toHaveBeenCalledWith([]);
+  });
+});
+```
+
+## Что ты от этого получаешь
+
+| | До (useEffect + AbortController) | С Triggery |
+|---|---|---|
+| **Строк в компоненте поля** | 25–40 (таймер + ref + abort + cleanup) | один вызов `useEvent` |
+| **Баг с поздним ответом** | Всегда поджидает | Невозможен — `take-latest` отменяет |
+| **Утечка таймера debounce при unmount** | Проблема вызывающего | Владеет рантайм |
+| **Переключение на throttle / leading-edge** | Переписывать эффект | Одна строка в триггере |
+| **Тестируется без DOM** | Нет (таймеры, ref'ы) | Да |
+
+## Варианты и похожее
+
+<CardGrid>
+  <LinkCard title="Стратегии параллелизма" href="/ru/guide/essentials/trigger-anatomy/" description="Когда выбрать take-latest, take-first или queue." />
+  <LinkCard title="useEvent" href="/ru/api/react/use-event/" description="Справка по хуку." />
+</CardGrid>
