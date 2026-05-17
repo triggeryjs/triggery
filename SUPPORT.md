@@ -33,9 +33,14 @@ so the proposal can be reviewed against the project's stability guarantees.
 
 ## I want to chat
 
-→ GitHub Discussions for now. A Discord server will open at the 1.0 release.
-Until then, async discussion in Discussions is the canonical channel — keeps the
-knowledge searchable and accessible to everyone.
+→ Join the [**Triggery Discord**](https://triggeryjs.github.io/discord/) — live
+help in `#help-react` / `#help-solid` / `#help-vue` / `#help-adapters` /
+`#help-devtools`, RFC discussions in `#rfc-proposals`, project notes in
+`#devlog`.
+
+For anything you'd want a future visitor to find via Google,
+[GitHub Discussions](https://github.com/triggeryjs/triggery/discussions) is
+still the better channel — chat scroll loses things, indexed Q&A doesn't.
 
 ## I need a private/commercial channel
 

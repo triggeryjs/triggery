@@ -213,8 +213,9 @@ similar) to commits or PRs. Attribute work to humans.
 For changes that affect public API surface, runtime semantics, or anything
 described in the README or docs:
 
-1. Open an [RFC issue](https://github.com/triggeryjs/triggery/issues/new?template=rfc.yml).
-2. Get ≥ 1 maintainer approval on the design before writing code.
+1. Sketch the idea in [`#rfc-proposals` on Discord](https://triggeryjs.github.io/discord/) to gauge interest and surface objections early.
+2. Open an [RFC issue](https://github.com/triggeryjs/triggery/issues/new?template=rfc.yml) once the shape is clear.
+3. Get ≥ 1 maintainer approval on the design before writing code.
 
 This avoids the "weeks of work, rejected at review" outcome that hurts
 contributors and maintainers equally.
