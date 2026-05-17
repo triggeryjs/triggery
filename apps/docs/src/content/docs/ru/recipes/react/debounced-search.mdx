@@ -7,12 +7,10 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 Классика автокомплита: пользователь печатает в поле поиска, приложение запрашивает подсказки у API, поздние ответы не должны перетирать свежие, сеть не должна задалбливаться. Без Triggery это сорокастрочный `useEffect` с ref'ами, ручным учётом гонок и `AbortController`, который таскаешь руками. С Triggery поле ввода запускает одно событие на нажатие клавиши, а триггер декларативно разбирается с concurrency, отменой и debounce.
 
 <StackBlitzButton path="examples/vite-react-debounced-search" label="Открыть в StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-debounced-search" label="Открыть в CodeSandbox" />
 
 ## Сценарий
 

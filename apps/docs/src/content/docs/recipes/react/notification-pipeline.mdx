@@ -7,7 +7,6 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, TabItem, Steps, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 import PackageManagers from '~/components/PackageManagers.astro';
 
 The canonical scenario: a new chat message arrives and three side effects happen *in different components*, gated by *user state owned by yet another component*. None of them know about each other. Reading the trigger file tells a product manager exactly what happens, and reading the components tells nobody anything but their own job.
@@ -15,7 +14,6 @@ The canonical scenario: a new chat message arrives and three side effects happen
 This is the scenario the rest of the docs use to compare against `useEffect`/saga/listener alternatives.
 
 <StackBlitzButton path="examples/vite-react-notifications" label="Open the full example in StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-notifications" label="Open the full example in CodeSandbox" />
 
 ## Scenario
 

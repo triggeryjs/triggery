@@ -7,7 +7,6 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 The same entity is rendered twice in the UI — once as a node on a diagram, once as a row in a table. Hovering or clicking either pane should reflect in the other. Classic UI problem, ugly in every framework:
 
@@ -22,7 +21,6 @@ Triggery splits the problem in two:
 - the two panes are pure consumers — they don't know about each other, only about the store.
 
 <StackBlitzButton path="examples/vite-react-diagram-table-sync" label="Open in StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-diagram-table-sync" label="Open in CodeSandbox" />
 
 ## Scenario
 

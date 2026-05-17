@@ -7,12 +7,10 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 Auth events are an architectural mess in every app: the access token expired *while the user was halfway through editing a form*, or a permission was revoked *while they have a privileged screen open*. Without a coordinator, every form and every screen has to subscribe to "auth events" and decide for itself. With Triggery, *the trigger* decides — features just register their state and their handlers.
 
 <StackBlitzButton path="examples/vite-react-auth-reactions" label="Open in StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-auth-reactions" label="Open in CodeSandbox" />
 
 ## Scenario
 

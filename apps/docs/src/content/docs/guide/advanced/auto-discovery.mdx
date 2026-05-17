@@ -17,6 +17,7 @@ A trigger only matters once `createTrigger(...)` has run — that's the call tha
 import "/abs/path/src/features/chat/chat.trigger.ts";
 import "/abs/path/src/features/notifications/notifications.trigger.ts";
 import "/abs/path/src/triggers/analytics.trigger.ts";
+
 export {};
 ```
 
@@ -136,6 +137,7 @@ If you're not on Vite, or you want a no-plugin escape, Vite ships an equivalent 
 import.meta.glob('./triggers/**/*.trigger.ts', { eager: true });
 
 import { createRuntime } from '@triggery/core';
+
 // …
 ```
 

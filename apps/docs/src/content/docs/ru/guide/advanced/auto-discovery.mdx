@@ -17,6 +17,7 @@ import PackageManagers from '~/components/PackageManagers.astro';
 import "/abs/path/src/features/chat/chat.trigger.ts";
 import "/abs/path/src/features/notifications/notifications.trigger.ts";
 import "/abs/path/src/triggers/analytics.trigger.ts";
+
 export {};
 ```
 
@@ -136,6 +137,7 @@ triggery({
 import.meta.glob('./triggers/**/*.trigger.ts', { eager: true });
 
 import { createRuntime } from '@triggery/core';
+
 // …
 ```
 

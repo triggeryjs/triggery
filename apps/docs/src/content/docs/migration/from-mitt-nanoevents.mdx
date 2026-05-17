@@ -25,6 +25,7 @@ import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 
 ```ts title="Before — mitt"
 import mitt from 'mitt';
+
 type Events = { 'cart:added': { sku: string }; 'cart:removed': string };
 export const bus = mitt<Events>();
 ```

@@ -7,7 +7,6 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 Одна и та же сущность рисуется в интерфейсе дважды — узлом в диаграмме и строкой в таблице. При наведении или клике в одной панели нужно подсветить совпадение в другой. Классическая UI-задача, и в любом фреймворке она решается через одно из трёх:
 
@@ -22,7 +21,6 @@ Triggery делит задачу пополам:
 - две панели — чистые потребители, они не знают друг о друге, только о сторе.
 
 <StackBlitzButton path="examples/vite-react-diagram-table-sync" label="Открыть в StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-diagram-table-sync" label="Открыть в CodeSandbox" />
 
 ## Сценарий
 

@@ -7,12 +7,10 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 The analytics anti-pattern: every button and every form imports a `track(...)` helper, which imports the Segment SDK, which imports Amplitude, which is conditional on a feature flag — and the moment you want to swap providers, half your codebase changes. Triggery flips it: components fire a generic `ui:event`, a single trigger routes it to the right destination, and swapping providers is a one-file change.
 
 <StackBlitzButton path="examples/vite-react-analytics" label="Open in StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-analytics" label="Open in CodeSandbox" />
 
 ## Scenario
 

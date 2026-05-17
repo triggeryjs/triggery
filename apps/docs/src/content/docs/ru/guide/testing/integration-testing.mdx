@@ -299,10 +299,12 @@ DOM-проверка ловит баги, которые инспектор пр
 
 ```ts title="src/setupTests.ts"
 import '@testing-library/jest-dom/vitest';
+
 ```
 
 ```ts title="vitest.config.ts"
 import { defineConfig } from 'vitest/config';
+
 export default defineConfig({
   test: {
     environment: 'jsdom',

@@ -7,12 +7,10 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 A chat app subscribes to a `socket.io` connection. Every inbound message has to fan out: invalidate the conversation query, append the message to a list cache, and bump an unread badge — but only for channels the user actually cares about, and only when they aren't already looking at the message. The socket itself stays in *one* file. Routing logic stays in *one* trigger. Side effects live with the components that own them.
 
 <StackBlitzButton path="examples/vite-react-websocket-sync" label="Open in StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-websocket-sync" label="Open in CodeSandbox" />
 
 ## Scenario
 

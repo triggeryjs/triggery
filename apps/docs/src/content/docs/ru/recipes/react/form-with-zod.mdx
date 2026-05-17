@@ -7,12 +7,10 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 Payload события у триггера типизирован на этапе компиляции, но runtime-данные — отправки форм, URL-параметры, фреймы WebSocket — приходят неструктурированными. Рекомендуемый паттерн Triggery: валидируй **на границе продьюсера** и запускай только то, что прошло проверку. Обработчик триггера тогда видит полностью типизированный, проверенный в рантайме payload. Этот рецепт показывает идиому и упаковывает её в маленький хелпер `useValidatedEvent`, чтобы каждый продьюсер в приложении был однострочником.
 
 <StackBlitzButton path="examples/vite-react-form-zod" label="Открыть в StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-form-zod" label="Открыть в CodeSandbox" />
 
 ## Сценарий
 

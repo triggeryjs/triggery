@@ -198,6 +198,7 @@ function expectFired(trigger: any, eventName: any) {
 
 // ✓ Generic with the public types
 import type { EventKey, Trigger, TriggerSchema } from '@triggery/core';
+
 function expectFired<S extends TriggerSchema>(trigger: Trigger<S>, eventName: EventKey<S>) {
   expect(trigger.inspect()?.eventName).toBe(eventName);
 }

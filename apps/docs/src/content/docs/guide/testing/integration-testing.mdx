@@ -299,10 +299,12 @@ The DOM assertion catches bugs the inspector misses — a reactor that calls `se
 
 ```ts title="src/setupTests.ts"
 import '@testing-library/jest-dom/vitest';
+
 ```
 
 ```ts title="vitest.config.ts"
 import { defineConfig } from 'vitest/config';
+
 export default defineConfig({
   test: {
     environment: 'jsdom',

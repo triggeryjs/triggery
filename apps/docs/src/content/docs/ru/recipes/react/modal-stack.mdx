@@ -7,12 +7,10 @@ sidebar:
 
 import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
-import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
 
 В любом нетривиальном приложении со временем заводится модалочный хаос: «Подтвердить удаление» открывает «Разрешить конфликт» открывает «Войти повторно» — всё из разных фич, и ни одна не хочет знать про остальные. Triggery превращает это в одну строчку на фичу: запускай `modal:open`, запускай `modal:close`, слушай, если интересно. Отдельные стеки на маршрут — через `<TriggerScope>`.
 
 <StackBlitzButton path="examples/vite-react-modal-stack" label="Открыть в StackBlitz" />
-<CodeSandboxButton path="examples/vite-react-modal-stack" label="Открыть в CodeSandbox" />
 
 ## Сценарий
 
