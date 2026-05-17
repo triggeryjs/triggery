@@ -24,6 +24,20 @@ Triggery splits the problem in two:
 <StackBlitzButton path="examples/vite-react-diagram-table-sync" label="Open in StackBlitz" />
 <GitHubButton path="examples/vite-react-diagram-table-sync" label="Open example on GitHub" />
 
+
+## File layout
+
+<FileTree>
+- README.md   narrative overview
+- index.html   Vite entry
+- src/
+  - App.tsx   producers + reactors live here
+  - main.tsx   bootstrap
+  - store.ts   tiny store — single reactor writes, both panes read
+  - triggers/
+    - index.ts   **the rule** — events, conditions, actions, handler
+</FileTree>
+
 ## Scenario
 
 A small data model — Orders, Invoices, Customers, Products, Shipments — rendered in two independent panes:

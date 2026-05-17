@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
 import GitHubButton from '~/components/GitHubButton.astro';
 
@@ -13,6 +13,19 @@ The "hello world" of Triggery. Two buttons fire an `increment`/`decrement` event
 
 <StackBlitzButton path="examples/vite-react-counter" label="Open in StackBlitz" />
 <GitHubButton path="examples/vite-react-counter" label="Open example on GitHub" />
+
+
+## File layout
+
+<FileTree>
+- README.md   narrative overview
+- index.html   Vite entry
+- src/
+  - App.tsx   producers + reactors live here
+  - main.tsx   bootstrap
+  - triggers/
+    - notification.trigger.ts   **the rule**
+</FileTree>
 
 ## The trigger
 

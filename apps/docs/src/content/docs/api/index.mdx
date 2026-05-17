@@ -1,22 +1,29 @@
 ---
 title: API Reference
-description: "Every public symbol in every Triggery package. One page per symbol, with full TypeScript signatures and inline type previews."
+description: "Every public symbol across every `@triggery/*` package — a tree with a per-kind icon."
 ---
 
-The API reference covers every package shipped under the `@triggery/*` scope. Each symbol gets its own page with:
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import SymbolTree from '~/components/SymbolTree.astro';
+import { sections } from '~/data/api-symbols.ts';
 
-- Full TypeScript signature (with Twoslash inline type previews on hover).
-- Parameters and return type tables.
-- Idiomatic and edge-case examples.
-- Cross-links to related symbols.
+A complete index of public exports, grouped by package. The icon on the left of each name shows the kind of symbol: <span class="legend-fn">ƒ</span> function, <span class="legend-comp">⌘</span> component, <span class="legend-type">T</span> TypeScript type, <span class="legend-const">∙</span> constant. The link icon on the right opens the page with full signature and examples.
 
-import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+<Aside type="tip" title="Where to look when there is no per-symbol page">
+Most adapters and tooling helpers do not have a dedicated page in this reference yet — their narrative documentation lives in [the Packages section](/packages/).
+</Aside>
+
+{sections.map((s) => (
+  <section>
+    <h2 id={s.id}>{s.title}</h2>
+    <SymbolTree packages={s.packages} />
+  </section>
+))}
+
+## See also
 
 <CardGrid>
-  <LinkCard title="@triggery/core" description="Runtime, createTrigger, scheduler, inspector, middleware." href="/api/core/create-trigger/" />
-  <LinkCard title="@triggery/react" description="Hooks and providers for React 18+ / 19." href="/api/react/use-event/" />
-  <LinkCard title="@triggery/solid" description="SolidJS bindings — same hook shape, native reactivity." href="/api/react/use-event/" />
-  <LinkCard title="@triggery/vue" description="Vue 3 Composition API bindings." href="/api/react/use-event/" />
-  <LinkCard title="@triggery/testing" description="Test runtime, fake scheduler, condition/action mocks." href="/api/testing/create-test-runtime/" />
-  <LinkCard title="@triggery/eslint-plugin" description="8 rules + recommended/strict presets." href="/api/eslint-plugin/recommended/" />
+  <LinkCard title="Packages overview" description="Every @triggery/* package with a narrative page and quick start." href="/packages/" />
+  <LinkCard title="Guide" description="Concepts, patterns, recipes — the narrative documentation that surrounds this reference." href="/guide/" />
+  <LinkCard title="Ecosystem" description="Adapters, integrations, templates, the Awesome page." href="/ecosystem/" />
 </CardGrid>

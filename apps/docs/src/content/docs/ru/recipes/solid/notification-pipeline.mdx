@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
 import GitHubButton from '~/components/GitHubButton.astro';
 
@@ -13,6 +13,19 @@ import GitHubButton from '~/components/GitHubButton.astro';
 
 <StackBlitzButton path="examples/vite-solid-notifications" label="Открыть в StackBlitz" />
 <GitHubButton path="examples/vite-solid-notifications" label="Открыть пример на GitHub" />
+
+
+## Файловая раскладка
+
+<FileTree>
+- README.md   обзорное описание
+- index.html   точка входа Vite
+- src/
+  - App.tsx   продьюсеры + реакторы
+  - main.tsx   точка входа
+  - triggers/
+    - index.ts   **правило** — события, условия, действия, обработчик
+</FileTree>
 
 ## Триггер (идентичный)
 

@@ -173,3 +173,53 @@ footer[data-has-sidebar] .sl-flex {
 div.hero {
   padding-block: 20px;
 }
+
+/* API index — <FileTree> tweaks.
+ *
+ * The default Starlight FileTree wraps every name in <code> which the
+ * brand stylesheet renders with a heavy purple background. Stacked on
+ * top of <a> + <strong> the rows turn into solid highlighted boxes
+ * (see screenshot in the API index review). The intent here is the
+ * opposite: a calm dense list with a small ↗ icon for items that link
+ * to a per-symbol page. */
+
+/* Calm the inline-code label inside the tree: no fill, no border, just
+ * monospace text. The accent purple from the global rule
+ * `:not(pre) > code { background: …; border: … }` would otherwise still
+ * paint these. */
+starlight-file-tree .tree-entry code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: 0.95em;
+  color: var(--sl-color-text);
+}
+
+/* The trailing `↗` link lives in the row's <span class="comment"> right
+ * after the tree-entry. Make it tiny, dim, gain hover. */
+starlight-file-tree .comment a {
+  text-decoration: none;
+  color: var(--sl-color-accent);
+  opacity: 0.6;
+  font-weight: 600;
+  padding: 0 0.15em;
+}
+starlight-file-tree .comment a:hover {
+  opacity: 1;
+  text-decoration: none;
+}
+
+/* Soften the trailing-comment text colour to background grey so the
+ * tree rows read as <symbol>  ↗  <quiet description>. */
+starlight-file-tree .comment {
+  color: var(--sl-color-gray-3);
+  font-size: 0.9em;
+}
+
+/* Intro line above the API tree uses the same arrow as a visual cue. */
+.api-tree-arrow {
+  display: inline-block;
+  color: var(--sl-color-accent);
+  font-weight: 600;
+  padding: 0 0.15em;
+}

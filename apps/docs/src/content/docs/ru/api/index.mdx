@@ -1,22 +1,29 @@
 ---
 title: API Reference
-description: "Все публичные символы во всех пакетах Triggery. Одна страница на символ — с полной TypeScript-сигнатурой и инлайн-превью типов."
+description: "Все публичные символы во всех пакетах `@triggery/*` — дерево с иконкой по типу символа."
 ---
 
-API Reference покрывает каждый пакет, опубликованный под скоупом `@triggery/*`. Для каждого символа отведена своя страница со следующим содержимым:
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import SymbolTree from '~/components/SymbolTree.astro';
+import { sections } from '~/data/api-symbols-ru.ts';
 
-- Полная TypeScript-сигнатура (с Twoslash-превью типов при наведении).
-- Таблицы параметров и типа возвращаемого значения.
-- Идиоматические и пограничные примеры.
-- Перекрёстные ссылки на связанные символы.
+Полный индекс публичных экспортов, сгруппированный по пакетам. Иконка слева от имени указывает на тип символа: <span class="legend-fn">ƒ</span> функция, <span class="legend-comp">⌘</span> компонент, <span class="legend-type">T</span> TypeScript-тип, <span class="legend-const">∙</span> константа. Иконка ссылки справа открывает страницу с сигнатурой и примерами.
 
-import { LinkCard, CardGrid } from '@astrojs/starlight/components';
+<Aside type="tip" title="Где смотреть, если страницы символа нет">
+У большинства адаптеров и тулинг-утилит нет отдельных страниц в этом справочнике — их обзор и примеры лежат в [разделе «Пакеты»](/ru/packages/).
+</Aside>
+
+{sections.map((s) => (
+  <section>
+    <h2 id={s.id}>{s.title}</h2>
+    <SymbolTree packages={s.packages} />
+  </section>
+))}
+
+## Куда дальше
 
 <CardGrid>
-  <LinkCard title="@triggery/core" description="Рантайм, createTrigger, планировщик, инспектор, middleware." href="/ru/api/core/create-trigger/" />
-  <LinkCard title="@triggery/react" description="Хуки и провайдеры для React 18+ / 19." href="/ru/api/react/use-event/" />
-  <LinkCard title="@triggery/solid" description="SolidJS-биндинги — та же форма хуков, нативная реактивность." href="/ru/api/react/use-event/" />
-  <LinkCard title="@triggery/vue" description="Биндинги для Vue 3 Composition API." href="/ru/api/react/use-event/" />
-  <LinkCard title="@triggery/testing" description="Тестовый рантайм, фейковый планировщик, заглушки условий и действий." href="/ru/api/testing/create-test-runtime/" />
-  <LinkCard title="@triggery/eslint-plugin" description="8 правил + пресеты recommended/strict." href="/ru/api/eslint-plugin/recommended/" />
+  <LinkCard title="Обзор пакетов" description="Все @triggery/* пакеты с обзорными страницами и quick start." href="/ru/packages/" />
+  <LinkCard title="Руководство" description="Концепции, паттерны, рецепты — нарративная документация вокруг этого справочника." href="/ru/guide/" />
+  <LinkCard title="Экосистема" description="Адаптеры, интеграции, шаблоны, страница «Awesome»." href="/ru/ecosystem/" />
 </CardGrid>

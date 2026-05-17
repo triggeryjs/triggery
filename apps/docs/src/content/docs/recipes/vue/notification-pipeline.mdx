@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
 import GitHubButton from '~/components/GitHubButton.astro';
 
@@ -13,6 +13,19 @@ This is the Vue version of the flagship Triggery scenario. Read the [React recip
 
 <StackBlitzButton path="examples/vite-vue-notifications" label="Open in StackBlitz" />
 <GitHubButton path="examples/vite-vue-notifications" label="Open example on GitHub" />
+
+
+## File layout
+
+<FileTree>
+- README.md   narrative overview
+- index.html   Vite entry
+- src/
+  - App.vue   producers + reactors live here
+  - main.ts   bootstrap
+  - triggers/
+    - index.ts   **the rule** — events, conditions, actions, handler
+</FileTree>
 
 ## The trigger (identical)
 

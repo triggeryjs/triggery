@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
 import StackBlitzButton from '~/components/StackBlitzButton.astro';
 import GitHubButton from '~/components/GitHubButton.astro';
 
@@ -13,6 +13,19 @@ This is the Solid version of the flagship Triggery scenario. Read the [React rec
 
 <StackBlitzButton path="examples/vite-solid-notifications" label="Open in StackBlitz" />
 <GitHubButton path="examples/vite-solid-notifications" label="Open example on GitHub" />
+
+
+## File layout
+
+<FileTree>
+- README.md   narrative overview
+- index.html   Vite entry
+- src/
+  - App.tsx   producers + reactors live here
+  - main.tsx   bootstrap
+  - triggers/
+    - index.ts   **the rule** — events, conditions, actions, handler
+</FileTree>
 
 ## The trigger (identical)
 

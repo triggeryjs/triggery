@@ -24,6 +24,20 @@ Triggery делит задачу пополам:
 <StackBlitzButton path="examples/vite-react-diagram-table-sync" label="Открыть в StackBlitz" />
 <GitHubButton path="examples/vite-react-diagram-table-sync" label="Открыть пример на GitHub" />
 
+
+## Файловая раскладка
+
+<FileTree>
+- README.md   обзорное описание
+- index.html   точка входа Vite
+- src/
+  - App.tsx   продьюсеры + реакторы
+  - main.tsx   точка входа
+  - store.ts   крошечный стор — реактор пишет, обе панели читают
+  - triggers/
+    - index.ts   **правило** — события, условия, действия, обработчик
+</FileTree>
+
 ## Сценарий
 
 Маленькая доменная модель — Order, Invoice, Customer, Product, Shipment — рисуется в двух независимых панелях:

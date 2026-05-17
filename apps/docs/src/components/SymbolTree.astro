@@ -1,0 +1,300 @@
+---
+/**
+ * API tree visual. Custom collapsible groups — we DON'T use native
+ * <details>/<summary> because every browser renders its own disclosure
+ * marker that's stubbornly hard to hide reliably (Chrome's
+ * ::-webkit-details-marker survives `display: none` in some contexts;
+ * Starlight's base stylesheet re-asserts list-style). A pair of buttons
+ * with `aria-expanded` + a tiny client script gives us full control with
+ * accessibility intact.
+ */
+
+export type SymKind = 'function' | 'component' | 'type' | 'constant';
+
+export interface Sym {
+  name: string;
+  kind: SymKind;
+  url?: string;
+}
+
+export interface Pkg {
+  name: string;
+  url: string;
+  blurb: string;
+  symbols: Sym[];
+}
+
+interface Props {
+  packages: Pkg[];
+}
+
+const { packages } = Astro.props;
+
+const KIND_TITLE: Record<SymKind, string> = {
+  function: 'function',
+  component: 'component',
+  type: 'type',
+  constant: 'constant',
+};
+---
+
+<ul class="sym-tree not-content">
+  {
+    packages.map((pkg) => (
+      <li class="sym-pkg" data-expanded="true">
+        <div class="sym-pkg-row">
+          <button class="sym-toggle" type="button" aria-expanded="true" aria-label="Toggle package">
+            <svg
+              class="sym-chevron"
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="9 6 15 12 9 18" />
+            </svg>
+          </button>
+
+          <svg
+            class="sym-glyph sym-glyph-pkg"
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+            <path d="M3.27 6.96 12 12.01l8.73-5.05" />
+            <path d="M12 22.08V12" />
+          </svg>
+
+          <a class="sym-pkg-name" href={pkg.url}>
+            <code>{pkg.name}/</code>
+          </a>
+          <span class="sym-blurb" title={pkg.blurb}>— {pkg.blurb}</span>
+        </div>
+
+        <ul class="sym-children">
+          {pkg.symbols.map((sym) => (
+            <li class={`sym-row sym-kind-${sym.kind}`}>
+              <span
+                class={`sym-glyph sym-glyph-${sym.kind}`}
+                aria-label={KIND_TITLE[sym.kind]}
+                title={KIND_TITLE[sym.kind]}
+              >
+                {sym.kind === 'function' && 'ƒ'}
+                {sym.kind === 'component' && '⌘'}
+                {sym.kind === 'type' && 'T'}
+                {sym.kind === 'constant' && '∙'}
+              </span>
+              <code class="sym-name">{sym.name}</code>
+              {sym.url && (
+                <a class="sym-link" href={sym.url} aria-label={`Open ${sym.name} page`}>
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="13"
+                    height="13"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M15 3h6v6" />
+                    <path d="M10 14 21 3" />
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                  </svg>
+                </a>
+              )}
+            </li>
+          ))}
+        </ul>
+      </li>
+    ))
+  }
+</ul>
+
+<script>
+  // Wire up the toggle buttons. Plain JS — no framework, no hydration.
+  document.querySelectorAll<HTMLLIElement>('li.sym-pkg').forEach((li) => {
+    const btn = li.querySelector<HTMLButtonElement>('button.sym-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const expanded = li.dataset.expanded === 'true';
+      li.dataset.expanded = String(!expanded);
+      btn.setAttribute('aria-expanded', String(!expanded));
+    });
+  });
+</script>
+
+<style>
+  .sym-tree {
+    list-style: none;
+    margin: 0 0 1.5rem;
+    padding: 0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+  }
+  .sym-pkg {
+    margin-top: 0.4rem;
+  }
+
+  .sym-pkg-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.15rem 0;
+  }
+
+  /* Toggle button: no background, just the chevron */
+  .sym-toggle {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    color: var(--sl-color-gray-3);
+    width: 16px;
+    height: 16px;
+  }
+  .sym-toggle:hover {
+    color: var(--sl-color-accent);
+  }
+
+  /* Chevron rotates 90° when the parent <li> is expanded. */
+  .sym-chevron {
+    transition: transform 0.15s ease;
+  }
+  .sym-pkg[data-expanded='true'] .sym-chevron {
+    transform: rotate(90deg);
+  }
+
+  .sym-glyph-pkg {
+    color: var(--sl-color-accent);
+    flex-shrink: 0;
+  }
+  .sym-pkg-name {
+    text-decoration: none;
+  }
+  .sym-pkg-name code {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: var(--sl-color-text);
+    font-weight: 600;
+  }
+  .sym-pkg-name:hover code {
+    color: var(--sl-color-accent);
+  }
+  .sym-blurb {
+    color: var(--sl-color-gray-3);
+    font-size: 0.85em;
+    /* Stay on one line: truncate with ellipsis instead of wrapping below
+     * the row. Needs `min-width: 0` so the flex parent lets us shrink. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .sym-pkg-row {
+    /* min-width: 0 on the row so the flex child .sym-blurb can shrink
+     * below its intrinsic content width. Without this, modern browsers
+     * default to `min-width: auto` for flex items and the long blurb
+     * forces a line break. */
+    min-width: 0;
+  }
+
+  /* Children visibility driven by data-expanded on the parent <li>. */
+  .sym-pkg > .sym-children {
+    display: block;
+  }
+  .sym-pkg[data-expanded='false'] > .sym-children {
+    display: none;
+  }
+
+  ul.sym-children {
+    list-style: none;
+    margin: 0.15rem 0 0.25rem;
+    padding: 0 0 0 1.65rem;
+    border-left: 1px dashed var(--sl-color-gray-5);
+    margin-left: 0.55rem;
+  }
+  .sym-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.05rem 0;
+  }
+  .sym-glyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.2rem;
+    height: 1.2rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.9em;
+    font-weight: 700;
+    user-select: none;
+    flex-shrink: 0;
+    border-radius: 3px;
+  }
+  .sym-glyph-function {
+    color: var(--sl-color-accent);
+    font-style: italic;
+    background: color-mix(in srgb, var(--sl-color-accent) 12%, transparent);
+  }
+  .sym-glyph-component {
+    color: #35aae7;
+    background: color-mix(in srgb, #35aae7 14%, transparent);
+  }
+  .sym-glyph-type {
+    color: var(--sl-color-gray-2);
+    background: color-mix(in srgb, var(--sl-color-gray-3) 18%, transparent);
+    font-family: ui-serif, Georgia, serif;
+    font-weight: 700;
+  }
+  .sym-glyph-constant {
+    color: #3645b8;
+    background: color-mix(in srgb, #3645b8 14%, transparent);
+    font-size: 1.4em;
+    line-height: 0;
+  }
+
+  .sym-name {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: var(--sl-color-text);
+    font-size: 0.95em;
+  }
+  .sym-kind-type .sym-name {
+    color: var(--sl-color-gray-2);
+  }
+
+  .sym-link {
+    color: var(--sl-color-accent);
+    opacity: 0.45;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0.15rem;
+    transition: opacity 0.15s ease;
+    text-decoration: none;
+  }
+  .sym-link:hover {
+    opacity: 1;
+    text-decoration: none;
+  }
+</style>
