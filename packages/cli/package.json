@@ -64,7 +64,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "giget": "^1.2.3",
+    "giget": "^3.2.0",
     "ts-morph": "^24.0.0"
   },
   "devDependencies": {
