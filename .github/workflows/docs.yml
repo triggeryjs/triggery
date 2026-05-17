@@ -7,13 +7,13 @@ name: Deploy docs
 #
 # Setup (one-time, manual):
 #   1. Create empty public repo `triggeryjs/triggeryjs.github.io`.
-#   2. Generate a fine-grained PAT (or use a deploy key) with `Contents: write`
-#      on that repo.
-#   3. Add the PAT as a secret in THIS repo called `DOCS_DEPLOY_TOKEN`.
-#   4. In `triggeryjs/triggeryjs.github.io` repo settings, enable GitHub Pages
+#   2. Generate an ed25519 SSH keypair (`ssh-keygen -t ed25519 -N ""`).
+#   3. Add the **public** key as a writable deploy key on the target repo.
+#   4. Add the **private** key as a secret in THIS repo called `DOCS_DEPLOY_KEY`.
+#   5. In `triggeryjs/triggeryjs.github.io` repo settings, enable GitHub Pages
 #      with source = "Deploy from a branch" → `main` / `(root)`.
 #
-# After step 4 the docs go live at https://triggeryjs.github.io within ~1 min
+# After step 5 the docs go live at https://triggeryjs.github.io within ~1 min
 # of every push to `main` of this repo.
 
 on:
@@ -50,7 +50,7 @@ jobs:
       - name: Push docs to triggeryjs/triggeryjs.github.io
         uses: peaceiris/actions-gh-pages@v4
         with:
-          personal_token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          deploy_key: ${{ secrets.DOCS_DEPLOY_KEY }}
           external_repository: triggeryjs/triggeryjs.github.io
           publish_branch: main
           publish_dir: apps/docs/dist
