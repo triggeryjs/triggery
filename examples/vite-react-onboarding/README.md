@@ -4,8 +4,8 @@ A two-step product tour driven entirely by one trigger. Each step component only
 
 ## Try it
 
-- <a href="https://triggeryjs.github.io/play/vite-react-onboarding/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
-- <a href="https://triggeryjs.github.io/recipes/react/onboarding-flow/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-onboarding/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/onboarding-flow/>
 
 Or run it locally:
 

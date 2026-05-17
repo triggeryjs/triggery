@@ -4,8 +4,8 @@ Same trigger as the React and Solid notification examples, Vue 3 + `<script setu
 
 ## Try it
 
-- <a href="https://triggeryjs.github.io/play/vite-vue-notifications/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
-- <a href="https://triggeryjs.github.io/recipes/vue/notification-pipeline/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-vue-notifications/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/vue/notification-pipeline/>
 
 Or run it locally:
 

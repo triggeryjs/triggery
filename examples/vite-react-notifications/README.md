@@ -11,8 +11,8 @@ No prop drilling, no shared context, no global emitter. Tweak the trigger file a
 
 ## Try it
 
-- <a href="https://triggeryjs.github.io/play/vite-react-notifications/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
-- <a href="https://triggeryjs.github.io/recipes/react/notification-pipeline/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-notifications/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/notification-pipeline/>
 
 Or run it locally:
 

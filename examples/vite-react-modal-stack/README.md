@@ -6,8 +6,8 @@ Open Confirm-delete, then Resolve-conflict on top — close them in reverse, wat
 
 ## Try it
 
-- <a href="https://triggeryjs.github.io/play/vite-react-modal-stack/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
-- <a href="https://triggeryjs.github.io/recipes/react/modal-stack/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-modal-stack/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/modal-stack/>
 
 Or run it locally:
 

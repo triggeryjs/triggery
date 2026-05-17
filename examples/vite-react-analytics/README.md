@@ -4,8 +4,8 @@ Producers fire one typed analytics event. Three reactors — Segment, Amplitude,
 
 ## Try it
 
-- <a href="https://triggeryjs.github.io/play/vite-react-analytics/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
-- <a href="https://triggeryjs.github.io/recipes/react/analytics/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-analytics/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/analytics/>
 
 Or run it locally:
 

@@ -21,8 +21,8 @@ Either pane fires; either pane reacts. No prop drilling, no shared parent.
 
 ## Try it
 
-- <a href="https://triggeryjs.github.io/play/vite-react-diagram-table-sync/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
-- <a href="https://triggeryjs.github.io/recipes/react/diagram-table-sync/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-diagram-table-sync/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/diagram-table-sync/>
 
 Or run it locally:
 

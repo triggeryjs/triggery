@@ -6,8 +6,8 @@ The example uses an inline mini-validator to keep the dependency footprint zero,
 
 ## Try it
 
-- <a href="https://triggeryjs.github.io/play/vite-react-form-zod/" target="_blank" rel="noopener noreferrer"><b>Open in StackBlitz</b></a>
-- <a href="https://triggeryjs.github.io/recipes/react/form-with-zod/" target="_blank" rel="noopener noreferrer"><b>Read the recipe</b></a>
+- **Open in StackBlitz** — <https://triggeryjs.github.io/play/vite-react-form-zod/>
+- **Read the recipe** — <https://triggeryjs.github.io/recipes/react/form-with-zod/>
 
 Or run it locally:
 
