@@ -18,7 +18,9 @@
       "!apps/docs/.astro",
       "!apps/docs/src/components/**/*.astro",
       "!apps/docs/src/content.config.ts",
-      "!apps/docs/src/content/docs/**"
+      "!apps/docs/src/content/docs",
+      "!examples/**/src/**",
+      "!examples/**/CHANGELOG.md"
     ]
   },
   "formatter": {

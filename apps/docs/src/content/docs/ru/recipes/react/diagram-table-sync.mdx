@@ -1,0 +1,130 @@
+---
+title: "Синхронизация выделения: диаграмма ⇄ таблица"
+description: "Двусторонняя синхронизация ховера и выделения между двумя несвязанными UI-панелями. Навёл на строку в таблице — подсветился узел в диаграмме, и наоборот. Без проброса пропсов и без общего родителя."
+sidebar:
+  order: 10
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
+
+Одна и та же сущность рисуется в интерфейсе дважды — узлом в диаграмме и строкой в таблице. При наведении или клике в одной панели нужно подсветить совпадение в другой. Классическая UI-задача, и в любом фреймворке она решается через одно из трёх:
+
+- **Поднять состояние в общий родитель** — диаграмма и таблица навсегда связаны через него.
+- **Пробрасывать `selectedId` + `onSelect` пропсами** через все компоненты между ними — бойлерплейт, утечка ответственности.
+- **Общий стор** — со временем превращается в god-object, когда добавляются ещё три синхронизируемых панели.
+
+Triggery позволяет двум панелям делить только типизированное событие. Любая отправляет, любая реагирует. Никакому родителю про их существование знать не нужно.
+
+<StackBlitzButton path="examples/vite-react-diagram-table-sync" label="Открыть в StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-diagram-table-sync" label="Открыть в CodeSandbox" />
+
+## Сценарий
+
+Маленькая доменная модель — Order, Invoice, Customer, Product, Shipment — рисуется в двух независимых панелях:
+
+- **Диаграмма** на SVG с узлами и связями.
+- **Таблица** с одной строкой на сущность.
+
+Требуемое поведение:
+
+1. Навёл на строку — соответствующий узел подсвечивается.
+2. Навёл на узел — соответствующая строка подсвечивается.
+3. Кликнул в любой панели — выделение фиксируется.
+4. Панели монтируются независимо. Если на странице только таблица — всё работает.
+
+## Триггер
+
+```ts title="src/triggers/selection.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const selectionTrigger = createTrigger<{
+  events: {
+    'entity:hover':  string | null;
+    'entity:select': string | null;
+  };
+  actions: {
+    setHovered:  string | null;
+    setSelected: string | null;
+  };
+}>({
+  id: 'entity-selection-sync',
+  events: ['entity:hover', 'entity:select'],
+  handler({ event, actions }) {
+    if (event.name === 'entity:hover')  actions.setHovered?.(event.payload);
+    else                                actions.setSelected?.(event.payload);
+  },
+});
+```
+
+Два события, два действия — всё правило целиком.
+
+## Две панели
+
+Каждая панель живёт в собственном компоненте и не знает о другой.
+
+```tsx title="src/Diagram.tsx (одна панель)"
+function Node({ entity }: { entity: Entity }) {
+  const hover  = useEvent(selectionTrigger, 'entity:hover');
+  const select = useEvent(selectionTrigger, 'entity:select');
+
+  const [state, setState] = useState({ hovered: false, selected: false });
+  useAction(selectionTrigger, 'setHovered',  id => setState(s => ({ ...s, hovered:  id === entity.id })));
+  useAction(selectionTrigger, 'setSelected', id => setState(s => ({ ...s, selected: id === entity.id })));
+
+  return (
+    <g
+      onMouseEnter={() => hover(entity.id)}
+      onMouseLeave={() => hover(null)}
+      onClick={()      => select(entity.id)}
+    >
+      <rect fill={state.selected ? '#af37c5' : state.hovered ? '#e6dffa' : '#fff'} … />
+    </g>
+  );
+}
+```
+
+```tsx title="src/Table.tsx (вторая панель)"
+function Row({ entity }: { entity: Entity }) {
+  const hover  = useEvent(selectionTrigger, 'entity:hover');
+  const select = useEvent(selectionTrigger, 'entity:select');
+
+  const [state, setState] = useState({ hovered: false, selected: false });
+  useAction(selectionTrigger, 'setHovered',  id => setState(s => ({ ...s, hovered:  id === entity.id })));
+  useAction(selectionTrigger, 'setSelected', id => setState(s => ({ ...s, selected: id === entity.id })));
+
+  return (
+    <tr
+      onMouseEnter={() => hover(entity.id)}
+      onMouseLeave={() => hover(null)}
+      onClick={()      => select(entity.id)}
+      style={{ background: state.selected ? '#af37c5' : state.hovered ? '#e6dffa' : 'transparent' }}
+    >
+      <td>{entity.id}</td>
+      <td>{entity.label}</td>
+    </tr>
+  );
+}
+```
+
+Всё. Две панели, без общего родителя, без проброса пропсов, без глобального стора. Удалить таблицу ничего не сломает — событие `entity:hover` всё равно отправляется, никто не слушает, жизнь продолжается.
+
+## Почему это работает
+
+- **Каждая панель — одновременно продьюсер и реактор.** Любая отправляет событие на mouse-in / click, и любая регистрирует обработчик, обновляющий собственное локальное состояние при срабатывании события *из любой панели*.
+- **Нет координационного слоя.** Без Triggery пришлось бы либо поднимать состояние в родителя, либо строить общий стор. И то, и другое склеивает панели. Здесь они независимы.
+- **Третья панель добавляется тривиально.** Боковая панель «детали выделенной сущности» — это три строки кода: подписаться на `setSelected`, отрендерить payload. Существующие две панели не трогаем.
+- **Скоупированные варианты бесплатно.** Если та же пара диаграмма + таблица живёт в двух соседних дашбордах, оборачиваем каждый в `<TriggerScope id="left">` / `<TriggerScope id="right">`, и триггер читает события только из своего скоупа. См. [Области видимости](/ru/guide/architecture/scopes/).
+
+## Варианты
+
+- **Мультивыделение** — меняем тип payload-а с `string | null` на `Array<string>`. Реакторы сами решают, дедуплицировать или заменять.
+- **Навигация с клавиатуры** — отправляем `entity:hover` из `keydown`-обработчика на диаграмме или таблице; вторая панель отражает изменение, не зная откуда оно пришло.
+- **Третий UI** (график, JSON-инспектор) — регистрируем ещё один `useAction(selectionTrigger, 'setSelected', …)` в этом компоненте, он вступает в разговор.
+
+<CardGrid>
+  <LinkCard title="Стек модалок" description="Та же модель оркестрации для модалок." href="/ru/recipes/react/modal-stack/" />
+  <LinkCard title="Области видимости" description="Когда такая синхронизация должна быть на вкладку или панель." href="/ru/guide/architecture/scopes/" />
+  <LinkCard title="useEvent / useCondition / useAction" description="Три примитивных хука за каждым рецептом." href="/ru/guide/essentials/events/" />
+</CardGrid>

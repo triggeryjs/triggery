@@ -1,0 +1,23 @@
+{
+  "name": "triggery-example-vite-vue-notifications",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Tost + sound + badge \u2014 same trigger, Vue 3 components.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@triggery/core": "^0.9.1",
+    "@triggery/vue": "^0.9.1",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.13",
+    "vue-tsc": "^3.1.0"
+  }
+}

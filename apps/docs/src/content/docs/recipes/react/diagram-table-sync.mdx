@@ -1,0 +1,130 @@
+---
+title: "Diagram ⇄ table selection sync"
+description: "Bidirectional hover and selection across two unrelated UI panes. Hover a row in the table — highlight the matching node in the diagram, and vice versa. No prop drilling, no shared parent."
+sidebar:
+  order: 10
+---
+
+import { Aside, LinkCard, CardGrid, FileTree } from '@astrojs/starlight/components';
+import StackBlitzButton from '~/components/StackBlitzButton.astro';
+import CodeSandboxButton from '~/components/CodeSandboxButton.astro';
+
+The same entity is rendered twice in the UI — once as a node on a diagram, once as a row in a table. Hovering or clicking either pane should reflect in the other. Classic UI problem, ugly in every framework:
+
+- **Lifted state in a parent** couples diagram and table forever.
+- **Prop-drill `selectedId` + `onSelect`** through every component in between — boilerplate, leaks the concern.
+- **Shared store** grows into a god-object once you add three more synced panes.
+
+Triggery lets the two panes share only a typed event. Either pane fires; either pane reacts. No parent has to know they exist.
+
+<StackBlitzButton path="examples/vite-react-diagram-table-sync" label="Open in StackBlitz" />
+<CodeSandboxButton path="examples/vite-react-diagram-table-sync" label="Open in CodeSandbox" />
+
+## Scenario
+
+A small data model — Orders, Invoices, Customers, Products, Shipments — rendered in two independent panes:
+
+- An SVG **diagram** with nodes and edges.
+- A **table** with one row per entity.
+
+Required behaviour:
+
+1. Hover a row → matching node lights up.
+2. Hover a node → matching row lights up.
+3. Click either → selection pins.
+4. Both panes are mountable independently. A page that only shows the table should still work.
+
+## The trigger
+
+```ts title="src/triggers/selection.trigger.ts"
+import { createTrigger } from '@triggery/core';
+
+export const selectionTrigger = createTrigger<{
+  events: {
+    'entity:hover':  string | null;
+    'entity:select': string | null;
+  };
+  actions: {
+    setHovered:  string | null;
+    setSelected: string | null;
+  };
+}>({
+  id: 'entity-selection-sync',
+  events: ['entity:hover', 'entity:select'],
+  handler({ event, actions }) {
+    if (event.name === 'entity:hover')  actions.setHovered?.(event.payload);
+    else                                actions.setSelected?.(event.payload);
+  },
+});
+```
+
+Two events, two actions — that's the whole rule.
+
+## The two panes
+
+Each pane lives in its own component, knows nothing about the other.
+
+```tsx title="src/Diagram.tsx (one pane)"
+function Node({ entity }: { entity: Entity }) {
+  const hover  = useEvent(selectionTrigger, 'entity:hover');
+  const select = useEvent(selectionTrigger, 'entity:select');
+
+  const [state, setState] = useState({ hovered: false, selected: false });
+  useAction(selectionTrigger, 'setHovered',  id => setState(s => ({ ...s, hovered:  id === entity.id })));
+  useAction(selectionTrigger, 'setSelected', id => setState(s => ({ ...s, selected: id === entity.id })));
+
+  return (
+    <g
+      onMouseEnter={() => hover(entity.id)}
+      onMouseLeave={() => hover(null)}
+      onClick={()      => select(entity.id)}
+    >
+      <rect fill={state.selected ? '#af37c5' : state.hovered ? '#e6dffa' : '#fff'} … />
+    </g>
+  );
+}
+```
+
+```tsx title="src/Table.tsx (the other pane)"
+function Row({ entity }: { entity: Entity }) {
+  const hover  = useEvent(selectionTrigger, 'entity:hover');
+  const select = useEvent(selectionTrigger, 'entity:select');
+
+  const [state, setState] = useState({ hovered: false, selected: false });
+  useAction(selectionTrigger, 'setHovered',  id => setState(s => ({ ...s, hovered:  id === entity.id })));
+  useAction(selectionTrigger, 'setSelected', id => setState(s => ({ ...s, selected: id === entity.id })));
+
+  return (
+    <tr
+      onMouseEnter={() => hover(entity.id)}
+      onMouseLeave={() => hover(null)}
+      onClick={()      => select(entity.id)}
+      style={{ background: state.selected ? '#af37c5' : state.hovered ? '#e6dffa' : 'transparent' }}
+    >
+      <td>{entity.id}</td>
+      <td>{entity.label}</td>
+    </tr>
+  );
+}
+```
+
+That's it. Two panes, no shared parent, no prop-drilling, no global store. Removing the table pane breaks nothing — `entity:hover` events still fire, no reactor listens, life goes on.
+
+## Why this works
+
+- **Both panes are producers AND reactors.** Each one fires the event on mouse-in / click, and each one registers an action that updates its own local state when *any* pane fires the event.
+- **No coordination layer.** Without Triggery you'd either reach into the parent and lift state, or build a shared store. Both glue the panes together. Here they remain independent.
+- **Trivial to add a third pane.** A small "selected entity details" sidebar would need three lines of code: subscribe to `setSelected`, render the payload. The existing two panes don't change.
+- **Scoped variants for free.** If the same `<Diagram>` + `<Table>` pair lives in two side-by-side dashboards, wrap each in `<TriggerScope id="left">` / `<TriggerScope id="right">` and the trigger reads only events from the matching scope. See [Scopes](/guide/architecture/scopes/).
+
+## Variants
+
+- **Multi-select** — change the event payload from `string | null` to `Array<string>`. Reactors deduplicate or replace as they prefer.
+- **Keyboard navigation** — fire `entity:hover` from a `keydown` handler on the diagram or the table; the other pane reflects it without knowing where it came from.
+- **Wire a third UI** (chart, JSON inspector) — register one more `useAction(selectionTrigger, 'setSelected', …)` reactor in that component and it joins the conversation.
+
+<CardGrid>
+  <LinkCard title="Modal stack" description="Same orchestration pattern for modals." href="/recipes/react/modal-stack/" />
+  <LinkCard title="Scopes" description="When the same entity sync should be per-tab or per-panel." href="/guide/architecture/scopes/" />
+  <LinkCard title="useEvent / useCondition / useAction" description="The three primitive hooks behind every recipe." href="/guide/essentials/events/" />
+</CardGrid>

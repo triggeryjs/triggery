@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
-import './triggers/notification.trigger.ts';
+import './triggers/index.ts';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('#root missing');
