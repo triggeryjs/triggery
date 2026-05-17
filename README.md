@@ -129,7 +129,7 @@ A runnable Vite + React example lives in [`examples/vite-react-counter`](./examp
 [![Open in CodeSandbox](https://assets.codesandbox.io/github/button-edit-lime.svg)](https://codesandbox.io/p/github/triggeryjs/triggery/main?file=examples/vite-notifications/src/triggers/message.trigger.ts)
 [![Open in Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/triggeryjs/triggery)
 
-> Examples folder is populated as part of the [0.4 milestone](./ROADMAP.md). Until then the buttons drop you into the monorepo source so you can poke at the code.
+> The examples folder is part of the now-shipped [0.4 milestone](./ROADMAP.md). The buttons above clone the corresponding directory of this monorepo into the chosen sandbox so you can poke at the code right away.
 
 ## Packages
 
@@ -262,7 +262,7 @@ Pre-1.0 — public API can still change between minor versions. Roadmap to 1.0 l
 
 - [**GitHub Discussions**](https://github.com/triggeryjs/triggery/discussions) — questions, ideas, show-and-tell. Primary community channel until 1.0.
 - **Discord** — opening at the 1.0 release. Until then async Discussions is the place.
-- **X / Twitter** — [`@triggeryjs`](https://x.com/triggeryjs) (reserved, posts after 0.4 milestone).
+- **X / Twitter** — [`@triggeryjs`](https://x.com/triggeryjs).
 - **Bluesky** — [`@triggeryjs.bsky.social`](https://bsky.app/profile/triggeryjs.bsky.social) (reserved).
 - **Stack Overflow** — tag your question with [`triggery`](https://stackoverflow.com/questions/tagged/triggery).
 

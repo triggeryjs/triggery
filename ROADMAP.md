@@ -134,13 +134,13 @@ These items are scoped but not started.
 
 | Milestone | Theme | Status |
 |---|---|---|
-| 0.1.0 | First public release with core + react + adapters | Pending — gated on docs |
+| 0.1.0 | First public release with core + react + adapters | **Shipped** |
 | 0.2.0 | Solid + Vue bindings | **Shipped** |
 | 0.3.0 | Inspector opt-out + perf Tier 1 optimisations | **Shipped** |
 | 0.4.0 | Docs site v1 | **Shipped** |
-| 0.4.1 | REPL stub at `play.triggery.dev` | Planned |
 | 0.5.0 | `@triggery/eslint-plugin` + `@triggery/codemod` + `@triggery/cli` + starters | **Shipped** |
-| 0.9.0 | RC — feature freeze + community testing window | Planned |
+| 0.9.x | RC — feature freeze + community testing window (current `latest`: 0.9.1) | **Shipped** |
+| 0.9.x | REPL stub at `play.triggery.dev` | Planned |
 | 1.0.0 | Stable | Planned |
 
 ## How to influence the roadmap
