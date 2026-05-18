@@ -1,7 +1,7 @@
 {
   "name": "@triggery/socket",
-  "version": "0.9.1",
-  "description": "Socket adapters for Triggery \u2014 pipe socket.io events or native WebSocket messages into triggers",
+  "version": "1.0.0",
+  "description": "Socket adapters for Triggery — pipe socket.io events or native WebSocket messages into triggers",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io",

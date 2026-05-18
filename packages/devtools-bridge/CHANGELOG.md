@@ -1,5 +1,12 @@
 # @triggery/devtools-bridge
 
+## 1.0.0
+
+### Patch Changes
+
+- Updated dependencies [d920da6]
+  - @triggery/core@1.0.0
+
 ## 0.1.2
 
 ### Patch Changes

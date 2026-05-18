@@ -1,5 +1,22 @@
 # triggery-example-adapters-showcase
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [d920da6]
+  - @triggery/core@1.0.0
+  - @triggery/react@1.0.0
+  - @triggery/dom@1.0.0
+  - @triggery/jotai@1.0.0
+  - @triggery/mobx@1.0.0
+  - @triggery/query@1.0.0
+  - @triggery/reatom@1.0.0
+  - @triggery/redux@1.0.0
+  - @triggery/signals@1.0.0
+  - @triggery/socket@1.0.0
+  - @triggery/zustand@1.0.0
+
 ## 0.0.2
 
 ### Patch Changes

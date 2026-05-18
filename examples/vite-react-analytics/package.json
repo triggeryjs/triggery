@@ -1,6 +1,6 @@
 {
   "name": "triggery-example-vite-react-analytics",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "description": "Fire one analytics event, fan out to Segment / Amplitude / GA4 through three independent reactors.",
@@ -10,8 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@triggery/core": "^0.9.1",
-    "@triggery/react": "^0.9.1",
+    "@triggery/core": "^1.0.0",
+    "@triggery/react": "^1.0.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
