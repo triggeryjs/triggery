@@ -1,17 +1,17 @@
 {
   "name": "triggery-example-vite-react-chat-mentions",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
-  "description": "@mention in chat \u2192 outbound webhook \u2192 success/error toast \u2014 async chain with a follow-up event.",
+  "description": "@mention in chat → outbound webhook → success/error toast — async chain with a follow-up event.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@triggery/core": "^0.9.1",
-    "@triggery/react": "^0.9.1",
+    "@triggery/core": "^1.0.0",
+    "@triggery/react": "^1.0.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

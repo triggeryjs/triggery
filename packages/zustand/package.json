@@ -1,7 +1,7 @@
 {
   "name": "@triggery/zustand",
-  "version": "0.9.1",
-  "description": "Zustand adapter for Triggery \u2014 `useZustandCondition` hook wiring a Zustand store into a trigger",
+  "version": "0.10.0",
+  "description": "Zustand adapter for Triggery — `useZustandCondition` hook wiring a Zustand store into a trigger",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io",

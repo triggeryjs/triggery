@@ -1,7 +1,7 @@
 {
   "name": "@triggery/react",
-  "version": "0.9.1",
-  "description": "React 18+/19 bindings for Triggery \u2014 useEvent / useCondition / useAction / useInlineTrigger / useInspect hooks + <TriggerRuntimeProvider> / <TriggerScope>. Zero runtime dependencies.",
+  "version": "0.10.0",
+  "description": "React 18+/19 bindings for Triggery — useEvent / useCondition / useAction / useInlineTrigger / useInspect hooks + <TriggerRuntimeProvider> / <TriggerScope>. Zero runtime dependencies.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io",

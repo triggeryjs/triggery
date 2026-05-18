@@ -1,17 +1,17 @@
 {
   "name": "triggery-example-vite-react-diagram-table-sync",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
-  "description": "Hover a row in a table \u2192 highlight the matching node in a diagram, and vice versa. Bidirectional selection without prop drilling.",
+  "description": "Hover a row in a table → highlight the matching node in a diagram, and vice versa. Bidirectional selection without prop drilling.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@triggery/core": "^0.9.1",
-    "@triggery/react": "^0.9.1",
+    "@triggery/core": "^1.0.0",
+    "@triggery/react": "^1.0.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
