@@ -25,6 +25,14 @@ to ship codemods for any breaking change.
 
 ### Core runtime (`@triggery/core`)
 - `createTrigger<Schema>` with inline-generic schema declaration.
+- **Builder API (v0.10+)** — `createTrigger<S>().require(...).handle(...)`
+  narrows required conditions to `NonNullable<...>` in the handler.
+- **Inline `conditions:` config (v0.10+)** + typed
+  `trigger.setCondition(name, value)` setter.
+- **Action channels (v0.10+)** — `trigger.action(name).subscribe(cb)`
+  multi-subscriber fan-out, additive with `runtime.registerAction`.
+- **Inspector subpath (v0.10+)** — `@triggery/core/inspect` with
+  `createInspectorFactory()` for bundle-friendly opt-in.
 - Indexed dispatch (`Map<eventKey, Trigger[]>`), `required`-gate, lazy
   condition snapshots.
 - Microtask scheduler (default), Sync scheduler.
@@ -55,13 +63,16 @@ to ship codemods for any breaking change.
 - `@triggery/vite` — auto-discovery via virtual module + HMR.
 - `@triggery/testing` — `createTestRuntime`, `mockCondition`,
   `mockAction`, `flushMicrotasks`.
-- `@triggery/eslint-plugin` — 8 rules (`no-event-cascade`,
+- `@triggery/eslint-plugin` — 12 rules (`no-event-cascade`,
   `no-dynamic-id`, `hook-rules`, `exhaustive-conditions`,
   `exhaustive-required`, `max-handler-size`, `max-ports-per-trigger`,
-  `prefer-named-hook`) plus `recommended` and `strict` flat-config presets.
+  `prefer-named-hook`, **v0.10**: `no-non-null-assertion-in-handler`,
+  `prefer-builder-trigger`, `prefer-trigger-conditions`,
+  `prefer-action-channel`) plus `recommended` and `strict` flat-config presets.
 - `@triggery/codemod` — `extract-trigger`,
-  `migrate-from-listener-middleware` via ts-morph. CLI and
-  programmatic API.
+  `migrate-from-listener-middleware`, **v0.10**: `migrate-to-v010` (inline
+  conditions, drop non-null assertions, fan-out review markers) via
+  ts-morph. CLI and programmatic API.
 - `@triggery/cli` — `triggery create / scaffold trigger / graph / lint`.
   Pulls starters from `templates/*` via giget; prints the trigger
   graph as JSON / DOT / Markdown.
@@ -139,7 +150,8 @@ These items are scoped but not started.
 | 0.3.0 | Inspector opt-out + perf Tier 1 optimisations | **Shipped** |
 | 0.4.0 | Docs site v1 | **Shipped** |
 | 0.5.0 | `@triggery/eslint-plugin` + `@triggery/codemod` + `@triggery/cli` + starters | **Shipped** |
-| 0.9.x | RC — feature freeze + community testing window (current `latest`: 0.9.1) | **Shipped** |
+| 0.9.x | RC — feature freeze + community testing window | **Shipped** |
+| 0.10.0 | Tier-2 ergonomics: inline conditions + setCondition, action channels, builder API with required-narrowing, inspector subpath, codemod + 4 new ESLint rules | **Shipped** |
 | 0.9.x | REPL stub at `play.triggery.dev` | Planned |
 | 1.0.0 | Stable | Planned |
 

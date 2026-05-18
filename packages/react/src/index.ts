@@ -30,4 +30,5 @@ export { TriggerScope, type TriggerScopeProps } from './TriggerScope.tsx';
 export {
   type UseInlineTriggerConfig,
   useInlineTrigger,
+  useTrigger,
 } from './useInlineTrigger.ts';

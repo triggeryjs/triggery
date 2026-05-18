@@ -7,7 +7,10 @@ import { maxPortsPerTrigger } from './rules/max-ports-per-trigger.ts';
 import { noDynamicId } from './rules/no-dynamic-id.ts';
 import { noEventCascade } from './rules/no-event-cascade.ts';
 import { noNonNullAssertionInHandler } from './rules/no-non-null-assertion-in-handler.ts';
+import { preferActionChannel } from './rules/prefer-action-channel.ts';
+import { preferBuilderTrigger } from './rules/prefer-builder-trigger.ts';
 import { preferNamedHook } from './rules/prefer-named-hook.ts';
+import { preferTriggerConditions } from './rules/prefer-trigger-conditions.ts';
 
 const rules = {
   'exhaustive-conditions': exhaustiveConditions,
@@ -18,7 +21,10 @@ const rules = {
   'no-dynamic-id': noDynamicId,
   'no-event-cascade': noEventCascade,
   'no-non-null-assertion-in-handler': noNonNullAssertionInHandler,
+  'prefer-action-channel': preferActionChannel,
+  'prefer-builder-trigger': preferBuilderTrigger,
   'prefer-named-hook': preferNamedHook,
+  'prefer-trigger-conditions': preferTriggerConditions,
 };
 
 const meta = {
@@ -71,6 +77,9 @@ const strict: Linter.Config = {
     '@triggery/max-ports-per-trigger': ['error', { maxEvents: 5, maxConditions: 5, maxTotal: 8 }],
     '@triggery/prefer-named-hook': ['warn', { threshold: 3 }],
     '@triggery/no-non-null-assertion-in-handler': 'error',
+    '@triggery/prefer-builder-trigger': 'warn',
+    '@triggery/prefer-trigger-conditions': 'warn',
+    '@triggery/prefer-action-channel': 'warn',
   },
 };
 

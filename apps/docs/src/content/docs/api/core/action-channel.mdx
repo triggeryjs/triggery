@@ -1,0 +1,112 @@
+---
+title: ActionChannel
+description: "Typed multi-subscriber channel for one action of a trigger. Returned by `trigger.action(name)`. v0.10+."
+sidebar:
+  order: 3
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.10.0" />
+
+A typed multi-subscriber channel for one action of a trigger. Returned by
+`trigger.action(name)` (cached per `(trigger, name)`). Replaces the v0.9
+pattern of hand-rolled `Set<callback> + for-of` fan-out wired through
+`runtime.registerAction`.
+
+## Import
+
+```ts
+import type { ActionChannel } from '@triggery/core';
+```
+
+## Signature
+
+```ts
+type ActionChannel<P> = {
+  /** Subscribe to emits. Returns an unsubscribe function. */
+  subscribe(cb: (payload: P) => void): () => void;
+  /** Number of currently active subscribers — for DevTools and tests. */
+  readonly subscribed: number;
+};
+```
+
+## Usage
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+type Schema = {
+  events: { tick: number };
+  actions: { showToast: { title: string } };
+};
+
+const t = createTrigger<Schema>()
+  .id('demo')
+  .events(['tick'])
+  .handle(({ actions }) => {
+    actions.showToast?.({ title: 'tick' });
+  });
+
+const toast = t.action('showToast');
+const unsubA = toast.subscribe((p) => console.log('A', p));
+const unsubB = toast.subscribe((p) => console.log('B', p));
+// toast.subscribed === 2
+unsubA();
+// toast.subscribed === 1
+```
+
+Channel subscribers and any `runtime.registerAction(...)` handler for the same key both fire on every action emit — the channel is **additive**, not a replacement.
+
+## Caching
+
+The channel is cached per `(trigger, name)`. Repeat `trigger.action(name)` calls return the same channel object.
+
+```ts
+trigger.action('showToast') === trigger.action('showToast') // true
+```
+
+This means you can use `t.action('X')` as a stable reference for hooks and effects without memoising.
+
+## Coexistence with `runtime.registerAction`
+
+```ts
+// Old path — still works
+runtime.registerAction(trigger.id, 'showToast', (p) => toastA(p));
+
+// New path — coexists, both fire on every emit
+trigger.action('showToast').subscribe((p) => toastB(p));
+```
+
+The `runtime.registerAction` path remains last-mount-wins (only the top of the stack runs). Channel subscribers run additively in addition to the top handler. This means:
+
+- **v0.10 React/Solid/Vue `useAction`** internally uses the channel path → multiple components mounting the same `useAction(trigger, 'name', fn)` now all run on each emit. (This is the one semantic change in v0.10 — see the [migration guide](/migration/from-v0.9/).)
+- **Adapters that need exclusive ownership** can keep using `runtime.registerAction(...)`. The two paths don't interfere.
+
+## React example
+
+```tsx
+import { useAction } from '@triggery/react';
+import { useState } from 'react';
+
+function ToastSlot() {
+  const [toasts, setToasts] = useState<ToastPayload[]>([]);
+  useAction(messageTrigger, 'showToast', (p) => setToasts((cur) => [...cur, p]));
+  return <ul>{toasts.map((t) => <li key={t.id}>{t.title}</li>)}</ul>;
+}
+```
+
+`useAction` is a thin wrapper over `trigger.action('showToast').subscribe(...)` — every component that mounts it gets called on every emit.
+
+## ESLint rule
+
+The [`prefer-action-channel`](/api/eslint-plugin/) rule (enabled as `warn` in the `strict` preset) flags the v0.9 hand-rolled `Set + for-of` fan-out pattern and suggests the channel API.
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="The constructor returning a Trigger<S> with `.action(name)`." href="/api/core/create-trigger/" />
+  <LinkCard title="Trigger anatomy" description="Field-by-field walkthrough including actions." href="/guide/essentials/trigger-anatomy/" />
+  <LinkCard title="Migration from v0.9" description="useAction semantic change and the channel migration path." href="/migration/from-v0.9/" />
+</CardGrid>
