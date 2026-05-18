@@ -1,8 +1,13 @@
 import { type DispatchContext, withDispatch } from './cascadeContext.ts';
 import { createCheck } from './check.ts';
+import { EMPTY_STRING_ARRAY, genRunId, invokeAction } from './dispatch-helpers.ts';
 import type { InspectorImpl } from './inspector.ts';
+import {
+  buildTimedActionsProxy,
+  cancelAllTimers as cancelAllTimersImpl,
+  type TimerEntry as TimerEntryImpl,
+} from './timers.ts';
 import type {
-  ActionContext,
   ConcurrencyStrategy,
   ConditionGetter,
   FireContext,
@@ -13,9 +18,6 @@ import type {
   TriggerInspectSnapshot,
   UntypedActionFn,
 } from './types.ts';
-
-let runIdCounter = 0;
-const genRunId = () => `run_${(++runIdCounter).toString(36)}`;
 
 /**
  * Whether any middleware in the list cares about per-run / per-action timing.
@@ -28,17 +30,8 @@ export function needsTiming(middleware: readonly Middleware[]): boolean {
   return false;
 }
 
-const nowMs = (): number => Date.now();
-
-/**
- * Timer state for the `debounce / throttle / defer` action wrappers.
- * Stored on `RegisteredTrigger.timers` so that calls survive across runs and
- * can be cancelled on dispose.
- */
-export type TimerEntry =
-  | { kind: 'debounce'; tid: ReturnType<typeof setTimeout> }
-  | { kind: 'throttle'; lastFiredAt: number }
-  | { kind: 'defer'; tid: ReturnType<typeof setTimeout> };
+/** Re-exported for backwards compatibility — the canonical home is `./timers`. */
+export type TimerEntry = TimerEntryImpl;
 
 export type RegisteredTrigger = {
   readonly config: InternalTriggerConfig;
@@ -89,58 +82,12 @@ type DispatchDeps = {
 /**
  * Cancel and drop every pending timer for a trigger. Called on dispose so we
  * don't leak setTimeout handles or invoke handlers after the trigger is gone.
+ *
+ * Thin wrapper over `cancelAllTimers` from `./timers` so the heavy timer
+ * machinery can be loaded lazily.
  */
 export function cancelAllTimers(trigger: RegisteredTrigger): void {
-  for (const entry of trigger.timers.values()) {
-    if (entry.kind === 'debounce' || entry.kind === 'defer') {
-      clearTimeout(entry.tid);
-    }
-  }
-  trigger.timers.clear();
-}
-
-/**
- * Invoke a single action handler with middleware tracking. Used both for
- * inline calls during a run and for deferred (debounced / throttled / defer)
- * calls that fire outside the original run.
- */
-function invokeAction(
-  handler: UntypedActionFn,
-  ctx: ActionContext,
-  middleware: readonly Middleware[],
-  trackTiming: boolean,
-): void {
-  const startedAt = trackTiming ? performance.now() : 0;
-  for (const mw of middleware) mw.onActionStart?.(ctx);
-  try {
-    const result = handler(ctx.payload);
-    if (result && typeof (result as Promise<unknown>).then === 'function') {
-      (result as Promise<unknown>).then(
-        (value) => {
-          for (const mw of middleware) {
-            mw.onActionEnd?.({
-              ...ctx,
-              durationMs: trackTiming ? performance.now() - startedAt : 0,
-              result: value,
-            });
-          }
-        },
-        (error) => {
-          for (const mw of middleware) mw.onError?.({ ...ctx, error });
-        },
-      );
-    } else {
-      for (const mw of middleware) {
-        mw.onActionEnd?.({
-          ...ctx,
-          durationMs: trackTiming ? performance.now() - startedAt : 0,
-          result,
-        });
-      }
-    }
-  } catch (error) {
-    for (const mw of middleware) mw.onError?.({ ...ctx, error });
-  }
+  cancelAllTimersImpl(trigger);
 }
 
 /**
@@ -162,9 +109,6 @@ export function executeTrigger(deps: DispatchDeps): void | Promise<void> {
 
   return runHandler(deps, concurrency);
 }
-
-/** Shared empty array — reused by skip/short-circuit paths to avoid alloc. */
-const EMPTY_STRING_ARRAY: readonly string[] = Object.freeze([]) as readonly string[];
 
 function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void | Promise<void> {
   const {
@@ -347,42 +291,12 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
     trigger.actions.has(name) || (trigger.channelSubscribers.get(name)?.size ?? 0) > 0;
 
   const buildTimedProxy = (kind: 'debounce' | 'throttle' | 'defer', ms: number) =>
-    new Proxy({} as Record<string, unknown>, {
-      get(_target, prop: string | symbol) {
-        if (typeof prop !== 'string') return undefined;
-        if (!hasActionTarget(prop)) return undefined;
-        return (payload?: unknown) => {
-          if (kind === 'debounce') {
-            const key = `debounce:${prop}:${ms}`;
-            const existing = trigger.timers.get(key);
-            if (existing?.kind === 'debounce') clearTimeout(existing.tid);
-            const tid = setTimeout(() => {
-              trigger.timers.delete(key);
-              callActionDeferred(prop, payload);
-            }, ms);
-            trigger.timers.set(key, { kind: 'debounce', tid });
-          } else if (kind === 'throttle') {
-            // Leading-edge throttle: fire immediately, then drop calls until
-            // `ms` has elapsed. Trailing-edge variant lands in V1.1.
-            const key = `throttle:${prop}:${ms}`;
-            const existing = trigger.timers.get(key);
-            const now = nowMs();
-            if (existing?.kind === 'throttle' && now - existing.lastFiredAt < ms) return;
-            trigger.timers.set(key, { kind: 'throttle', lastFiredAt: now });
-            callActionDeferred(prop, payload);
-          } else {
-            const key = `defer:${prop}:${++trigger.deferCounter}`;
-            const tid = setTimeout(() => {
-              trigger.timers.delete(key);
-              callActionDeferred(prop, payload);
-            }, ms);
-            trigger.timers.set(key, { kind: 'defer', tid });
-          }
-        };
-      },
-      has(_target, prop) {
-        return typeof prop === 'string' && hasActionTarget(prop);
-      },
+    buildTimedActionsProxy({
+      kind,
+      ms,
+      carrier: trigger,
+      hasTarget: hasActionTarget,
+      callDeferred: callActionDeferred,
     });
 
   const actionsProxy = new Proxy({} as InternalHandlerCtx['actions'], {

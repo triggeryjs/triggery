@@ -1,0 +1,258 @@
+---
+title: Обновление с v0.9
+description: "v0.10 добавляет inline conditions, action channels, builder API с сужением required, и subpath для inspector. Все изменения аддитивны — старый код продолжает работать."
+sidebar:
+  order: 0
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+`@triggery/core@0.10.0` и все остальные пакеты — **аддитивный** релиз.
+Существующий v0.9-код компилируется и работает без изменений. Новые API
+лендятся рядом со старыми; старые получают `@deprecated` JSDoc в v0.11
+и удаляются в v1.0.
+
+## Что нового в v0.10
+
+Четыре новинки, все opt-in:
+
+| Изменение | Влияние на твой код |
+|---|---|
+| **Inline `conditions:` config** в `createTrigger({...})` | Меньше шаблона на триггер; значения обновляются через типизированный setter |
+| **Action channels** через `trigger.action(name).subscribe(cb)` | Multi-subscriber обработчики actions без ручного `Set + for-of` fan-out |
+| **Builder API** `createTrigger<S>().require(...).handle(...)` | Required conditions становятся `NonNullable<...>` — никаких `!` и `if (!conditions.x) return;` |
+| **Inspector subpath** `@triggery/core/inspect` | Opt-in factory pattern, который выносит inspector из основного бандла |
+
+Также два семантических изменения:
+
+| Поведение | v0.9 | v0.10 |
+|---|---|---|
+| Два компонента оба делают `useAction(trigger, 'x', fn)` | last-mount-wins (срабатывает только последний `fn`) | оба `fn` срабатывают на каждый emit (fan-out) |
+| `runtime.subscribeAction(...)` | не было | новый метод, аддитивный (вызывается каждый subscriber) |
+
+Если код полагался на last-mount-wins для actions — переключи call site на
+`runtime.registerAction(trigger.id, 'x', fn)`. Этот путь не изменился и
+по-прежнему last-mount-wins.
+
+## Миграция типичного триггера
+
+Типичный v0.9 триггер выглядит так:
+
+```ts
+// v0.9
+let currentUser: User | null = null;
+let settings: Settings | null = null;
+
+const messageTrigger = createTrigger<Schema>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user', 'settings'],
+  handler({ event, conditions, actions }) {
+    const user = conditions.user!;             // ! non-null assertion
+    if (!conditions.settings) return;          // ручное сужение
+    actions.showToast?.({ title: user.id });
+  },
+});
+
+runtime.registerCondition(messageTrigger.id, 'user', () => currentUser);
+runtime.registerCondition(messageTrigger.id, 'settings', () => settings);
+
+const toastSubs = new Set<(p: ToastPayload) => void>();
+runtime.registerAction(messageTrigger.id, 'showToast', (p) => {
+  for (const cb of toastSubs) cb(p);
+});
+```
+
+Тот же триггер в v0.10:
+
+```ts
+// v0.10
+const messageTrigger = createTrigger<Schema>()
+  .id('message-received')
+  .events(['new-message'])
+  .conditions({ user: null, settings: null })
+  .require('user', 'settings')
+  .handle(({ event, conditions, actions }) => {
+    // conditions.user: User      (сужен через .require)
+    // conditions.settings: Settings
+    actions.showToast?.({ title: conditions.user.id });
+  });
+
+messageTrigger.setCondition('user', currentUser);
+messageTrigger.setCondition('settings', settings);
+
+const toast = messageTrigger.action('showToast');
+toast.subscribe(cb1);
+toast.subscribe(cb2); // несколько подписчиков — оба сработают
+```
+
+Что ушло:
+
+- Хранилище `let user: User | null = null;` — значения живут внутри триггера
+- Два вызова `runtime.registerCondition` — `conditions:` config регистрирует автоматически
+- Non-null assertion `conditions.user!` — builder сужает тип
+- Guard `if (!conditions.settings) return;` — то же самое
+- `new Set<(p) => void>()` + `for of` fan-out — `t.action('X').subscribe` делает это сам
+
+Падение LOC на реальном движке (`notifications-pipeline` из репо сравнений):
+181 → ~155.
+
+## Пошагово
+
+### 1. Начни с чистого working tree
+
+Перед запуском codemod (или ручными правками) — закоммить или застэшь
+работу. Миграция трогает много файлов сразу; untracked-диф мешает ревью.
+
+```bash
+git status        # чисто
+git checkout -b chore/upgrade-triggery-v0.10
+pnpm up @triggery/core@^0.10 @triggery/react@^0.10  # и другие @triggery/* пакеты
+```
+
+### 2. Перенеси пары `let` + `registerCondition` в config триггера
+
+Найди каждый паттерн вида:
+
+```ts
+let currentX: X | null = null;
+// ...
+runtime.registerCondition(trigger.id, 'x', () => currentX);
+// где-то ещё:
+currentX = newValue;
+```
+
+Перепиши в:
+
+```ts
+const trigger = createTrigger<Schema>({
+  // ...
+  conditions: { x: null as X | null },
+  // ...
+});
+// позже:
+trigger.setCondition('x', newValue);
+```
+
+Триггер теперь владеет ячейкой. Существующие вызовы
+`runtime.registerCondition` для **других** condition keys (значения из
+store или signal'ов) продолжают работать — это рекомендованный
+low-level путь для externally-owned данных.
+
+### 3. Перейди на action channels для fan-out
+
+Замени самодельный `Set<callback>` fan-out на `trigger.action('name')`.
+Канал кешируется по `(trigger, name)`, так что повторные вызовы
+`trigger.action('showToast')` возвращают тот же объект.
+
+```ts
+// до
+const subs = new Set<(p: ToastPayload) => void>();
+runtime.registerAction(trigger.id, 'showToast', (p) => {
+  for (const cb of subs) cb(p);
+});
+
+// после
+const toast = trigger.action('showToast');
+toast.subscribe(cb1);
+toast.subscribe(cb2);
+```
+
+`subscribe` канала и любой `runtime.registerAction(...)` для того же
+ключа теперь **сосуществуют** — оба срабатывают на каждый emit. Это
+главное поведенческое изменение в v0.10; framework bindings (`useAction`
+в React/Solid/Vue) выигрывают автоматически, потому что под капотом
+переключились на `subscribeAction`.
+
+### 4. (Опционально) Перейди на builder API чтобы убрать `!` и `if-return`
+
+```ts
+const t = createTrigger<Schema>()
+  .id('x')
+  .events(['e'])
+  .require('user', 'settings')
+  .handle(({ conditions }) => {
+    // conditions.user — `NonNullable<...>` — без `!`, без early return
+    return conditions.user.id;
+  });
+```
+
+Если предпочитаешь императивную форму, включи правило
+[`no-non-null-assertion-in-handler`](/ru/api/eslint-plugin/) — оно
+автоматически флагит `conditions.X!` (autofix убирает `!`).
+
+### 5. (Опционально) Переключи inspector на factory pattern
+
+```ts
+// до
+import { createRuntime } from '@triggery/core';
+const runtime = createRuntime({ inspector: true });
+
+// после — выносит код inspector'а из основного бандла когда не нужен
+import { createRuntime } from '@triggery/core';
+import { createInspectorFactory } from '@triggery/core/inspect';
+
+const runtime = createRuntime({ inspector: createInspectorFactory() });
+```
+
+`createRuntime({ inspector: true })` продолжает работать — просто
+оставляет статическую ссылку на код inspector'а в основном бандле.
+Factory pattern — bundle-friendly путь на будущее.
+
+## Запуск codemod
+
+```bash
+npx @triggery/codemod migrate-to-v010 'src/**/*.ts'
+```
+
+Codemod применяет три преобразования:
+
+1. Folding пар `let + registerCondition` в `conditions:` config + переписывание присваиваний в `t.setCondition`
+2. Удаление `conditions.X!` non-null assertions внутри handler'ов
+3. Маркеры для `runtime.registerAction(..., fan-out)` — миграция fan-out требует ручного шага из-за вариативности окружающего `Set + for-of` кода
+
+В неоднозначных случаях codemod **оставляет** оригинальный код, **дополняет** его комментарием `// triggery-codemod: review`.
+
+## React / Solid / Vue компоненты
+
+Обычно ничего менять не нужно. `useEvent`, `useCondition`, `useAction`
+сохраняют те же сигнатуры с одним улучшением: **несколько вызовов
+`useAction` для одной `(trigger, name)` пары теперь все срабатывают на
+каждый emit** (вместо last-mount-wins). Если код полагался на
+перезапись — переключись на `runtime.registerAction(trigger.id, 'name', fn)`.
+
+Новый хук в React:
+
+```tsx
+import { useSetCondition } from '@triggery/react';
+
+function App() {
+  const [user, setUser] = useState<User | null>(null);
+  useSetCondition(messageTrigger, 'user', user); // пары с conditions: { user: null }
+  // ...
+}
+```
+
+Это тонкая обёртка над `useEffect(() => trigger.setCondition(...), [user])` —
+однострочная замена для «у меня есть React state и я хочу его скормить v0.10 inline condition».
+
+## FAQ
+
+**Обязательно ли мигрировать?**
+Нет. v0.9 паттерны работают до v1.0. v0.11 начнёт показывать `@deprecated`
+JSDoc на старых путях, чтобы редактор их флагал, но runtime-семантика
+сохраняется. v1.0 удалит deprecated пути.
+
+**Когда v0.9 перестанет поддерживаться?**
+v0.9 остаётся в `legacy` dist-tag и получает критические security-фиксы
+до v1.0. Bug-фиксы, которые легко портируются, чёрри-пикаются; новые
+фичи лендятся только в `latest`.
+
+**Что если в кодовой базе смешаны v0.9 и v0.10 паттерны?**
+Нормально — они сосуществуют. Миграция opt-in на каждый триггер.
+
+**Бандл реально уменьшится?**
+Основной entry остаётся ~5 KB gz в v0.10 — inspector factory экономит
+байты только когда `createInspector` явно не импортируется. Будущие
+минорные релизы прогрессивно вынесут больше кода в subpath'ы; v0.10
+закладывает фундамент через subpath exports.
