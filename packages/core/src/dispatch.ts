@@ -35,13 +35,10 @@ export type TimerEntry = TimerEntryImpl;
 
 export type RegisteredTrigger = {
   readonly config: InternalTriggerConfig;
-  /** Top-of-stack mirror of `conditionStacks` — kept in sync by runtime so dispatch reads a flat Map. */
+  /** Current condition getters (last write wins per name). */
   readonly conditions: Map<string, ConditionGetter>;
-  /** Top-of-stack mirror of `actionStacks`. */
+  /** Current action handlers (last write wins per name). */
   readonly actions: Map<string, UntypedActionFn>;
-  /** Full registration stacks (last-mount-wins, StrictMode-safe). @internal */
-  readonly conditionStacks: Map<string, ConditionGetter[]>;
-  readonly actionStacks: Map<string, UntypedActionFn[]>;
   /**
    * Additive fan-out subscribers per action name (v0.10+ action-channel path).
    * Invoked on every action emit in addition to the top-of-stack action handler

@@ -14,7 +14,6 @@ import type {
   Runtime,
   SchedulerStrategy,
   Trigger,
-  TriggerBuilder,
   TriggerHandler,
   TriggerSchema,
 } from './types.ts';
@@ -93,112 +92,14 @@ export type CreateTriggerConfig<S extends TriggerSchema> = {
  * ```
  */
 /**
- * Chainable form. Call with no arguments to get a `TriggerBuilder<S>`, then
- * chain `.id`, `.events`, `.require`, `.conditions`, `.schedule`,
- * `.concurrency`, `.scope` and finally `.handle(handler)`. The handler sees
- * required conditions narrowed to `NonNullable<...>` — no `!` operator, no
- * manual `if (!conditions.x) return;`.
- *
- * ```ts
- * const t = createTrigger<Schema>()
- *   .id('inbox')
- *   .events(['new-message'])
- *   .conditions({ user: null, settings: null })
- *   .require('user', 'settings')
- *   .handle(({ event, conditions, actions }) => {
- *     // conditions.user: User; conditions.settings: Settings
- *   });
- * ```
+ * Imperative form. Pass the trigger config; returns a live `Trigger<S>`
+ * registered with the runtime. The chainable builder form lives in the
+ * `@triggery/core/builder` subpath — import from there if you want
+ * `createTrigger<S>().require(...).handle(...)` with auto-narrowing.
  */
-export function createTrigger<S extends TriggerSchema>(): TriggerBuilder<S>;
 export function createTrigger<S extends TriggerSchema>(
   config: CreateTriggerConfig<S>,
-  runtime?: Runtime,
-): Trigger<S>;
-export function createTrigger<S extends TriggerSchema>(
-  config?: CreateTriggerConfig<S>,
-  runtime?: Runtime,
-): Trigger<S> | TriggerBuilder<S> {
-  if (config === undefined) return createBuilder<S>();
-  return createTriggerFromConfig<S>(config, runtime ?? getDefaultRuntime());
-}
-
-function createBuilder<S extends TriggerSchema>(
-  initial?: Partial<{
-    id: string;
-    events: readonly EventKey<S>[];
-    required: readonly ConditionKey<S>[];
-    conditions: { readonly [K in ConditionKey<S>]?: ConditionMap<S>[K] | null };
-    schedule: SchedulerStrategy;
-    concurrency: ConcurrencyStrategy;
-    scope: string;
-    runtime: Runtime;
-  }>,
-): TriggerBuilder<S> {
-  const state = { ...(initial ?? {}) };
-  // We return a fresh builder per chained call so the type parameter `R` can
-  // narrow correctly; under the hood each call mutates a shared `state` and
-  // returns a builder that closes over it. From the type system's POV the
-  // returned builder is a new `TriggerBuilder<S, R'>`; at runtime there is
-  // exactly one closure per `createTrigger()` chain — keeps allocations down.
-  const builder: TriggerBuilder<S, never> = {
-    id(id) {
-      state.id = id;
-      return builder as TriggerBuilder<S, never>;
-    },
-    events(events) {
-      state.events = events;
-      return builder as TriggerBuilder<S, never>;
-    },
-    require<K extends ConditionKey<S>>(...keys: readonly K[]): TriggerBuilder<S, K> {
-      const prev = (state.required ?? []) as readonly ConditionKey<S>[];
-      const next = [...prev];
-      for (const k of keys) if (!next.includes(k)) next.push(k);
-      state.required = next as readonly ConditionKey<S>[];
-      return builder as unknown as TriggerBuilder<S, K>;
-    },
-    conditions(values) {
-      state.conditions = { ...(state.conditions ?? {}), ...values };
-      return builder as TriggerBuilder<S, never>;
-    },
-    schedule(strategy) {
-      state.schedule = strategy;
-      return builder as TriggerBuilder<S, never>;
-    },
-    concurrency(strategy) {
-      state.concurrency = strategy;
-      return builder as TriggerBuilder<S, never>;
-    },
-    scope(scope) {
-      state.scope = scope;
-      return builder as TriggerBuilder<S, never>;
-    },
-    handle(handler) {
-      if (state.id === undefined) {
-        throw new Error('[triggery] createTrigger().handle: .id(...) was not called');
-      }
-      if (state.events === undefined) {
-        throw new Error('[triggery] createTrigger().handle: .events(...) was not called');
-      }
-      const cfg: CreateTriggerConfig<S> = {
-        id: state.id,
-        events: state.events,
-        handler: handler as TriggerHandler<S, never>,
-        ...(state.required !== undefined && { required: state.required }),
-        ...(state.conditions !== undefined && { conditions: state.conditions }),
-        ...(state.schedule !== undefined && { schedule: state.schedule }),
-        ...(state.concurrency !== undefined && { concurrency: state.concurrency }),
-        ...(state.scope !== undefined && { scope: state.scope }),
-      };
-      return createTriggerFromConfig<S>(cfg, state.runtime ?? getDefaultRuntime());
-    },
-  };
-  return builder;
-}
-
-function createTriggerFromConfig<S extends TriggerSchema>(
-  config: CreateTriggerConfig<S>,
-  runtime: Runtime,
+  runtime: Runtime = getDefaultRuntime(),
 ): Trigger<S> {
   const internalHandler = (ctx: InternalHandlerCtx) =>
     config.handler(ctx as unknown as Parameters<typeof config.handler>[0]);

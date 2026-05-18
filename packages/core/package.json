@@ -57,6 +57,15 @@
       },
       "default": "./dist/inspect.js"
     },
+    "./builder": {
+      "source": "./src/builder.ts",
+      "types": "./dist/builder.d.ts",
+      "import": {
+        "production": "./dist/builder.prod.js",
+        "default": "./dist/builder.js"
+      },
+      "default": "./dist/builder.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

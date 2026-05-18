@@ -1,4 +1,4 @@
-import { createTrigger } from '@triggery/core';
+import { createTrigger } from '@triggery/core/builder';
 
 /**
  * The whole scenario lives in this one file:

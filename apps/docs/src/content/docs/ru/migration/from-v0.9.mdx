@@ -23,16 +23,16 @@ import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 | **Builder API** `createTrigger<S>().require(...).handle(...)` | Required conditions становятся `NonNullable<...>` — никаких `!` и `if (!conditions.x) return;` |
 | **Inspector subpath** `@triggery/core/inspect` | Opt-in factory pattern, который выносит inspector из основного бандла |
 
-Также два семантических изменения:
+Также несколько семантических изменений:
 
 | Поведение | v0.9 | v0.10 |
 |---|---|---|
 | Два компонента оба делают `useAction(trigger, 'x', fn)` | last-mount-wins (срабатывает только последний `fn`) | оба `fn` срабатывают на каждый emit (fan-out) |
 | `runtime.subscribeAction(...)` | не было | новый метод, аддитивный (вызывается каждый subscriber) |
+| Два подряд вызова `runtime.registerCondition(t.id, 'x', g)` | stack-based — unregister top'а откатывался к предыдущему | last write wins; устаревший `unregister()` это no-op |
+| Builder-форма `createTrigger<S>()` (без args) | экспортировалась из `@triggery/core` | переехала в **`@triggery/core/builder`** subpath |
 
-Если код полагался на last-mount-wins для actions — переключи call site на
-`runtime.registerAction(trigger.id, 'x', fn)`. Этот путь не изменился и
-по-прежнему last-mount-wins.
+Миграция builder import — однострочное изменение, см. шаг 5 ниже.
 
 ## Миграция типичного триггера
 
@@ -181,7 +181,29 @@ const t = createTrigger<Schema>()
 [`no-non-null-assertion-in-handler`](/ru/api/eslint-plugin/) — оно
 автоматически флагит `conditions.X!` (autofix убирает `!`).
 
-### 5. (Опционально) Переключи inspector на factory pattern
+### 5. Переключи builder import на `@triggery/core/builder`
+
+Если использовал chainable form `createTrigger<S>().require(...).handle(...)`,
+обнови import — builder переехал в отдельный subpath в v0.10, чтобы
+приложения с только imperative `createTrigger({...})` config form не платили
+за builder machinery:
+
+```diff
+- import { createTrigger } from '@triggery/core';
++ import { createTrigger } from '@triggery/core/builder';
+
+  const t = createTrigger<Schema>()
+    .id('inbox')
+    .events(['new-message'])
+    .require('user')
+    .handle(({ conditions, actions }) => { /* ... */ });
+```
+
+Imperative форма `createTrigger({ id, events, handler })` остаётся
+экспортируемой из `@triggery/core` — переехала только chainable перегрузка
+без args.
+
+### 6. (Опционально) Переключи inspector на factory pattern
 
 ```ts
 // до

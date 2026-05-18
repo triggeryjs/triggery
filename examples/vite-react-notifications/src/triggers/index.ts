@@ -1,4 +1,4 @@
-import { createTrigger } from '@triggery/core';
+import { createTrigger } from '@triggery/core/builder';
 
 type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
 type Message = {

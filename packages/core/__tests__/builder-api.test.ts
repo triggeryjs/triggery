@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
-import type { TriggerBuilder } from '../src/index.ts';
-import { createRuntime, createTrigger } from '../src/index.ts';
+import { createTrigger } from '../src/builder.ts';
+import { createRuntime, createTrigger as createTriggerImperative } from '../src/index.ts';
+import type { TriggerBuilder } from '../src/types.ts';
 
 type Schema = {
   events: { ping: number };
@@ -66,7 +67,7 @@ describe('B3 — builder API (runtime)', () => {
     // We pass runtime via the second-arg form on top-level createTrigger.
     // For the builder, the runtime defaults to getDefaultRuntime() — see
     // integration test for builder + explicit runtime via injection.
-    createTrigger<Schema>(
+    createTriggerImperative<Schema>(
       {
         id: 'b4',
         events: ['ping'],
@@ -123,7 +124,7 @@ describe('B3 — builder API (runtime)', () => {
       .handle(() => {}).dispose;
     expect(typeof t).toBe('function');
 
-    const t2 = createTrigger<Schema>(
+    const t2 = createTriggerImperative<Schema>(
       {
         id: 'b7b',
         events: ['ping'],
@@ -140,7 +141,7 @@ describe('B3 — builder API (runtime)', () => {
     const runtime = createRuntime();
     const action = vi.fn();
     const channelCb = vi.fn();
-    const t = createTrigger<Schema>(
+    const t = createTriggerImperative<Schema>(
       {
         id: 'b8',
         events: ['ping'],

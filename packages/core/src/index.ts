@@ -79,7 +79,6 @@ export type {
   SkipContext,
   ToPascal,
   Trigger,
-  TriggerBuilder,
   TriggerConfig,
   TriggerCtx,
   TriggerGraphNode,

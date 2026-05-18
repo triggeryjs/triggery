@@ -124,8 +124,6 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       config,
       conditions: new Map(),
       actions: new Map(),
-      conditionStacks: new Map(),
-      actionStacks: new Map(),
       channelSubscribers: new Map(),
       enabled: true,
       inFlight: new Set(),
@@ -154,12 +152,10 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
 
   // ─── conditions / actions ─────────────────────────────────────────────
   //
-  // Conditions and actions are stored as stacks. The last registration wins
-  // (top of stack), so React StrictMode double-mount, multiple providers and
-  // overlapping registrations all behave deterministically.
-  //
-  // The Map<name, fn> on the trigger always mirrors the top of the stack so
-  // that `dispatch.ts` stays simple (no stack inspection on the hot path).
+  // Each `(trigger, name)` slot holds **one** entry — last write wins.
+  // Older versions kept a stack to survive React StrictMode mount-cycles,
+  // but the cycle clears its own unmount token before the second mount
+  // runs, so plain Map writes are sufficient and ~100B lighter.
 
   const registerStacked = (
     triggerId: string,
@@ -177,10 +173,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       }
       return { unregister() {} };
     }
-    // Scope-match gate. A trigger declared with `scope: 'chat'` only sees
-    // registrations made in scope `'chat'`; a global trigger (no scope) only
-    // sees global registrations. Mismatches are silent no-ops at runtime, but
-    // we warn-once in DEV so the user notices the wiring is off.
+    // Scope-match gate.
     if (trigger.config.scope !== scope) {
       if (process.env.NODE_ENV !== 'production') {
         warnRuntimeOnce(
@@ -192,33 +185,20 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       }
       return { unregister() {} };
     }
-    const isCondition = label === 'condition';
-    const stacks = (isCondition ? trigger.conditionStacks : trigger.actionStacks) as unknown as Map<
-      string,
-      unknown[]
-    >;
-    const mirror = (isCondition ? trigger.conditions : trigger.actions) as unknown as Map<
+    const mirror = (label === 'condition' ? trigger.conditions : trigger.actions) as unknown as Map<
       string,
       unknown
     >;
 
-    let stack = stacks.get(name);
-    if (!stack) {
-      stack = [];
-      stacks.set(name, stack);
-    }
-
-    // DEV: warn-once per (label, triggerId, name) when a second live
-    // registration arrives.
-    if (process.env.NODE_ENV !== 'production' && stack.length > 0) {
+    // DEV: warn-once when a second live registration arrives — caller is
+    // about to silently lose the previous one.
+    if (process.env.NODE_ENV !== 'production' && mirror.has(name)) {
       warnRuntimeOnce(
         `${label}:${triggerId}:${name}`,
-        `[triggery] multiple ${label} registrations for "${name}" on trigger "${triggerId}" — last-mount-wins. ` +
+        `[triggery] multiple ${label} registrations for "${name}" on trigger "${triggerId}" — last write wins. ` +
           'To compose values from several sources, register through a single hook.',
       );
     }
-
-    stack.push(fn);
     mirror.set(name, fn);
 
     let unregistered = false;
@@ -228,29 +208,13 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
         unregistered = true;
         const t = triggers.get(triggerId);
         if (!t) return;
-        const liveStacks = (isCondition ? t.conditionStacks : t.actionStacks) as unknown as Map<
-          string,
-          unknown[]
-        >;
-        const liveMirror = (isCondition ? t.conditions : t.actions) as unknown as Map<
+        const liveMirror = (label === 'condition' ? t.conditions : t.actions) as unknown as Map<
           string,
           unknown
         >;
-        const liveStack = liveStacks.get(name);
-        if (!liveStack) return;
-        // Remove the most-recent occurrence of this fn (StrictMode-safe).
-        for (let i = liveStack.length - 1; i >= 0; i--) {
-          if (liveStack[i] === fn) {
-            liveStack.splice(i, 1);
-            break;
-          }
-        }
-        if (liveStack.length === 0) {
-          liveStacks.delete(name);
-          liveMirror.delete(name);
-        } else {
-          liveMirror.set(name, liveStack[liveStack.length - 1]);
-        }
+        // Only delete if `fn` is still the current entry — guards against
+        // a later registration getting wiped by a stale unregister token.
+        if (liveMirror.get(name) === fn) liveMirror.delete(name);
       },
     };
   };

@@ -23,7 +23,7 @@ describe('warn-once on last-mount collision (DEV)', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
     const message = warnSpy.mock.calls[0]?.[0] as string;
     expect(message).toContain('multiple condition registrations for "user"');
-    expect(message).toContain('last-mount-wins');
+    expect(message).toContain('last write wins');
   });
 
   it('does not warn again for the same trigger/name pair', () => {
@@ -39,7 +39,7 @@ describe('warn-once on last-mount collision (DEV)', () => {
     expect(warnSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT warn for StrictMode mount→unmount→mount (stack is empty on remount)', () => {
+  it('does NOT warn for StrictMode mount→unmount→mount (slot is empty on remount)', () => {
     const runtime = createRuntime();
     createTrigger<{ events: { go: void }; conditions: { x: number } }>(
       { id: 'sm', events: ['go'], handler() {} },

@@ -9,7 +9,7 @@ import { defineConfig } from 'tsup';
 //     export condition.
 export default defineConfig([
   {
-    entry: ['src/index.ts', 'src/inspect.ts'],
+    entry: ['src/index.ts', 'src/inspect.ts', 'src/builder.ts'],
     format: ['esm'],
     dts: true,
     sourcemap: true,
@@ -20,7 +20,11 @@ export default defineConfig([
     minify: false,
   },
   {
-    entry: { 'index.prod': 'src/index.ts', 'inspect.prod': 'src/inspect.ts' },
+    entry: {
+      'index.prod': 'src/index.ts',
+      'inspect.prod': 'src/inspect.ts',
+      'builder.prod': 'src/builder.ts',
+    },
     format: ['esm'],
     dts: false,
     sourcemap: false,

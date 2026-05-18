@@ -23,16 +23,16 @@ Four new things, all opt-in:
 | **Builder API** `createTrigger<S>().require(...).handle(...)` | Required conditions become `NonNullable<...>` — no more `!` and no manual `if (!conditions.x) return;` |
 | **Inspector subpath** `@triggery/core/inspect` | Opt-in factory pattern that keeps the inspector out of the main bundle |
 
-There are also two semantic changes worth noting:
+There are also a few semantic changes worth noting:
 
 | Behaviour | v0.9 | v0.10 |
 |---|---|---|
 | Two components both call `useAction(trigger, 'x', fn)` | last-mount-wins (only the second `fn` runs) | both `fn`s run on each emit (fan-out) |
 | `runtime.subscribeAction(...)` | not available | new method, additive (every subscriber invoked) |
+| Two consecutive `runtime.registerCondition(t.id, 'x', g)` calls | stack-based — unregister of top falls back to previous | last write wins; stale `unregister()` is a no-op |
+| Builder form `createTrigger<S>()` (no args) | exported from `@triggery/core` | moved to **`@triggery/core/builder`** subpath |
 
-If you relied on last-mount-wins for actions, switch the call site to
-`runtime.registerAction(trigger.id, 'x', fn)` — that path is unchanged and
-still last-mount-wins.
+Migrating the builder import is a one-line change — see step 5 below.
 
 ## Migrating a typical trigger
 
@@ -182,7 +182,28 @@ If you prefer the imperative form, enable the
 [`no-non-null-assertion-in-handler`](/api/eslint-plugin/) rule to flag
 `conditions.X!` automatically (autofix removes the `!`).
 
-### 5. (Optional) Switch the inspector to the factory pattern
+### 5. Switch the builder import to `@triggery/core/builder`
+
+If you used the chainable form `createTrigger<S>().require(...).handle(...)`,
+update the import — the builder moved to its own subpath in v0.10 so apps
+that only use the imperative `createTrigger({...})` config form don't pay
+for the builder machinery:
+
+```diff
+- import { createTrigger } from '@triggery/core';
++ import { createTrigger } from '@triggery/core/builder';
+
+  const t = createTrigger<Schema>()
+    .id('inbox')
+    .events(['new-message'])
+    .require('user')
+    .handle(({ conditions, actions }) => { /* ... */ });
+```
+
+The imperative `createTrigger({ id, events, handler })` form remains exported
+from `@triggery/core` — only the no-arg chainable overload moved.
+
+### 6. (Optional) Switch the inspector to the factory pattern
 
 ```ts
 // before

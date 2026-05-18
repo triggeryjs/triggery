@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRuntime, createTrigger } from '../src/index.ts';
 
-describe('refcount stack — conditions', () => {
-  it('last-mount-wins through multiple registrations', () => {
+/**
+ * v0.10 simplified semantics: each `(trigger, name)` slot holds **one**
+ * registration. The most recent call wins; `unregister()` removes the
+ * registration only if it's still the live one (no stack fallback).
+ */
+describe('refcount — conditions', () => {
+  it('last write wins through multiple registrations', () => {
     const runtime = createRuntime();
     const seen: ({ id: string } | undefined)[] = [];
     createTrigger<{
@@ -23,7 +28,7 @@ describe('refcount stack — conditions', () => {
     runtime.fireSync('tick');
     expect(seen.at(-1)).toEqual({ id: 'A' });
 
-    const tokenB = runtime.registerCondition('demo', 'user', () => ({ id: 'B' }));
+    runtime.registerCondition('demo', 'user', () => ({ id: 'B' }));
     runtime.fireSync('tick');
     expect(seen.at(-1)).toEqual({ id: 'B' });
 
@@ -31,23 +36,18 @@ describe('refcount stack — conditions', () => {
     runtime.fireSync('tick');
     expect(seen.at(-1)).toEqual({ id: 'C' });
 
-    // Unmount the middle one (B). C is still on top.
-    tokenB.unregister();
+    // Stale unregister on A (current registration is C) — no-op.
+    tokenA.unregister();
     runtime.fireSync('tick');
     expect(seen.at(-1)).toEqual({ id: 'C' });
 
-    // Unmount top (C). The previous live registration was A — fall back to it.
+    // Unregister C (the live one) — condition is gone.
     tokenC.unregister();
-    runtime.fireSync('tick');
-    expect(seen.at(-1)).toEqual({ id: 'A' });
-
-    // Unmount the last one. The condition is gone — handler sees undefined.
-    tokenA.unregister();
     runtime.fireSync('tick');
     expect(seen.at(-1)).toBeUndefined();
   });
 
-  it('StrictMode double-mount: register/register/unregister keeps one alive', () => {
+  it('StrictMode double-mount: register/register/unregister keeps the latest alive', () => {
     const runtime = createRuntime();
     const seen: ({ id: string } | undefined)[] = [];
     createTrigger<{
@@ -65,6 +65,8 @@ describe('refcount stack — conditions', () => {
     );
 
     // React StrictMode in dev double-invokes effects: mount → unmount → mount.
+    // The first mount's unregister fires *after* the second mount registers,
+    // so its token is stale by then and the second registration survives.
     const t1 = runtime.registerCondition('sm', 'user', () => ({ id: 'first' }));
     const t2 = runtime.registerCondition('sm', 'user', () => ({ id: 'second' }));
     t1.unregister();
@@ -82,8 +84,8 @@ describe('refcount stack — conditions', () => {
   });
 });
 
-describe('refcount stack — actions', () => {
-  it('multiple action handlers — last wins, falls back on unregister', () => {
+describe('refcount — actions', () => {
+  it('last action handler wins; stale unregister is a no-op', () => {
     const runtime = createRuntime();
     const a = vi.fn();
     const b = vi.fn();
@@ -103,13 +105,15 @@ describe('refcount stack — actions', () => {
     expect(b).toHaveBeenCalledTimes(1);
     expect(a).not.toHaveBeenCalled();
 
-    tokenB.unregister();
-    runtime.fireSync('tick');
-    expect(a).toHaveBeenCalledTimes(1);
-
+    // Stale unregister on A — current is B, so no-op.
     tokenA.unregister();
     runtime.fireSync('tick');
-    expect(a).toHaveBeenCalledTimes(1); // no handler -> not called
-    expect(b).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(2);
+    expect(a).not.toHaveBeenCalled();
+
+    tokenB.unregister();
+    runtime.fireSync('tick');
+    expect(b).toHaveBeenCalledTimes(2);
+    expect(a).not.toHaveBeenCalled(); // a was unregistered already
   });
 });
