@@ -1,5 +1,12 @@
 # @triggery/cli
 
+## 0.10.0
+
+### Patch Changes
+
+- Re-released as part of the synchronised `@triggery/*@0.10.0` cut (no functional changes vs the previous version).
+
+
 ## 0.1.2
 
 ### Patch Changes

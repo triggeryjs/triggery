@@ -1,6 +1,6 @@
 {
   "name": "@triggery/codemod",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "description": "Codemods for migrating React/Redux side-effect code to Triggery \u2014 ts-morph powered.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",

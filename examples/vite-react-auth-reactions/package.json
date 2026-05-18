@@ -1,17 +1,17 @@
 {
   "name": "triggery-example-vite-react-auth-reactions",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
-  "description": "Session expired or role revoked \u2014 close features, save dirty forms, redirect \u2014 all from one trigger.",
+  "description": "Session expired or role revoked — close features, save dirty forms, redirect — all from one trigger.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@triggery/core": "^0.9.1",
-    "@triggery/react": "^0.9.1",
+    "@triggery/core": "^1.0.0",
+    "@triggery/react": "^1.0.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

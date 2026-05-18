@@ -1,6 +1,6 @@
 {
   "name": "triggery-example-vite-react-counter",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "type": "module",
   "description": "Minimal Triggery + React example — counter button fires an event, a separate component reacts with a notification action.",
@@ -10,8 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@triggery/core": "^0.9.1",
-    "@triggery/react": "^0.9.1",
+    "@triggery/core": "^1.0.0",
+    "@triggery/react": "^1.0.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

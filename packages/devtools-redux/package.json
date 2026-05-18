@@ -1,7 +1,7 @@
 {
   "name": "@triggery/devtools-redux",
-  "version": "0.9.1",
-  "description": "Redux DevTools bridge for Triggery \u2014 middleware streaming runtime events into the Redux DevTools browser extension. Framework-agnostic. Zero runtime dependencies.",
+  "version": "0.10.0",
+  "description": "Redux DevTools bridge for Triggery — middleware streaming runtime events into the Redux DevTools browser extension. Framework-agnostic. Zero runtime dependencies.",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io",

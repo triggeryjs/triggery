@@ -1,7 +1,7 @@
 {
   "name": "@triggery/redux",
-  "version": "0.9.1",
-  "description": "Redux adapter for Triggery \u2014 read store state from a trigger condition without subscribing the component to re-renders",
+  "version": "0.10.0",
+  "description": "Redux adapter for Triggery — read store state from a trigger condition without subscribing the component to re-renders",
   "license": "MIT",
   "author": "Aleksey Skhomenko",
   "homepage": "https://triggeryjs.github.io",
