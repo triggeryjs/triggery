@@ -7,8 +7,8 @@
  * functional coverage that lives in dedicated suites.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createInspector, createNoopInspector } from '../src/inspect.ts';
 import { createRuntime, createTrigger } from '../src/index.ts';
+import { createInspector, createNoopInspector } from '../src/inspect.ts';
 
 type Schema = {
   events: { tick: void };
@@ -93,10 +93,7 @@ describe('coverage v0.10 — trigger.action subscribe on disposed', () => {
 
   it('unsubscribe is idempotent', () => {
     const runtime = createRuntime();
-    const t = createTrigger<Schema>(
-      { id: 'idem', events: ['tick'], handler() {} },
-      runtime,
-    );
+    const t = createTrigger<Schema>({ id: 'idem', events: ['tick'], handler() {} }, runtime);
     const unsub = t.action('ping').subscribe(() => {});
     unsub();
     unsub(); // double-call — second call must be a silent no-op
@@ -109,7 +106,10 @@ describe('coverage v0.10 — getDefaultRuntime fallback in builder', () => {
     // We import builder dynamically and finalize a trigger without passing a runtime —
     // exercises the `runtime ?? getDefaultRuntime()` branch in builder.ts.
     const { createTrigger: createTriggerBuilder } = await import('../src/builder.ts');
-    const t = createTriggerBuilder<Schema>().id('default-rt').events(['tick']).handle(() => {});
+    const t = createTriggerBuilder<Schema>()
+      .id('default-rt')
+      .events(['tick'])
+      .handle(() => {});
     expect(t.id).toBe('default-rt');
     t.dispose();
   });
