@@ -37,14 +37,16 @@ const isDev = (): boolean => {
 /**
  * Resolve the inspector option against the current environment.
  *
- *   undefined  → DEV on, PROD off (auto)
- *   true       → always on
- *   false      → always off
- *   { dev?, prod? } → per-env override, unset fields fall back to auto
+ *   undefined         → DEV on, PROD off (auto)
+ *   true              → always on
+ *   false             → always off
+ *   { dev?, prod? }   → per-env override, unset fields fall back to auto
+ *   InspectorFactory  → always on, factory supplies the implementation
  */
 function resolveInspectorEnabled(option: InspectorOption | undefined): boolean {
   if (option === true) return true;
   if (option === false) return false;
+  if (typeof option === 'function') return true;
   const dev = isDev();
   if (option === undefined) return dev;
   // Object form: explicit overrides per environment, with auto fallback.
@@ -63,8 +65,11 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const trackTiming = needsTiming(middleware);
   const maxCascadeDepth = options.maxCascadeDepth ?? 3;
   const inspectorEnabled = resolveInspectorEnabled(options.inspector);
+  const inspectorBufferSize = options.inspectorBufferSize ?? 50;
   const inspector = inspectorEnabled
-    ? createInspector(options.inspectorBufferSize ?? 50)
+    ? typeof options.inspector === 'function'
+      ? options.inspector(inspectorBufferSize)
+      : createInspector(inspectorBufferSize)
     : createNoopInspector();
   const microtaskScheduler = createScheduler('microtask');
   const syncScheduler = createScheduler('sync');
@@ -111,6 +116,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
       actions: new Map(),
       conditionStacks: new Map(),
       actionStacks: new Map(),
+      channelSubscribers: new Map(),
       enabled: true,
       inFlight: new Set(),
       queueTail: Promise.resolve(),
@@ -263,6 +269,67 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     handler: UntypedActionFn,
     options?: RegisterScopeOptions,
   ): RegistrationToken => registerStacked(triggerId, name, handler, 'action', options?.scope ?? '');
+
+  /**
+   * Additive (non-last-mount-wins) subscription to an action — used by the
+   * v0.10 action-channel API (`trigger.action(name).subscribe(cb)`). Every
+   * subscriber is invoked on every action emit, in addition to the
+   * top-of-stack handler registered via `registerAction`. Returns an
+   * idempotent token that removes the subscriber.
+   *
+   * Scope semantics mirror `registerAction`: a scope-mismatched call is a
+   * silent no-op (with a DEV warn-once) and returns a noop token.
+   */
+  const subscribeAction = (
+    triggerId: string,
+    name: string,
+    cb: UntypedActionFn,
+    options?: RegisterScopeOptions,
+  ): RegistrationToken => {
+    const scope = options?.scope ?? '';
+    const trigger = triggers.get(triggerId);
+    if (!trigger) {
+      if (isDev()) {
+        // eslint-disable-next-line no-console -- DEV warn
+        console.warn(`[triggery] subscribeAction: trigger "${triggerId}" not found`);
+      }
+      return { unregister() {} };
+    }
+    if (trigger.config.scope !== scope) {
+      if (isDev()) {
+        const collisionKey = `scope-mismatch:action-channel:${triggerId}:${scope}:${name}`;
+        if (!warnedCollisions.has(collisionKey)) {
+          warnedCollisions.add(collisionKey);
+          // eslint-disable-next-line no-console -- DEV warn
+          console.warn(
+            `[triggery] subscribeAction: scope mismatch — trigger "${triggerId}" has scope ` +
+              `"${trigger.config.scope || '(global)'}" but the subscribe call came from scope ` +
+              `"${scope || '(global)'}". The subscription is ignored.`,
+          );
+        }
+      }
+      return { unregister() {} };
+    }
+    let set = trigger.channelSubscribers.get(name);
+    if (!set) {
+      set = new Set();
+      trigger.channelSubscribers.set(name, set);
+    }
+    set.add(cb);
+    let unregistered = false;
+    return {
+      unregister() {
+        if (unregistered) return;
+        unregistered = true;
+        const live = triggers.get(triggerId);
+        if (!live) return;
+        const liveSet = live.channelSubscribers.get(name);
+        if (!liveSet) return;
+        liveSet.delete(cb);
+        if (liveSet.size === 0) live.channelSubscribers.delete(name);
+      },
+    };
+  };
 
   // ─── cascade helpers ──────────────────────────────────────────────────
   const emitCascade = (info: CascadeContext) => {
@@ -434,6 +501,7 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     registerTrigger,
     registerCondition,
     registerAction,
+    subscribeAction,
     fire,
     fireSync,
     subscribe,
@@ -459,6 +527,16 @@ function buildPublicTrigger(
     },
     isEnabled() {
       return internal.enabled;
+    },
+    setCondition() {
+      throw new Error(
+        '[triggery] setCondition() can only be called on the original trigger object (returned by createTrigger)',
+      );
+    },
+    action() {
+      throw new Error(
+        '[triggery] action() can only be called on the original trigger object (returned by createTrigger)',
+      );
     },
     namedHooks() {
       throw new Error('[triggery] namedHooks() can only be called on the original trigger object');

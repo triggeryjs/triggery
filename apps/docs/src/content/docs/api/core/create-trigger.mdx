@@ -22,13 +22,19 @@ import { createTrigger } from '@triggery/core';
 ## Signature
 
 ```ts
+// Imperative form — v0.1+
 function createTrigger<S extends TriggerSchema>(
   config: CreateTriggerConfig<S>,
   runtime?: Runtime,
 ): Trigger<S>;
+
+// Builder form — v0.10+
+function createTrigger<S extends TriggerSchema>(): TriggerBuilder<S>;
 ```
 
 The generic `S` is the schema — three optional maps for events, conditions and actions. It is **never inferred** in normal use; always passed explicitly.
+
+Both forms produce the same `Trigger<S>` object at runtime — the builder is purely a typing convenience that narrows required conditions automatically (no `!`, no `if (!conditions.x) return;`). See [TriggerBuilder](#trigger-builder) below.
 
 ## Schema
 
@@ -48,7 +54,8 @@ For a void payload, use `void` (events) or `undefined` (actions). Names can be a
 |---|---|---|---|---|
 | `id` | `string` (literal) | yes | — | Unique runtime registry key. Must be a string literal — see [`no-dynamic-id`](/api/eslint-plugin/recommended/). |
 | `events` | `readonly EventKey<S>[]` | yes | — | Event names from `S['events']` this trigger reacts to. |
-| `required` | `readonly ConditionKey<S>[]` | no | `[]` | Conditions that must be registered for the handler to run. |
+| `conditions` | `{ [K in ConditionKey<S>]?: ConditionMap<S>[K] \| null }` | no | — | **v0.10+** Initial values for conditions owned by this trigger. Updated via `trigger.setCondition(name, value)`. |
+| `required` | `readonly ConditionKey<S>[]` | no | `[]` | Conditions that must be registered (and non-null/non-undefined) for the handler to run. |
 | `schedule` | `'microtask' \| 'sync'` | no | `'microtask'` | When to dispatch matching events. |
 | `concurrency` | [`ConcurrencyStrategy`](/api/core/types/runtime-options/) | no | `'take-latest'` | How async handler runs interact. |
 | `scope` | `string` | no | `''` | Restrict to a `<TriggerScope id="…">` subtree. |
@@ -64,6 +71,8 @@ A [`Trigger<S>`](/api/core/types/trigger-schema/) object — a stable identity y
 | `trigger.enable()` | Re-enable a disabled trigger. |
 | `trigger.disable()` | Skip future events (records `'disabled'` in inspector). |
 | `trigger.isEnabled()` | Boolean. |
+| `trigger.setCondition(name, value)` | **v0.10+** Update an inline condition declared in `conditions:` config. No-op (DEV warn-once) for keys not in config. |
+| `trigger.action(name)` | **v0.10+** Get the typed multi-subscriber channel for an action. Cached per `(trigger, name)`. See [`ActionChannel`](#actionchannel). |
 | `trigger.inspect()` | Latest [`TriggerInspectSnapshot`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src/types.ts#L-TriggerInspectSnapshot) or `undefined`. |
 | `trigger.dispose()` | Unregister from the runtime. Rare — use in tests. |
 | `trigger.namedHooks()` | Throws on `@triggery/core` directly — use [`createNamedHooks`](/api/react/create-named-hooks/) from a binding. |
@@ -154,12 +163,71 @@ const trigger = createTrigger<{ events: { hi: void } }>(
 );
 ```
 
+## Trigger builder (v0.10+) \{#trigger-builder\}
+
+Calling `createTrigger<S>()` with no arguments returns a `TriggerBuilder<S>`. The builder accumulates configuration through chainable methods and finalizes with `.handle(handler)` — at which point the handler sees required conditions narrowed to `NonNullable<...>`.
+
+```ts
+import { createTrigger } from '@triggery/core';
+
+const messageTrigger = createTrigger<{
+  events:     { 'new-message': { author: string; text: string } };
+  conditions: { user: { id: string }; settings: { sound: boolean } };
+  actions:    { showToast: { title: string }; playSound: void };
+}>()
+  .id('message-received')
+  .events(['new-message'])
+  .conditions({ user: null, settings: null })
+  .require('user', 'settings')
+  .handle(({ event, conditions, actions }) => {
+    // conditions.user: { id: string }      (no `!`, no early-return guard)
+    // conditions.settings: { sound: boolean }
+    actions.showToast?.({ title: conditions.user.id });
+    if (conditions.settings.sound) actions.playSound?.();
+  });
+```
+
+Methods:
+
+| Method | Description |
+|---|---|
+| `.id(string)` | Required. Same as the imperative `id` field. |
+| `.events([...])` | Required. Same as the imperative `events` field. |
+| `.conditions({ ... })` | Optional inline values, same shape as the imperative `conditions:` field. |
+| `.require(...keys)` | Add required condition keys. Calling `.require('a').require('b')` ≡ `.require('a', 'b')`. **Narrows `conditions.<key>` to `NonNullable<...>` in `.handle`**. |
+| `.schedule('sync' \| 'microtask')` | Override the scheduler. |
+| `.concurrency(strategy)` | Override the concurrency strategy. |
+| `.scope(string)` | Set the scope id (for `<TriggerScope>` isolation). |
+| `.handle(handler)` | Finalize and register the trigger with the default runtime. Returns `Trigger<S>`. |
+
+The chained order doesn't matter; `.handle` validates that `id` and `events` were set.
+
+## ActionChannel \{#actionchannel\}
+
+Returned by `trigger.action(name)`. A typed multi-subscriber channel for one action of the trigger — the v0.10 replacement for the v0.9 `Set<callback> + for-of` fan-out pattern.
+
+```ts
+type ActionChannel<P> = {
+  subscribe(cb: (payload: P) => void): () => void;
+  readonly subscribed: number;
+};
+```
+
+Channel subscribers and any `runtime.registerAction(...)` handler for the same key both fire on every emit — the channel path is **additive**, not a replacement. The channel itself is cached per `(trigger, name)` so repeat calls return the same object.
+
+```ts
+const toast = messageTrigger.action('showToast');
+const unsubA = toast.subscribe((p) => console.log('A', p));
+const unsubB = toast.subscribe((p) => console.log('B', p));
+// channel.subscribed === 2
+unsubA();
+// channel.subscribed === 1
+```
+
 ## Notes
 
-<Aside type="caution" title="V1 type-narrowing limitation">
-In V1, `required` is enforced at runtime only. TypeScript does not narrow required conditions inside the handler — `conditions.user` stays `User | undefined`. Use either an early guard (`if (!conditions.user) return;`) or `check.is/all/any` which carry NonNullable narrowing.
-
-A builder API auto-narrowing required conditions is on the roadmap for V1.1.
+<Aside type="tip" title="Type narrowing in the builder form">
+The builder API (v0.10+) automatically narrows required conditions to `NonNullable<...>` inside `.handle(...)`. The imperative form keeps the v0.9 behaviour — required conditions stay `T | undefined` and need an early guard or `check.is/all/any`.
 </Aside>
 
 <Aside type="tip">

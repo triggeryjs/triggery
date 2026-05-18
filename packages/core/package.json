@@ -45,6 +45,12 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./inspect": {
+      "source": "./src/inspect.ts",
+      "types": "./dist/inspect.d.ts",
+      "import": "./dist/inspect.js",
+      "default": "./dist/inspect.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

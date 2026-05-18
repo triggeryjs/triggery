@@ -49,6 +49,13 @@ export type RegisteredTrigger = {
   /** Full registration stacks (last-mount-wins, StrictMode-safe). @internal */
   readonly conditionStacks: Map<string, ConditionGetter[]>;
   readonly actionStacks: Map<string, UntypedActionFn[]>;
+  /**
+   * Additive fan-out subscribers per action name (v0.10+ action-channel path).
+   * Invoked on every action emit in addition to the top-of-stack action handler
+   * registered via `runtime.registerAction`. Empty for triggers that never used
+   * the action-channel API.
+   */
+  readonly channelSubscribers: Map<string, Set<UntypedActionFn>>;
   enabled: boolean;
   /** Active runs. `take-latest` aborts all, `take-every`/`queue` keeps them. */
   readonly inFlight: Set<AbortController>;
@@ -298,36 +305,52 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
   });
 
   // ─── Action proxy + timing wrappers ──────────────────────────────────────
-  const callActionImmediate = (name: string, payload: unknown): void => {
+  /**
+   * Invoke the action's top-of-stack handler (if any) AND every channel
+   * subscriber (if any). At least one of the two must be present for the
+   * action to count as "executed" in the inspector.
+   */
+  const dispatchAction = (name: string, payload: unknown): void => {
     const handler = trigger.actions.get(name);
-    if (!handler) return;
+    const subscribers = trigger.channelSubscribers.get(name);
+    if (!handler && (!subscribers || subscribers.size === 0)) return;
     if (inspectorEnabled) executedActions.push(name);
-    invokeAction(
-      handler,
-      { triggerId: trigger.config.id, runId, actionName: name, payload },
-      middleware,
-      trackTiming,
-    );
+    const actionCtx = { triggerId: trigger.config.id, runId, actionName: name, payload };
+    if (handler) invokeAction(handler, actionCtx, middleware, trackTiming);
+    if (subscribers && subscribers.size > 0) {
+      for (const cb of subscribers) {
+        invokeAction(cb, actionCtx, middleware, trackTiming);
+      }
+    }
+  };
+
+  const callActionImmediate = (name: string, payload: unknown): void => {
+    dispatchAction(name, payload);
   };
 
   /** Invocation triggered by a debounce/throttle/defer timer — late binding. */
   const callActionDeferred = (name: string, payload: unknown): void => {
     if (!trigger.enabled) return;
     const handler = trigger.actions.get(name);
-    if (!handler) return;
-    invokeAction(
-      handler,
-      { triggerId: trigger.config.id, runId, actionName: name, payload },
-      middleware,
-      trackTiming,
-    );
+    const subscribers = trigger.channelSubscribers.get(name);
+    if (!handler && (!subscribers || subscribers.size === 0)) return;
+    const actionCtx = { triggerId: trigger.config.id, runId, actionName: name, payload };
+    if (handler) invokeAction(handler, actionCtx, middleware, trackTiming);
+    if (subscribers && subscribers.size > 0) {
+      for (const cb of subscribers) {
+        invokeAction(cb, actionCtx, middleware, trackTiming);
+      }
+    }
   };
+
+  const hasActionTarget = (name: string): boolean =>
+    trigger.actions.has(name) || (trigger.channelSubscribers.get(name)?.size ?? 0) > 0;
 
   const buildTimedProxy = (kind: 'debounce' | 'throttle' | 'defer', ms: number) =>
     new Proxy({} as Record<string, unknown>, {
       get(_target, prop: string | symbol) {
         if (typeof prop !== 'string') return undefined;
-        if (!trigger.actions.has(prop)) return undefined;
+        if (!hasActionTarget(prop)) return undefined;
         return (payload?: unknown) => {
           if (kind === 'debounce') {
             const key = `debounce:${prop}:${ms}`;
@@ -358,7 +381,7 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
         };
       },
       has(_target, prop) {
-        return typeof prop === 'string' && trigger.actions.has(prop);
+        return typeof prop === 'string' && hasActionTarget(prop);
       },
     });
 
@@ -368,11 +391,11 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
       if (prop === 'throttle') return (ms: number) => buildTimedProxy('throttle', ms);
       if (prop === 'defer') return (ms: number) => buildTimedProxy('defer', ms);
       if (typeof prop !== 'string') return undefined;
-      if (!trigger.actions.has(prop)) return undefined;
+      if (!hasActionTarget(prop)) return undefined;
       return (payload: unknown) => callActionImmediate(prop, payload);
     },
     has(_target, prop) {
-      return typeof prop === 'string' && trigger.actions.has(prop);
+      return typeof prop === 'string' && hasActionTarget(prop);
     },
   });
 

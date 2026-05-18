@@ -1,0 +1,247 @@
+---
+title: Upgrading from v0.9
+description: "v0.10 adds inline conditions, action channels, a builder API for required-narrowing and a tree-shakeable inspector subpath. All v0.9 code keeps working — migrate at your own pace."
+sidebar:
+  order: 0
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+`@triggery/core@0.10.0` and its sibling packages are an **additive** release.
+Existing v0.9 code keeps compiling and running unchanged. The new APIs land
+alongside the old ones; the old ones gain `@deprecated` JSDoc in v0.11 and
+are removed in v1.0.
+
+## What changed in v0.10
+
+Four new things, all opt-in:
+
+| Change | Effect on your code |
+|---|---|
+| **Inline `conditions:` config** on `createTrigger({...})` | Less wiring per trigger; values mutate through a typed setter |
+| **Action channels** via `trigger.action(name).subscribe(cb)` | Multi-subscriber action handlers without hand-rolled `Set + for-of` fan-out |
+| **Builder API** `createTrigger<S>().require(...).handle(...)` | Required conditions become `NonNullable<...>` — no more `!` and no manual `if (!conditions.x) return;` |
+| **Inspector subpath** `@triggery/core/inspect` | Opt-in factory pattern that keeps the inspector out of the main bundle |
+
+There are also two semantic changes worth noting:
+
+| Behaviour | v0.9 | v0.10 |
+|---|---|---|
+| Two components both call `useAction(trigger, 'x', fn)` | last-mount-wins (only the second `fn` runs) | both `fn`s run on each emit (fan-out) |
+| `runtime.subscribeAction(...)` | not available | new method, additive (every subscriber invoked) |
+
+If you relied on last-mount-wins for actions, switch the call site to
+`runtime.registerAction(trigger.id, 'x', fn)` — that path is unchanged and
+still last-mount-wins.
+
+## Migrating a typical trigger
+
+A canonical v0.9 trigger looks like this:
+
+```ts
+// v0.9
+let currentUser: User | null = null;
+let settings: Settings | null = null;
+
+const messageTrigger = createTrigger<Schema>({
+  id: 'message-received',
+  events: ['new-message'],
+  required: ['user', 'settings'],
+  handler({ event, conditions, actions }) {
+    const user = conditions.user!;             // ! non-null assertion
+    if (!conditions.settings) return;          // manual narrow
+    actions.showToast?.({ title: user.id });
+  },
+});
+
+runtime.registerCondition(messageTrigger.id, 'user', () => currentUser);
+runtime.registerCondition(messageTrigger.id, 'settings', () => settings);
+
+const toastSubs = new Set<(p: ToastPayload) => void>();
+runtime.registerAction(messageTrigger.id, 'showToast', (p) => {
+  for (const cb of toastSubs) cb(p);
+});
+```
+
+Same trigger in v0.10:
+
+```ts
+// v0.10
+const messageTrigger = createTrigger<Schema>()
+  .id('message-received')
+  .events(['new-message'])
+  .conditions({ user: null, settings: null })
+  .require('user', 'settings')
+  .handle(({ event, conditions, actions }) => {
+    // conditions.user: User      (narrowed by .require)
+    // conditions.settings: Settings
+    actions.showToast?.({ title: conditions.user.id });
+  });
+
+messageTrigger.setCondition('user', currentUser);
+messageTrigger.setCondition('settings', settings);
+
+const toast = messageTrigger.action('showToast');
+toast.subscribe(cb1);
+toast.subscribe(cb2); // multiple subscribers — both fire
+```
+
+What dropped:
+
+- The `let user: User | null = null;` storage cell — values live inside the trigger.
+- The two `runtime.registerCondition` calls — `conditions:` config handles registration.
+- The `conditions.user!` non-null assertion — the builder narrows the type.
+- The `if (!conditions.settings) return;` guard — same.
+- The `new Set<(p) => void>()` + `for of` fan-out — `t.action('X').subscribe` does it.
+
+LOC drop on a realistic engine (the comparison repo's notifications-pipeline):
+181 → ~155.
+
+## Step-by-step
+
+### 1. Start in a clean working tree
+
+Before running the codemod (or doing manual edits) — commit or stash your
+work. The migration touches many files at once; an untracked diff makes
+review easier.
+
+```bash
+git status        # clean
+git checkout -b chore/upgrade-triggery-v0.10
+pnpm up @triggery/core@^0.10 @triggery/react@^0.10  # and any other @triggery/* packages you use
+```
+
+### 2. Move `let` + `registerCondition` pairs into the trigger config
+
+Identify each pattern of the form:
+
+```ts
+let currentX: X | null = null;
+// ...
+runtime.registerCondition(trigger.id, 'x', () => currentX);
+// somewhere else:
+currentX = newValue;
+```
+
+Rewrite into:
+
+```ts
+const trigger = createTrigger<Schema>({
+  // ...
+  conditions: { x: null as X | null },
+  // ...
+});
+// later:
+trigger.setCondition('x', newValue);
+```
+
+The trigger now owns the cell. Older `runtime.registerCondition` calls for
+**other** condition keys (e.g. values that live in a store or signal) keep
+working unchanged — they're the recommended low-level path for
+externally-owned values.
+
+### 3. Adopt action channels for fan-out
+
+Replace hand-rolled `Set<callback>` fan-out with `trigger.action('name')`.
+The channel is cached per `(trigger, name)`, so calling
+`trigger.action('showToast')` repeatedly returns the same channel.
+
+```ts
+// before
+const subs = new Set<(p: ToastPayload) => void>();
+runtime.registerAction(trigger.id, 'showToast', (p) => {
+  for (const cb of subs) cb(p);
+});
+
+// after
+const toast = trigger.action('showToast');
+toast.subscribe(cb1);
+toast.subscribe(cb2);
+```
+
+The channel's `subscribe` and any `runtime.registerAction` handler for the
+same key now **coexist** — both fire on every action emit. This is the
+main behavioural change in v0.10; framework bindings (`useAction` in
+React/Solid/Vue) benefit automatically because they switched to
+`subscribeAction` internally.
+
+### 4. (Optional) Move to the builder API to drop `!` and `if-return`
+
+```ts
+const t = createTrigger<Schema>()
+  .id('x')
+  .events(['e'])
+  .require('user', 'settings')
+  .handle(({ conditions }) => {
+    // conditions.user is `NonNullable<...>` — no `!`, no early return
+    return conditions.user.id;
+  });
+```
+
+If you prefer the imperative form, enable the
+[`no-non-null-assertion-in-handler`](/api/eslint-plugin/) rule to flag
+`conditions.X!` automatically (autofix removes the `!`).
+
+### 5. (Optional) Switch the inspector to the factory pattern
+
+```ts
+// before
+import { createRuntime } from '@triggery/core';
+const runtime = createRuntime({ inspector: true });
+
+// after — keeps the inspector code out of the main bundle when you opt out
+import { createRuntime } from '@triggery/core';
+import { createInspectorFactory } from '@triggery/core/inspect';
+
+const runtime = createRuntime({ inspector: createInspectorFactory() });
+```
+
+`createRuntime({ inspector: true })` continues to work — it just keeps a
+static reference to the inspector code in the main bundle. The factory
+pattern is the bundle-friendly way going forward.
+
+## React / Solid / Vue components
+
+You normally don't need to change a thing. `useEvent`, `useCondition`,
+`useAction` keep the same signatures and behaviour with one subtle
+improvement: **multiple `useAction` calls for the same `(trigger, name)`
+all run on every emit** (instead of last-mount-wins). If you have a code
+path that relied on overwriting, switch it to
+`runtime.registerAction(trigger.id, 'name', fn)`.
+
+One new hook landed:
+
+```tsx
+import { useSetCondition } from '@triggery/react';
+
+function App() {
+  const [user, setUser] = useState<User | null>(null);
+  useSetCondition(messageTrigger, 'user', user); // pairs with conditions: { user: null }
+  // ...
+}
+```
+
+It's a thin wrapper over `useEffect(() => trigger.setCondition(...), [user])`
+— a one-liner replacement for "I have a React state and I want to feed it
+to a v0.10 inline condition".
+
+## FAQ
+
+**Do I have to migrate?**
+No. v0.9 patterns keep working through v1.0. v0.11 will start surfacing
+`@deprecated` JSDoc on the older paths so editors flag them, but the
+runtime semantics stay the same. v1.0 removes the deprecated paths.
+
+**When does v0.9 stop being supported?**
+v0.9 stays in the `legacy` dist-tag and receives critical security fixes
+until v1.0 ships. Bug fixes that are easily backportable get cherry-picked;
+new features land on `latest` only.
+
+**What if my codebase mixes v0.9 and v0.10 patterns?**
+Fine — they coexist. The migration is opt-in per trigger.
+
+**Will the bundle actually shrink?**
+The main entry stays around 5 KB gz in v0.10 — the inspector factory
+opt-in saves bytes only when you explicitly avoid `createInspector` in
+your bundle. Future minor releases will progressively split more code
+into subpaths; v0.10 lands the subpath exports as the foundation.

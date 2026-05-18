@@ -6,6 +6,7 @@ import { maxHandlerSize } from './rules/max-handler-size.ts';
 import { maxPortsPerTrigger } from './rules/max-ports-per-trigger.ts';
 import { noDynamicId } from './rules/no-dynamic-id.ts';
 import { noEventCascade } from './rules/no-event-cascade.ts';
+import { noNonNullAssertionInHandler } from './rules/no-non-null-assertion-in-handler.ts';
 import { preferNamedHook } from './rules/prefer-named-hook.ts';
 
 const rules = {
@@ -16,6 +17,7 @@ const rules = {
   'max-ports-per-trigger': maxPortsPerTrigger,
   'no-dynamic-id': noDynamicId,
   'no-event-cascade': noEventCascade,
+  'no-non-null-assertion-in-handler': noNonNullAssertionInHandler,
   'prefer-named-hook': preferNamedHook,
 };
 
@@ -53,6 +55,7 @@ const recommended: Linter.Config = {
     '@triggery/exhaustive-required': 'warn',
     '@triggery/max-handler-size': 'warn',
     '@triggery/max-ports-per-trigger': 'warn',
+    '@triggery/no-non-null-assertion-in-handler': 'warn',
   },
 };
 
@@ -67,6 +70,7 @@ const strict: Linter.Config = {
     '@triggery/max-handler-size': ['error', { max: 30 }],
     '@triggery/max-ports-per-trigger': ['error', { maxEvents: 5, maxConditions: 5, maxTotal: 8 }],
     '@triggery/prefer-named-hook': ['warn', { threshold: 3 }],
+    '@triggery/no-non-null-assertion-in-handler': 'error',
   },
 };
 
