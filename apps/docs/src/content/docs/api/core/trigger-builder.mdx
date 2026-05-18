@@ -59,7 +59,7 @@ The chained order does not affect behaviour — `.handle(...)` validates that `i
 ## Example
 
 ```ts twoslash
-import { createTrigger } from '@triggery/core';
+import { createTrigger } from '@triggery/core/builder';
 
 type Schema = {
   events: { 'new-message': { author: string; text: string } };
