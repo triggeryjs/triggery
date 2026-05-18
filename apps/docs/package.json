@@ -13,19 +13,19 @@
     "check": "astro check"
   },
   "dependencies": {
-    "@astrojs/check": "^0.9.4",
+    "@astrojs/check": "^0.9.9",
     "@astrojs/sitemap": "^3.7.2",
-    "@astrojs/starlight": "^0.37.7",
+    "@astrojs/starlight": "^0.39.2",
     "@stackblitz/sdk": "^1.11.0",
     "@triggery/core": "workspace:*",
     "@triggery/react": "workspace:*",
     "@triggery/solid": "workspace:*",
     "@triggery/testing": "workspace:*",
     "@triggery/vue": "workspace:*",
-    "astro": "^5.18.1",
+    "astro": "^6.3.4",
     "sharp": "^0.34.5",
     "shiki-twoslash-renderer": "^0.1.0",
-    "starlight-theme-nova": "^0.10.0",
+    "starlight-theme-nova": "^0.11.10",
     "typescript": "^5.7.3"
   },
   "devDependencies": {

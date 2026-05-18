@@ -72,6 +72,11 @@
     "vite-tsconfig-paths": "^6.1.1",
     "vitest": "^4.1.6"
   },
+  "pnpm": {
+    "overrides": {
+      "yaml": "^2.8.3"
+    }
+  },
   "llms": "https://triggeryjs.github.io/llms.txt",
   "llmsFull": "https://triggeryjs.github.io/llms-full.txt"
 }
