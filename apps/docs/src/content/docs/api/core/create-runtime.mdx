@@ -29,7 +29,7 @@ function createRuntime(options?: RuntimeOptions): Runtime;
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `inspector` | `boolean \| { dev?: boolean; prod?: boolean }` | DEV `true`, PROD `false` | Enable / disable the per-run inspector. |
+| `inspector` | `boolean \| { dev?: boolean; prod?: boolean } \| InspectorFactory` | DEV `true`, PROD `false` | Enable / disable the per-run inspector. **v0.10+:** pass `createInspectorFactory()` from `@triggery/core/inspect` for the bundle-friendly opt-in pattern. |
 | `inspectorBufferSize` | `number` | `50` | Inspector ring-buffer size. Ignored when the inspector is disabled. |
 | `middleware` | `readonly Middleware[]` | `[]` | Middleware chain. |
 | `maxCascadeDepth` | `number` | `3` | Maximum cascade depth — `action → fireEvent → …`. Runs above this are skipped with `'overflow'`. |
@@ -50,7 +50,7 @@ A [`Runtime`](https://github.com/triggeryjs/triggery/blob/main/packages/core/src
 | `runtime.graph()` | JSON-friendly snapshot of the registry — used by `triggery graph` CLI. |
 | `runtime.dispose()` | Abort all in-flight runs and drop all registrations. |
 
-`register*` methods (`registerTrigger`, `registerCondition`, `registerAction`) are also part of the surface, but bindings handle them for you.
+`register*` methods (`registerTrigger`, `registerCondition`, `registerAction`) are also part of the surface, but bindings handle them for you. **v0.10+** adds `runtime.subscribeAction(triggerId, name, cb, options?)` — the additive subscription path that powers `trigger.action(name).subscribe(cb)` and is what the framework `useAction` hooks now use under the hood. Every subscriber runs on each emit, alongside any handler registered through `registerAction`.
 
 ## Examples
 

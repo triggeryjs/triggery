@@ -266,7 +266,9 @@ new features land on `latest` only.
 Fine — they coexist. The migration is opt-in per trigger.
 
 **Will the bundle actually shrink?**
-The main entry stays around 5 KB gz in v0.10 — the inspector factory
-opt-in saves bytes only when you explicitly avoid `createInspector` in
-your bundle. Future minor releases will progressively split more code
-into subpaths; v0.10 lands the subpath exports as the foundation.
+Yes. The `@triggery/core` main entry drops from **~5.2 KB gz** (v0.9) to
+**~4.2 KB gz** in v0.10 (production minification), thanks to DEV-only
+warnings being stripped via `process.env.NODE_ENV` and the builder API
+moving to `@triggery/core/builder`. If your app uses both entries the
+bundler deduplicates shared helpers and the combined cost lands at
+**~3.8 KB gz**.

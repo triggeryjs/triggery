@@ -17,9 +17,10 @@ The implementation is allocation-free on the hot path: O(1) `record`, fixed slot
 ## Import
 
 ```ts
-import { createInspector } from '@triggery/core';
-
+import { createInspector } from '@triggery/core/inspect';
 ```
+
+`createInspector` re-exports through the main `@triggery/core` entry for backwards compatibility, but the `@triggery/core/inspect` subpath is the canonical home in v0.10+ — it keeps the inspector code out of the main bundle for apps that don't reach for it. The same subpath also exports `createInspectorFactory()` (a thin wrapper that returns `(bufferSize) => createInspector(bufferSize)`) — pass it as `createRuntime({ inspector: createInspectorFactory() })` when you want the runtime to instantiate the inspector on demand, with no static dependency from the main entry.
 
 ## Signature
 

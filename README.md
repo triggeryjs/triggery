@@ -242,22 +242,22 @@ Ten scenarios bench-ed against six neighbour libraries. Headline numbers (local 
 
 | Scenario | Triggery | effector | rxjs | saga | xstate | reatom | mobx |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Plain dispatch | 606k | 370k | **16.8M** | 428k | 675k | 3.78M | 3.02M |
-| Conditional (50% pass) | 649k | 566k | **14.5M** | 484k | 1.29M | 4.45M | 3.24M |
-| Cascade A → B | 335k | 356k | **9.91M** | 202k | 429k | 5.10M | 1.60M |
-| Take-latest cancellation | 301k | 226k | **4.16M** | 381k | 50k | 3.32M | 497k |
-| Sparse bus (100 types, fire 1) | 690k | **5.05M** | 388k | 327k | 795k | **5.07M** | 2.94M |
-| Lazy conditions (5 sources, read 1) | 659k | 212k | **2.45M** | 316k | 122k | 1.19M | 2.00M |
-| Multi-event single trigger | 694k | 3.75M | **14.3M** | 410k | 636k | 3.09M | 2.48M |
-| Toggle enable/disable + fire | 1.21M | 528k | **6.48M** | 302k | 474k | 2.81M | 2.35M |
-| Realistic app bus (30 events × 30 triggers + condition + action) | 586k | 361k | 1.29M | 440k | 703k | **4.26M** | 3.00M |
-| Lazy conditions at scale (10 sources, read 1 rotating) | 625k | 160k | **1.43M** | 310k | 72k | 634k | 1.63M |
+| Plain dispatch | 604k | 353k | **16.2M** | 399k | 674k | 3.59M | 3.09M |
+| Conditional (50% pass) | 607k | 554k | **14.5M** | 459k | 1.00M | 2.93M | 3.02M |
+| Cascade A → B | 317k | 359k | **9.72M** | 247k | 402k | 5.00M | 1.59M |
+| Take-latest cancellation | 287k | 227k | **3.98M** | 329k | 51k | 3.52M | 528k |
+| Sparse bus (100 types, fire 1) | 692k | 4.79M | 401k | 317k | 826k | **4.80M** | 3.09M |
+| Lazy conditions (5 sources, read 1) | 650k | 219k | **2.48M** | 329k | 124k | 1.01M | 2.10M |
+| Multi-event single trigger | 691k | 3.65M | **14.4M** | 545k | 792k | 4.04M | 2.89M |
+| Toggle enable/disable + fire | 1.11M | 492k | **6.61M** | 246k | 468k | 2.81M | 2.46M |
+| Realistic app bus (30 events × 30 triggers + condition + action) | 575k | 263k | 1.28M | 450k | 742k | **4.40M** | 2.95M |
+| Lazy conditions at scale (10 sources, read 1 rotating) | 635k | 156k | 1.39M | 324k | 77k | 694k | **1.56M** |
 
 #### How to read this table
 
 **Triggery is not an event emitter or a state manager** — it's an orchestrator that sits on top of whichever store you already have. The five state/effect/atom libraries in the table all out-throughput Triggery on raw per-fire cost, which is exactly what you'd expect: a `Subject.next()` (rxjs), an `atom.set()` (Reatom) or a `box.set()` (MobX) are bare reactive primitives, while every Triggery fire also runs the inspector ring buffer, cascade context, required-gate, lazy condition proxy, abort controller bookkeeping and middleware chain. **That overhead is the product, not a bug.**
 
-Where Triggery still pulls ahead despite the overhead: **scenario 5** (indexed dispatch beats rxjs by ~1.8× and saga by ~2× — though effector and Reatom hold the top of this one together at ~5M each), **scenarios 6 + 10** (pull-only conditions beat effector, saga, and xstate by 2-8×; scenario 10 also lands tied with Reatom), **scenario 8** (first-class enable/disable beats effector, saga and xstate by 2-4×).
+Where Triggery still pulls ahead despite the overhead: **scenario 5** (indexed dispatch beats rxjs by ~1.7× and saga by ~2.2× — though effector and Reatom hold the top of this one together at ~4.8M each), **scenarios 6 + 10** (pull-only conditions beat effector, saga, and xstate by 2-8×), **scenario 8** (first-class enable/disable beats effector, saga and xstate by 2.4-4.5×).
 
 Full breakdown + idiomatic implementations + per-scenario analysis in [`benchmarks/COMPARISONS.md`](./benchmarks/COMPARISONS.md).
 

@@ -77,13 +77,13 @@ runtime.fireSync('tick', 42);   // → "tick 42"
 - **Цепочки действий**: `actions.debounce(ms).foo(p)`, `actions.throttle`, `actions.defer`, `actions.queue`.
 - **Безопасность каскадов** — лимит глубины и обнаружение циклов в цепочках `action → fireEvent`.
 - **Middleware** — `onFire`, `onBeforeMatch`, `onSkip`, `onActionStart`, `onActionEnd`, `onError`, `onCascade`.
-- **Кольцевой буфер инспектора** — встроен, по умолчанию автоматически отключается в PROD.
-- **Last-mount-wins** для владения регистрацией с DEV warn-once.
+- **Кольцевой буфер инспектора** — встроен, по умолчанию автоматически отключается в PROD. Opt-in через `@triggery/core/inspect` для bundle-friendly factory pattern (v0.10+).
+- **Last-write-wins** для владения condition / action регистрациями с DEV warn-once.
 - **Чистый ESM**, без side-effects, tree-shakable.
 
-## Размер бандла
+## Размер ядра
 
-Около **5 КБ gzipped** только для самого ядра. Каждый биндинг добавляет сверху **примерно 1 КБ**.
+**~4.2 KB gzipped** для main entry `@triggery/core` (v0.10, production-минификация). Если в бандле используется и subpath `@triggery/core/builder` (бандлер дедуплицирует общие хелперы), суммарная стоимость — **~3.8 KB gz**. Каждый framework-биндинг добавляет сверху **~1 KB**.
 
 ## Связанные пакеты
 

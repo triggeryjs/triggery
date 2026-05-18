@@ -125,7 +125,7 @@ Epics are RxJS pipelines over the action stream. Where sagas use generators, epi
 | `switchMap` / `mergeMap` / `concatMap` / `exhaustMap` | Operator-level | `concurrency: 'take-latest' / 'take-every' / 'queue' / 'exhaust'` |
 | `combineLatest`, `withLatestFrom` | Stream-native | `conditions` (lazy pull) — `combineLatest` of >2 streams has no direct mapping |
 | Backpressure / buffering | Native operators | Not provided |
-| Bundle | RxJS is large (~30 kB gz) | Core is ~5 kB gz |
+| Bundle | RxJS is large (~30 kB gz) | Core is ~4.2 kB gz |
 
 <details>
 <summary>Pick redux-observable / RxJS if…</summary>
@@ -212,7 +212,7 @@ Effector pushes: when an event hits a `$store`, every downstream `sample` / `com
 | State ownership | Yes — `$store` lives in Effector | No — state stays in your store |
 | Sampling / combining | First-class (`sample`, `combine`) | Manual in handler |
 | Memoised derivations | First-class | Not provided (run the derivation in the host store) |
-| Bundle | ~10 kB gz | ~5 kB gz core, ~6 kB with bindings |
+| Bundle | ~10 kB gz | ~4.2 kB gz core, ~5 kB with one binding |
 | Cancellation | Per-effect | Per-handler `signal` + concurrency |
 
 <details>
