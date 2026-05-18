@@ -37,14 +37,14 @@ One subscriber, one action, no conditions.
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 16,800,000 | 27.1× |
-| **reatom** | 3,780,000 | 6.10× |
-| **mobx** | 3,020,000 | 4.87× |
-| **xstate** | 675,000 | 1.09× |
-| **Triggery (prod)** | 606,000 | 0.98× |
-| **Triggery** | 620,000 | 1.00× |
-| **redux-saga** | 428,000 | 0.69× |
-| **effector** | 370,000 | 0.60× |
+| **rxjs** | 16,200,000 | 32.3× |
+| **reatom** | 3,590,000 | 7.14× |
+| **mobx** | 3,090,000 | 6.14× |
+| **xstate** | 674,000 | 1.34× |
+| **Triggery (prod)** | 604,000 | 1.20× |
+| **Triggery** | 503,000 | 1.00× |
+| **redux-saga** | 399,000 | 0.79× |
+| **effector** | 353,000 | 0.70× |
 
 [`01-plain-dispatch.bench.ts`](./bench/vs/01-plain-dispatch.bench.ts)
 
@@ -53,14 +53,14 @@ Toggled boolean guard, 50% of events pass.
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 14,500,000 | 25.6× |
-| **reatom** | 4,450,000 | 7.86× |
-| **mobx** | 3,240,000 | 5.72× |
-| **xstate** | 1,290,000 | 2.28× |
-| **Triggery (prod)** | 649,000 | 1.15× |
-| **Triggery** | 566,000 | 1.00× |
-| **effector** | 566,000 | 1.00× |
-| **redux-saga** | 484,000 | 0.86× |
+| **rxjs** | 14,500,000 | 26.5× |
+| **mobx** | 3,020,000 | 5.50× |
+| **reatom** | 2,930,000 | 5.35× |
+| **xstate** | 1,000,000 | 1.82× |
+| **Triggery (prod)** | 607,000 | 1.11× |
+| **effector** | 554,000 | 1.01× |
+| **Triggery** | 548,000 | 1.00× |
+| **redux-saga** | 459,000 | 0.84× |
 
 [`02-conditional.bench.ts`](./bench/vs/02-conditional.bench.ts)
 
@@ -69,14 +69,14 @@ Both events fire synchronously in the same tick; counter is bumped only by B's h
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 9,910,000 | 47.9× |
-| **reatom** | 5,100,000 | 24.7× |
-| **mobx** | 1,600,000 | 7.75× |
-| **xstate** | 429,000 | 2.07× |
-| **effector** | 356,000 | 1.72× |
-| **Triggery (prod)** | 335,000 | 1.62× |
-| **Triggery** | 207,000 | 1.00× |
-| **redux-saga** | 202,000 | 0.98× |
+| **rxjs** | 9,720,000 | 32.7× |
+| **reatom** | 5,000,000 | 16.8× |
+| **mobx** | 1,590,000 | 5.36× |
+| **xstate** | 402,000 | 1.35× |
+| **effector** | 359,000 | 1.21× |
+| **Triggery (prod)** | 317,000 | 1.07× |
+| **Triggery** | 297,000 | 1.00× |
+| **redux-saga** | 247,000 | 0.83× |
 
 Cascade is Triggery's heaviest pattern: every fire pays the full dispatch overhead, and a 2-level cascade pays it twice. The signal libs (Reatom, MobX) treat A→B as a simple chained mutation that the scheduler batches, so they fly. We pay for the cascade-context bookkeeping you'd otherwise have to write yourself.
 
@@ -87,16 +87,16 @@ Async handler awaits one microtask, then checks the cancel signal.
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 4,160,000 | 14.8× |
-| **reatom** | 3,320,000 | 11.9× |
-| **mobx** | 497,000 | 1.78× |
-| **redux-saga** | 381,000 | 1.36× |
-| **Triggery (prod)** | 301,000 | 1.07× |
-| **Triggery** | 280,000 | 1.00× |
-| **effector** | 226,000 | 0.81× |
-| **xstate** | 50,000 | 0.18× |
+| **rxjs** | 3,980,000 | 13.3× |
+| **reatom** | 3,520,000 | 11.8× |
+| **mobx** | 528,000 | 1.76× |
+| **redux-saga** | 329,000 | 1.10× |
+| **Triggery** | 299,000 | 1.00× |
+| **Triggery (prod)** | 287,000 | 0.96× |
+| **effector** | 227,000 | 0.76× |
+| **xstate** | 51,000 | 0.17× |
 
-`prod` is flat here — microtask + Promise resolution dominates the per-iteration cost, so skipping the inspector buffer is in the noise. Reatom and MobX implementations use a manual AbortController per mutation, same pattern as effector, so the "native" tier here is just rxjs `switchMap` and saga `takeLatest`; everyone else (us included) builds it.
+`prod` is flat (and occasionally a hair behind `dev`) here — microtask + Promise resolution dominates the per-iteration cost, so skipping the inspector buffer is in the noise. Reatom and MobX implementations use a manual AbortController per mutation, same pattern as effector, so the "native" tier here is just rxjs `switchMap` and saga `takeLatest`; everyone else (us included) builds it.
 
 [`04-take-latest.bench.ts`](./bench/vs/04-take-latest.bench.ts)
 
@@ -105,14 +105,14 @@ Async handler awaits one microtask, then checks the cancel signal.
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **reatom** | 5,070,000 | 8.30× |
-| **effector** | 5,050,000 | 8.27× |
-| **mobx** | 2,940,000 | 4.81× |
-| **xstate** | 795,000 | 1.30× |
-| **Triggery (prod)** | 690,000 | 1.13× |
-| **Triggery** | 611,000 | 1.00× |
-| **rxjs** | 388,000 | 0.63× |
-| **redux-saga** | 327,000 | 0.54× |
+| **reatom** | 4,800,000 | 7.75× |
+| **effector** | 4,790,000 | 7.73× |
+| **mobx** | 3,090,000 | 4.98× |
+| **xstate** | 826,000 | 1.33× |
+| **Triggery (prod)** | 692,000 | 1.12× |
+| **Triggery** | 620,000 | 1.00× |
+| **rxjs** | 401,000 | 0.65× |
+| **redux-saga** | 317,000 | 0.51× |
 
 🟢 Triggery's indexed `Map<eventName, Set<Trigger>>` stays O(1) on every fire. **We beat rxjs (shared `Subject` + 100 filters = O(N)) and saga (middleware + 100 takeEvery).** Reatom, effector, MobX and xstate win this one because their per-event primitive is even tighter: each atom / event / observable / transition is its own minimal pub-sub, and "routing" is just identity dispatch.
 
@@ -123,14 +123,14 @@ The runtime knows about 5 sources of state but the trigger only needs one of the
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 2,450,000 | 4.16× |
-| **mobx** | 2,000,000 | 3.40× |
-| **reatom** | 1,190,000 | 2.02× |
-| **Triggery (prod)** | 659,000 | 1.12× |
-| **Triggery** | 589,000 | 1.00× |
-| **redux-saga** | 316,000 | 0.54× |
-| **effector** | 212,000 | 0.36× |
-| **xstate** | 122,000 | 0.21× |
+| **rxjs** | 2,480,000 | 4.20× |
+| **mobx** | 2,100,000 | 3.56× |
+| **reatom** | 1,010,000 | 1.71× |
+| **Triggery (prod)** | 650,000 | 1.10× |
+| **Triggery** | 590,000 | 1.00× |
+| **redux-saga** | 329,000 | 0.56× |
+| **effector** | 219,000 | 0.37× |
+| **xstate** | 124,000 | 0.21× |
 
 🟢 Triggery's pull-only condition model treats source updates as plain variable writes — zero notify cost. **We beat effector, saga and xstate by 3-5×** because they all pay for state mutation per update (combine recomputes, reducer replaces state, assign builds new context). rxjs `BehaviorSubject` + `withLatestFrom`, MobX `reaction` and Reatom `atom.subscribe` use the same lazy strategy through their own primitives and stay ahead — those are signal libs built to do this, while Triggery layers it on top of an orchestrator.
 
@@ -141,14 +141,14 @@ Common in real apps: one logical reaction listens to many event types (any of sa
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 14,300,000 | 23.3× |
-| **effector** | 3,750,000 | 6.11× |
-| **reatom** | 3,090,000 | 5.03× |
-| **mobx** | 2,480,000 | 4.04× |
-| **Triggery (prod)** | 694,000 | 1.13× |
-| **xstate** | 636,000 | 1.04× |
-| **Triggery** | 614,000 | 1.00× |
-| **redux-saga** | 410,000 | 0.67× |
+| **rxjs** | 14,400,000 | 22.8× |
+| **reatom** | 4,040,000 | 6.39× |
+| **effector** | 3,650,000 | 5.77× |
+| **mobx** | 2,890,000 | 4.57× |
+| **xstate** | 792,000 | 1.25× |
+| **Triggery (prod)** | 691,000 | 1.09× |
+| **Triggery** | 632,000 | 1.00× |
+| **redux-saga** | 545,000 | 0.86× |
 
 Mid-pack — `prod` keeps up with xstate's tabular lookup, both ahead of saga. Our `events: ['e1', ..., 'e5']` declaration is ergonomically nice (one trigger config vs `merge(...)` / array-of-types / 5 duplicated transitions / 5 atoms/observables sharing a callback). effector's `merge`, rxjs's `merge` and the per-atom subscribe patterns of Reatom/MobX still get optimised internally beyond what we do.
 
@@ -159,14 +159,14 @@ A trigger is bound to a feature flag that flips between renders. Each iteration:
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **rxjs** | 6,480,000 | 6.17× |
-| **reatom** | 2,810,000 | 2.68× |
-| **mobx** | 2,350,000 | 2.24× |
-| **Triggery (prod)** | 1,210,000 | 1.15× |
-| **Triggery** | 1,050,000 | 1.00× |
-| **effector** | 528,000 | 0.50× |
-| **xstate** | 474,000 | 0.45× |
-| **redux-saga** | 302,000 | 0.29× |
+| **rxjs** | 6,610,000 | 6.39× |
+| **reatom** | 2,810,000 | 2.72× |
+| **mobx** | 2,460,000 | 2.38× |
+| **Triggery (prod)** | 1,110,000 | 1.07× |
+| **Triggery** | 1,030,000 | 1.00× |
+| **effector** | 492,000 | 0.48× |
+| **xstate** | 468,000 | 0.45× |
+| **redux-saga** | 246,000 | 0.24× |
 
 🟢 First-class `enable()` / `disable()` is a boolean flip. effector / xstate / saga have to fake "off" by tearing down a subscription, gating via a store/guard, or cancelling a task — and we beat all three by **2-4×**. rxjs's `Subject.subscribe()` plus Reatom / MobX's bare reaction overhead get them ahead on this exact shape, but the architectural point — disable is a flag, not a subscription tear-down — still stands for the legacy effect libs.
 
@@ -177,14 +177,14 @@ The shape of a real medium app: 30 distinct event types, each with one trigger t
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **reatom** | 4,260,000 | 8.45× |
-| **mobx** | 3,000,000 | 5.95× |
-| **rxjs** | 1,290,000 | 2.56× |
-| **xstate** | 703,000 | 1.39× |
-| **Triggery (prod)** | 586,000 | 1.16× |
-| **Triggery** | 504,000 | 1.00× |
-| **redux-saga** | 440,000 | 0.87× |
-| **effector** | 361,000 | 0.72× |
+| **reatom** | 4,400,000 | 9.11× |
+| **mobx** | 2,950,000 | 6.12× |
+| **rxjs** | 1,280,000 | 2.64× |
+| **xstate** | 742,000 | 1.54× |
+| **Triggery (prod)** | 575,000 | 1.19× |
+| **Triggery** | 483,000 | 1.00× |
+| **redux-saga** | 450,000 | 0.93× |
+| **effector** | 263,000 | 0.54× |
 
 Mid-pack against the legacy effect libs (we beat effector and saga), behind the signal/observable tier (Reatom, MobX, rxjs, xstate). The bench combines three Triggery hot-path advantages — indexed routing, required-gate, pull-only conditions — into one realistic shape; it's a useful proof that the combined per-fire cost stays competitive when no single advantage dominates, but the per-event reactive primitives in Reatom/MobX are still tighter than our dispatch pipeline.
 
@@ -195,14 +195,14 @@ Scaled-up version of scenario 6. The runtime knows about 10 sources, all mutated
 
 | Library | ops/sec | vs Triggery |
 |---|---:|---:|
-| **mobx** | 1,630,000 | 2.96× |
-| **rxjs** | 1,430,000 | 2.60× |
-| **reatom** | 634,000 | 1.15× |
-| **Triggery (prod)** | 625,000 | 1.13× |
-| **Triggery** | 551,000 | 1.00× |
-| **redux-saga** | 310,000 | 0.56× |
-| **effector** | 160,000 | 0.29× |
-| **xstate** | 72,000 | 0.13× |
+| **mobx** | 1,560,000 | 2.81× |
+| **rxjs** | 1,390,000 | 2.51× |
+| **reatom** | 694,000 | 1.25× |
+| **Triggery (prod)** | 635,000 | 1.15× |
+| **Triggery** | 554,000 | 1.00× |
+| **redux-saga** | 324,000 | 0.58× |
+| **effector** | 156,000 | 0.28× |
+| **xstate** | 77,000 | 0.14× |
 
 🟢 Scenario 6's story, intensified. Triggery's pull-only conditions treat source updates as plain variable writes — zero notify cost — so the 10 source mutations per iter cost almost nothing, and the handler's one Proxy read is the entire work. **We beat effector by 3.4×, saga by 1.8×, xstate by 7.7×.** effector's `combine` recomputes the 10-store snapshot on every update; xstate's `assign` rebuilds context; saga reducer copies state. The signal libs (MobX, rxjs `BehaviorSubject` + `withLatestFrom`, Reatom) use the same lazy strategy through their own primitives — MobX and rxjs stay ahead, Reatom lands essentially tied with `prod` here because its scheduler debounces the 10 atom.set calls into one tick.
 

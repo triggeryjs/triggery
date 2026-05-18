@@ -78,14 +78,18 @@ export const mentionTrigger = createTrigger<{
     // Always notify the user themselves — the integration is *extra*.
     actions.showMentionToast?.({ from: mention.fromName, text: mention.text });
 
-    // Relay only if the integration is enabled.
+    // Relay only if the integration is enabled. `check.is` returns true only
+    // when the value is non-null and the predicate holds, so we can read
+    // `conditions.integration` afterwards without a `!`.
     if (check.is('integration', i => i.enabled && i.webhookUrl.length > 0)) {
-      const i = conditions.integration!;
-      actions.postToWebhook?.({
-        url:     i.webhookUrl,
-        kind:    i.kind,
-        payload: mention,
-      });
+      const i = conditions.integration;
+      if (i) {
+        actions.postToWebhook?.({
+          url:     i.webhookUrl,
+          kind:    i.kind,
+          payload: mention,
+        });
+      }
     }
   },
 });

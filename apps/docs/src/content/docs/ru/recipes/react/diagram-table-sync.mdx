@@ -80,7 +80,7 @@ export const selectionTrigger = createTrigger<{
 
 ## Крошечный стор
 
-Регистрации `useAction` работают по принципу **last-mount-wins** — у каждого действия активен только самый свежезамонтированный обработчик. Это правильно для «я — побочный эффект этого правила». Но не годится для fan-out на N строк сразу. Поэтому: один реактор пишет в стор, каждая строка/узел читает из стора.
+`useAction` в v0.10 — **аддитивный**: каждый компонент, подписанный на одну `(trigger, name)`, срабатывает на каждый emit. Можно было бы повесить `useAction` на каждый Row/Node. Но fan-out на N строк = N перерисовок на emit, плюс churn от cleanup при перемонтаже. Поэтому: один реактор пишет в стор, каждая строка/узел читает из стора через `useSyncExternalStore`.
 
 ```ts title="src/store.ts"
 import { useSyncExternalStore } from 'react';
@@ -185,5 +185,5 @@ function Row({ entity }: { entity: Entity }) {
 <CardGrid>
   <LinkCard title="Стек модалок" description="Та же модель оркестрации для модалок." href="/ru/recipes/react/modal-stack/" />
   <LinkCard title="Области видимости" description="Per-tab и per-panel варианты этого паттерна." href="/ru/guide/architecture/scopes/" />
-  <LinkCard title="Владение" description="Почему регистрации действий устроены по last-mount-wins и как собирать значения из нескольких источников." href="/ru/guide/architecture/ownership/" />
+  <LinkCard title="Владение" description="Почему регистрации условий / действий устроены по last-write-wins и как собирать значения из нескольких источников." href="/ru/guide/architecture/ownership/" />
 </CardGrid>

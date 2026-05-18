@@ -16,7 +16,7 @@ import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
 ```tsx title="Неправильная форма — один скоуп, четыре панели, все условия коллидят"
 <App>
   <ChatPanel channelId="general" />     {/* регистрирует useCondition('activeChannelId', …) */}
-  <ChatPanel channelId="random" />      {/* то же условие, last-mount-wins, только одно выживет */}
+  <ChatPanel channelId="random" />      {/* то же условие, last-write-wins, только одно выживает */}
   <ChatPanel channelId="hiring" />
   <NotificationLayer />                 {/* видит одно из трёх, не понять какое */}
 </App>

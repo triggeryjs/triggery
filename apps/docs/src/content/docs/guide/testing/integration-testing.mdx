@@ -378,7 +378,7 @@ If your trigger uses `debounce` / `throttle` / `defer`, use `createFakeScheduler
 
 ### StrictMode is your friend
 
-Run your integration suite with `<StrictMode>` wrapping the runtime provider. Triggery's hooks are designed to be StrictMode-safe (last-mount-wins on the condition/action stack) — wrapping makes sure your *components* are too. See [StrictMode (React)](/guide/ssr/strict-mode/) for the lifecycle details.
+Run your integration suite with `<StrictMode>` wrapping the runtime provider. Triggery's hooks are designed to be StrictMode-safe (the mount→unmount→mount cycle clears the unmount token before the second mount runs, so last-write-wins for conditions / actions and `useAction` channel subscriptions land cleanly) — wrapping makes sure your *components* are too. See [StrictMode (React)](/guide/ssr/strict-mode/) for the lifecycle details.
 
 ### Don't share `getDefaultRuntime()`
 

@@ -13,7 +13,14 @@
  */
 
 export { TriggerRuntimeContext, TriggerScopeContext, useRuntime, useScope } from './context.ts';
-export { useAction, useCondition, useEvent, useInspect, useInspectHistory } from './hooks.ts';
+export {
+  useAction,
+  useCondition,
+  useEvent,
+  useInspect,
+  useInspectHistory,
+  useSetCondition,
+} from './hooks.ts';
 export { createNamedHooks } from './namedHooks.ts';
 export {
   TriggerRuntimeProvider,
@@ -23,4 +30,5 @@ export { TriggerScope, type TriggerScopeProps } from './TriggerScope.tsx';
 export {
   type UseInlineTriggerConfig,
   useInlineTrigger,
+  useTrigger,
 } from './useInlineTrigger.ts';

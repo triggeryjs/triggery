@@ -26,7 +26,7 @@ type RuntimeOptions = {
   middleware?:          readonly Middleware[];
   maxCascadeDepth?:     number;
   inspectorBufferSize?: number;
-  inspector?:           boolean | { dev?: boolean; prod?: boolean };
+  inspector?:           boolean | { dev?: boolean; prod?: boolean } | InspectorFactory;
 };
 ```
 
@@ -37,7 +37,7 @@ type RuntimeOptions = {
 | `middleware` | `readonly Middleware[]` | `[]` | Chain applied to every trigger in this runtime. Order matters for `onFire` / `onSkip` / `onActionStart` / `onActionEnd` / `onError` / `onCascade`. |
 | `maxCascadeDepth` | `number` | `3` | Maximum depth for `action → fireEvent → …` chains. Runs above this are skipped with `'overflow'`. |
 | `inspectorBufferSize` | `number` | `50` | Ring-buffer size for the inspector. Ignored when the inspector is disabled. |
-| `inspector` | `boolean \| { dev?: boolean; prod?: boolean }` | DEV `true`, PROD `false` (auto) | Per-run inspector switch. See below. |
+| `inspector` | `boolean \| { dev?: boolean; prod?: boolean } \| InspectorFactory` | DEV `true`, PROD `false` (auto) | Per-run inspector switch. See below. **v0.10+:** pass `createInspectorFactory()` from `@triggery/core/inspect` for the bundle-friendly opt-in pattern. |
 
 ### `inspector` semantics
 
@@ -47,6 +47,7 @@ type RuntimeOptions = {
 | `true` | Always on, regardless of environment. |
 | `false` | Always off — hot path drops the snapshot allocation entirely (~30-40% extra throughput). |
 | `{ dev?, prod? }` | Per-environment override. Unset fields fall back to the auto default. |
+| `InspectorFactory` | **v0.10+** — `(bufferSize) => InspectorImpl` factory. Pass `createInspectorFactory()` from `@triggery/core/inspect` so the inspector code stays out of the main bundle until the factory is imported. |
 
 When disabled, `runtime.subscribe` callbacks never fire, `runtime.getInspectorBuffer()` returns `[]`, and `trigger.inspect()` returns `undefined`. Devtools — `@triggery/devtools-redux`, `@triggery/devtools-bridge`, the React `useInspectHistory` hook — depend on the inspector being on.
 

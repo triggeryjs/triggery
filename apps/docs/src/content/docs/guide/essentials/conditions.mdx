@@ -116,7 +116,7 @@ event fires             →  for each subscribed trigger:
 
 ## Reading conditions inside the handler
 
-Every condition the handler can mention is typed as `T | undefined`. The reason is honest: until V1.1's builder API lands, TypeScript can't narrow the type based on `required: [...]`. So you have three safe ways to read:
+Every condition the handler can mention is typed as `T | undefined`. The reason is honest: in the imperative `createTrigger({...})` form, TypeScript can't narrow the type based on `required: [...]`. So you have three safe ways to read inside an imperative handler (or use the [builder API](/api/core/trigger-builder/) from `@triggery/core/builder` to narrow automatically):
 
 ```ts
 handler({ conditions, check }) {
@@ -181,9 +181,9 @@ The Zustand store re-renders the provider when its slice changes — but that's 
 
 The same shape works for [`@triggery/redux`](/packages/redux/), [`@triggery/jotai`](/packages/jotai/), [`@triggery/query`](/packages/query/), and any store you author yourself — see [Adapters](/packages/).
 
-## Last-mount-wins ownership
+## Last-write-wins ownership
 
-What if two providers register the same condition name on the same trigger? The runtime keeps both registrations on an internal stack, with the **most recently mounted** at the top — the value the handler sees.
+What if two providers register the same condition name on the same trigger? Each `(trigger, name)` pair holds **one slot**: the most recent registration overwrites the previous. When it unmounts, the slot is cleared (the previous registration is **not** restored — v0.10 removed the stack-based fallback).
 
 ```tsx
 function ProviderA() {
@@ -191,28 +191,28 @@ function ProviderA() {
   return null;
 }
 function ProviderB() {
-  useCondition(messageTrigger, 'currentUserId', () => 'bob');     // mounted second — wins
+  useCondition(messageTrigger, 'currentUserId', () => 'bob');     // mounted second — overwrites
   return null;
 }
 
 // Mount order: <ProviderA /> then <ProviderB />.
 // Handler reads conditions.currentUserId → 'bob'.
-// When <ProviderB /> unmounts, 'alice' takes over (stack pop).
+// When <ProviderB /> unmounts, the slot is empty (it does NOT fall back to 'alice').
 ```
 
 Two intentional consequences:
 
-1. **Tests and overrides are simple.** A test mounts a provider with the test value second; it wins. A feature flag overrides the global provider by mounting deeper in the tree.
-2. **StrictMode is safe.** React 18 StrictMode mounts → unmounts → mounts in development. The stack model handles this without spurious collisions because each registration is stable.
+1. **Tests and overrides are simple.** A test writes the test value second; it wins.
+2. **StrictMode is safe.** React 18 StrictMode mounts → cleanup → mounts in development. The first mount's cleanup clears the slot *before* the second mount writes — no spurious collisions.
 
 In DEV, the runtime emits a one-time `console.warn` per `(triggerId, conditionName)` when a second live registration arrives:
 
 ```text
 [triggery] multiple condition registrations for "currentUserId" on trigger "message-received" —
-last-mount-wins. To compose values from several sources, register through a single hook.
+last write wins. To compose values from several sources, register through a single hook.
 ```
 
-This is a heads-up that *probably* something is wrong. If you genuinely want last-mount-wins (overrides, tests), it's fine to ignore. See [Ownership](/guide/architecture/ownership/) for the full discussion and patterns for composing values when you have multiple sources of truth.
+This is a heads-up that *probably* something is wrong. If you genuinely want last-write-wins (overrides, tests), it's fine to ignore. See [Ownership](/guide/architecture/ownership/) for the full discussion and patterns for composing values when you have multiple sources of truth.
 
 ## Scoped conditions
 

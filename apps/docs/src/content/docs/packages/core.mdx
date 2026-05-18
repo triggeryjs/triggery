@@ -77,13 +77,13 @@ The same `createTrigger({ … })` declaration runs unchanged in all of the above
 - **Action chains**: `actions.debounce(ms).foo(p)`, `actions.throttle`, `actions.defer`, `actions.queue`.
 - **Cascade safety** — depth limit + cycle detection on `action → fireEvent` chains.
 - **Middleware** — `onFire`, `onBeforeMatch`, `onSkip`, `onActionStart`, `onActionEnd`, `onError`, `onCascade`.
-- **Inspector ring buffer** — built-in, auto-disables in PROD by default.
-- **Last-mount-wins ownership** with DEV warn-once.
+- **Inspector ring buffer** — built-in, auto-disables in PROD by default. Opt-in via `@triggery/core/inspect` for the bundle-friendly factory pattern (v0.10+).
+- **Last-write-wins ownership** for conditions / actions with DEV warn-once.
 - **Pure ESM**, side-effect-free, tree-shakable.
 
 ## Bundle size
 
-About **5 KB gzipped** for the core runtime alone. The bindings add **about 1 KB each** on top.
+**~4.2 KB gzipped** for the `@triggery/core` main entry (v0.10, production minification). With the `@triggery/core/builder` subpath bundled alongside it (the bundler deduplicates shared helpers), the combined cost lands at **~3.8 KB gz**. Framework bindings add **about 1 KB each** on top.
 
 ## Related packages
 

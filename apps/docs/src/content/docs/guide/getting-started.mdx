@@ -107,7 +107,7 @@ You can omit the provider altogether — in that case Triggery uses a lazily cre
 Triggery's house style is one trigger per file, suffixed `.trigger.ts`. The file reads top-to-bottom as a specification.
 
 ```ts title="src/triggers/message.trigger.ts"
-import { createTrigger } from '@triggery/core';
+import { createTrigger } from '@triggery/core/builder';
 
 type Settings = { sound: boolean; notifications: boolean };
 type Message  = { author: string; text: string; channelId: string };
@@ -116,11 +116,11 @@ export const messageTrigger = createTrigger<{
   events:     { 'new-message': Message };
   conditions: { settings: Settings; activeChannelId: string | null };
   actions:    { showToast: { title: string; body: string }; playSound: 'beep' };
-}>({
-  id: 'message-received',
-  events: ['new-message'],
-  required: ['settings'],
-  handler({ event, conditions, actions, check }) {
+}>()
+  .id('message-received')
+  .events(['new-message'])
+  .require('settings')
+  .handle(({ event, conditions, actions, check }) => {
     // Skip if the user is already looking at this conversation.
     if (conditions.activeChannelId === event.payload.channelId) return;
 
@@ -133,11 +133,14 @@ export const messageTrigger = createTrigger<{
       title: event.payload.author,
       body: event.payload.text,
     });
-  },
-});
+  });
 ```
 
-The single inline-generic captures the whole port surface — three maps for events, conditions and actions. The handler `ctx` is now strongly typed: try to fire a wrong event name or pass the wrong action payload and TypeScript stops you.
+The single inline-generic captures the whole port surface — three maps for events, conditions and actions. `.require('settings')` narrows `conditions.settings` to its non-null type inside `.handle(...)`, so we read `s.notifications` without a `!` or an early-return guard. The handler `ctx` is now strongly typed: try to fire a wrong event name or pass the wrong action payload and TypeScript stops you.
+
+<Aside type="tip" title="Imperative form still works">
+If you prefer a single object config, `createTrigger({ id, events, required, handler })` is fully supported — import it from `@triggery/core` (no `/builder` subpath). The builder above is the new recommended path for v0.10+; the imperative form keeps working through v1.0.
+</Aside>
 
 ## 4. Wire components
 

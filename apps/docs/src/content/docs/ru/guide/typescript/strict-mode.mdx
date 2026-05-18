@@ -63,7 +63,7 @@ handler({ conditions, actions, check }) {
 }
 ```
 
-Builder API в V1.1 это меняет — `createTrigger<S>().require(['user']).handle(ctx => ...)` типизирует `ctx.conditions.user` как `User` без гарда. Семантика рантайма не меняется.
+Builder API уже доступен с v0.10 — `import { createTrigger } from '@triggery/core/builder'` и пиши `createTrigger<S>().require('user').handle(ctx => ...)`. Это автоматически типизирует `ctx.conditions.user` как `User` без ручного гарда. Семантика рантайма не меняется.
 
 ### Actions: каждое действие опционально, потому что реакторы могут отсутствовать
 

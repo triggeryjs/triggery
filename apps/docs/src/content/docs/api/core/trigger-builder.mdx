@@ -1,0 +1,114 @@
+---
+title: TriggerBuilder
+description: "Chainable builder returned by `createTrigger<S>()` — narrows required conditions to NonNullable<...> inside `.handle(...)`. v0.10+."
+sidebar:
+  order: 2
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+import APIBadge from '~/components/APIBadge.astro';
+
+<APIBadge stability="stable" since="since 0.10.0" />
+
+The builder returned by `createTrigger<S>()` (called with no arguments).
+Accumulates configuration through chainable methods and finalizes with
+`.handle(handler)`. The handler sees `conditions.<key>` as `NonNullable<...>`
+for every key passed to `.require(...)` — no `!`, no early-return narrowing.
+
+## Import
+
+```ts
+import { createTrigger } from '@triggery/core/builder';
+import type { TriggerBuilder } from '@triggery/core';
+```
+
+The chainable `createTrigger<S>()` form lives in the `@triggery/core/builder` subpath (v0.10+) so apps that only use the imperative `createTrigger({...})` form don't pay for the ~250 B gz builder machinery in their main bundle. The `TriggerBuilder<S, R>` type is exported from the main `@triggery/core` for ergonomic type references.
+
+## Signature
+
+```ts
+type TriggerBuilder<S extends TriggerSchema, R extends ConditionKey<S> = never> = {
+  id(id: string): TriggerBuilder<S, R>;
+  events(events: readonly EventKey<S>[]): TriggerBuilder<S, R>;
+  require<K extends ConditionKey<S>>(...keys: readonly K[]): TriggerBuilder<S, R | K>;
+  conditions(values: { readonly [K in ConditionKey<S>]?: ConditionMap<S>[K] | null }): TriggerBuilder<S, R>;
+  schedule(strategy: SchedulerStrategy): TriggerBuilder<S, R>;
+  concurrency(strategy: ConcurrencyStrategy): TriggerBuilder<S, R>;
+  scope(scope: string): TriggerBuilder<S, R>;
+  handle(handler: TriggerHandler<S, R>): Trigger<S>;
+};
+```
+
+The type parameter `R` carries the union of required condition keys accumulated by `.require(...)`. It's threaded into `TriggerHandler<S, R>`, which narrows the handler's `conditions.<key>` accordingly.
+
+## Methods
+
+| Method | Required | Description |
+|---|---|---|
+| `.id(string)` | yes | Unique trigger id within the runtime. Must be a string literal. |
+| `.events([...])` | yes | Event names from `S['events']` this trigger reacts to. |
+| `.conditions({...})` | no | Initial values for conditions held by this trigger. Same shape as the `conditions:` field on the imperative config. |
+| `.require(...keys)` | no | Add condition keys to the required set. **Narrows `conditions.<key>` to `NonNullable<...>` inside `.handle(...)`**. Multiple `.require(...)` calls accumulate. |
+| `.schedule(strategy)` | no | Override the scheduler — `'microtask'` (default) or `'sync'`. |
+| `.concurrency(strategy)` | no | Override concurrency — `'take-latest'` (default), `'take-every'`, `'take-first'`, `'queue'`, `'exhaust'`, `'sync'`. |
+| `.scope(string)` | no | Set the scope id (for `<TriggerScope id="…">` isolation). |
+| `.handle(handler)` | yes | Finalize and register the trigger. Returns `Trigger<S>`. Throws if `.id` or `.events` were not called. |
+
+The chained order does not affect behaviour — `.handle(...)` validates that `id` and `events` are set.
+
+## Example
+
+```ts twoslash
+import { createTrigger } from '@triggery/core';
+
+type Schema = {
+  events: { 'new-message': { author: string; text: string } };
+  conditions: { user: { id: string }; settings: { sound: boolean } };
+  actions: { showToast: { title: string }; playSound: void };
+};
+
+const messageTrigger = createTrigger<Schema>()
+  .id('message-received')
+  .events(['new-message'])
+  .conditions({ user: null, settings: null })
+  .require('user', 'settings')
+  .handle(({ event, conditions, actions }) => {
+    // conditions.user: { id: string }     ← narrowed by .require
+    // conditions.settings: { sound: boolean }
+    actions.showToast?.({ title: conditions.user.id });
+    if (conditions.settings.sound) actions.playSound?.();
+  });
+```
+
+`conditions.user` and `conditions.settings` are `NonNullable<...>` inside `.handle(...)` — no `!`, no `if (!conditions.user) return;` guards.
+
+## Comparison: builder vs imperative
+
+Both forms compile to the same `Trigger<S>` and use the same internal hot path — pick whichever reads better in your codebase.
+
+```ts
+// Builder form (v0.10+, narrows required)
+const t = createTrigger<S>()
+  .id('x').events(['e']).require('user').handle(({ conditions }) => {
+    return conditions.user.id; // NonNullable
+  });
+
+// Imperative form (v0.9+, no narrowing)
+const t = createTrigger<S>({
+  id: 'x', events: ['e'], required: ['user'],
+  handler({ conditions }) {
+    if (!conditions.user) return;       // manual guard
+    return conditions.user.id;
+  },
+});
+```
+
+The ESLint rule [`prefer-builder-trigger`](/api/eslint-plugin/) (enabled as `warn` in the `strict` preset) flags the imperative form when it carries `required: [...]`.
+
+## Related
+
+<CardGrid>
+  <LinkCard title="createTrigger" description="The constructor — both imperative and builder forms." href="/api/core/create-trigger/" />
+  <LinkCard title="ActionChannel" description="trigger.action(name).subscribe(cb) — multi-subscriber action API." href="/api/core/action-channel/" />
+  <LinkCard title="TriggerHandler" description="The function type used inside .handle(...)." href="/api/core/types/trigger-ctx/" />
+</CardGrid>

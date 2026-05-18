@@ -80,7 +80,7 @@ Two events, two actions — the rule itself.
 
 ## The tiny store
 
-`useAction` registrations are **last-mount-wins** — only the latest-mounted reactor for a given action actually runs. That's correct for "I am THE side-effect". It's wrong for fanout-to-N rows. Instead, one reactor writes to a store and every row/node reads from it.
+`useAction` in v0.10 is **additive** — every component that subscribes to the same `(trigger, name)` runs on every emit. You could wire every Row/Node to call `useAction` directly. But fan-out to N rows means N renders per emit, plus the cleanup churn each time a row remounts. Instead, one reactor writes to a store and every row/node reads from it via `useSyncExternalStore`.
 
 ```ts title="src/store.ts"
 import { useSyncExternalStore } from 'react';
@@ -185,5 +185,5 @@ The store-based pattern alone could be done without Triggery. What Triggery adds
 <CardGrid>
   <LinkCard title="Modal stack" description="Same orchestration pattern for modals." href="/recipes/react/modal-stack/" />
   <LinkCard title="Scopes" description="Per-panel and per-tab variants of this pattern." href="/guide/architecture/scopes/" />
-  <LinkCard title="Ownership" description="Why action registrations are last-mount-wins, and how to compose values from several sources." href="/guide/architecture/ownership/" />
+  <LinkCard title="Ownership" description="Why condition / action registrations are last-write-wins, and how to compose values from several sources." href="/guide/architecture/ownership/" />
 </CardGrid>

@@ -105,7 +105,7 @@ In V1, `required` is enforced at runtime only — TypeScript does not narrow `co
 1. **Manual guard** — `if (!conditions.user) return;` after which TS narrows on its own.
 2. **`check.is` / `check.all`** — typesafe predicates that handle the `undefined` case.
 
-A builder API that auto-narrows is on the [roadmap](https://github.com/triggeryjs/triggery/blob/main/ROADMAP.md) for V1.1.
+A builder API that auto-narrows shipped in v0.10 — `import { createTrigger } from '@triggery/core/builder'` and write `createTrigger<S>().require(...).handle(...)`. See the [TriggerBuilder](/api/core/trigger-builder/) reference.
 </Aside>
 
 ## `schedule` (optional, default `'microtask'`)

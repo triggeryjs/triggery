@@ -153,7 +153,7 @@ In V1, `required: ['user']` is enforced **at runtime only**. TypeScript still ty
 1. Early return — `if (!conditions.user) return;` narrows the rest of the function.
 2. `check.is('user', u => u.isActive)` — typesafe predicate, `u` is `NonNullable<User>`.
 
-A builder API (`createTrigger<S>().require(['user']).handle(...)`) ships in V1.1 and narrows automatically. The runtime guard is identical — the change is type-only.
+A builder API ships in v0.10 — `import { createTrigger } from '@triggery/core/builder'` and write `createTrigger<S>().require('user').handle(...)` to narrow automatically. The runtime guard is identical; the change is type-only.
 </Aside>
 
 ## Schema reuse — share once, refine per trigger

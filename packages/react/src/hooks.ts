@@ -46,6 +46,10 @@ export function useEvent<S extends TriggerSchema, K extends EventKey<S>>(
  * ```tsx
  * useCondition(messageTrigger, 'user', () => currentUser, [currentUser]);
  * ```
+ *
+ * For triggers that declare their conditions inline via `conditions:` config
+ * (v0.10+), {@link useSetCondition} is usually preferable: it pushes the value
+ * through the trigger's typed setter and pairs cleanly with React state.
  */
 export function useCondition<S extends TriggerSchema, K extends ConditionKey<S>>(
   trigger: Trigger<S>,
@@ -68,8 +72,37 @@ export function useCondition<S extends TriggerSchema, K extends ConditionKey<S>>
 }
 
 /**
- * Register an action handler for a trigger. The runtime invokes the handler whenever
- * the trigger body calls `actions.<name>(...)`.
+ * Push a value into a condition declared inline via `createTrigger({ conditions: { ... } })`
+ * (v0.10+). The hook calls `trigger.setCondition(name, value)` on every change
+ * and again on mount. Use it when the value lives in a React state / prop and
+ * the trigger declared the condition with an explicit initial value.
+ *
+ * @example
+ * ```tsx
+ * const [user, setUser] = useState<User | null>(null);
+ * useSetCondition(messageTrigger, 'user', user);
+ * ```
+ */
+export function useSetCondition<S extends TriggerSchema, K extends ConditionKey<S>>(
+  trigger: Trigger<S>,
+  name: K,
+  value: ConditionMap<S>[K] | null,
+): void {
+  useEffect(() => {
+    trigger.setCondition(name, value);
+  }, [trigger, name, value]);
+}
+
+/**
+ * Subscribe to a trigger's action channel. The handler runs every time the
+ * trigger body calls `actions.<name>(...)`. Multiple components can subscribe
+ * to the same action — every subscriber is invoked on each emit.
+ *
+ * **v0.10 semantics change**: in v0.9 multiple `useAction` calls for the same
+ * `(trigger, name)` followed last-mount-wins (only the most-recently-mounted
+ * handler ran). Starting in v0.10 every subscriber is invoked — the more
+ * useful default. If you want exclusive-handler behaviour, use
+ * `runtime.registerAction(trigger.id, name, fn)` directly.
  *
  * @example
  * ```tsx
@@ -89,9 +122,14 @@ export function useAction<S extends TriggerSchema, K extends ActionKey<S>>(
   handlerRef.current = handler;
 
   useEffect(() => {
-    const token = runtime.registerAction(
+    // Subscribe via the additive `subscribeAction` runtime path so multiple
+    // components can react to the same action. Scope is honoured: a scoped
+    // trigger only receives subscriptions from the matching scope (or a
+    // global trigger from a global scope) — mismatches are no-ops with a
+    // DEV warn-once.
+    const token = runtime.subscribeAction(
       trigger.id,
-      name,
+      name as string,
       (payload) => (handlerRef.current as (payload: unknown) => void | Promise<void>)(payload),
       { scope },
     );

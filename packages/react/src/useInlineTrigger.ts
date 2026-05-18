@@ -33,6 +33,14 @@ export type UseInlineTriggerConfig<S extends TriggerSchema> = {
  * });
  * ```
  */
+/**
+ * Shorter alias for {@link useInlineTrigger} introduced in v0.10. Pick whichever
+ * name you prefer — both share the same implementation.
+ */
+export function useTrigger<S extends TriggerSchema>(config: UseInlineTriggerConfig<S>): void {
+  useInlineTrigger<S>(config);
+}
+
 export function useInlineTrigger<S extends TriggerSchema>(config: UseInlineTriggerConfig<S>): void {
   const runtime = useRuntime();
   const scope = useScope();

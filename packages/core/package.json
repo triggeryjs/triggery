@@ -42,8 +42,29 @@
     ".": {
       "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
+      "import": {
+        "production": "./dist/index.prod.js",
+        "default": "./dist/index.js"
+      },
       "default": "./dist/index.js"
+    },
+    "./inspect": {
+      "source": "./src/inspect.ts",
+      "types": "./dist/inspect.d.ts",
+      "import": {
+        "production": "./dist/inspect.prod.js",
+        "default": "./dist/inspect.js"
+      },
+      "default": "./dist/inspect.js"
+    },
+    "./builder": {
+      "source": "./src/builder.ts",
+      "types": "./dist/builder.d.ts",
+      "import": {
+        "production": "./dist/builder.prod.js",
+        "default": "./dist/builder.js"
+      },
+      "default": "./dist/builder.js"
     },
     "./package.json": "./package.json"
   },

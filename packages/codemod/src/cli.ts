@@ -1,7 +1,8 @@
 import { extractTrigger } from './codemods/extract-trigger.ts';
 import { migrateFromListenerMiddleware } from './codemods/migrate-from-listener-middleware.ts';
+import { migrateToV010 } from './codemods/migrate-to-v010.ts';
 
-const USAGE = `Usage: triggery-codemod <command> [options] <file>
+const USAGE = `Usage: triggery-codemod <command> [options] <file...>
 
 Commands:
   extract-trigger                   Extract a useEffect block into a *.trigger.ts file.
@@ -13,9 +14,13 @@ Commands:
     --out-dir <path>                Directory for the generated trigger files.
     --dry-run                       Print planned changes without writing.
 
+  migrate-to-v010                   Migrate v0.9 patterns to v0.10 (inline conditions, drop non-null assertions).
+    --dry-run                       Print planned changes without writing.
+
 Examples:
   triggery-codemod extract-trigger --name new-message src/Chat.tsx
   triggery-codemod migrate-from-listener-middleware src/store/middleware.ts
+  triggery-codemod migrate-to-v010 'src/**/*.ts'
 `;
 
 function parseArgs(argv: readonly string[]): {
@@ -71,6 +76,24 @@ export async function runCli(argv: readonly string[]): Promise<number> {
       process.stdout.write(
         `  import { ${result.triggerFilePath.split('/').pop()?.replace('.trigger.ts', 'Trigger')} } from './${result.triggerFilePath.split('/').pop()?.replace('.ts', '')}';\n`,
       );
+      return 0;
+    }
+
+    if (command === 'migrate-to-v010') {
+      if (positional.length === 0) throw new Error('Missing source file argument.');
+      const results = migrateToV010({
+        files: positional,
+        dryRun: Boolean(flags.get('dry-run')),
+      });
+      for (const result of results) {
+        process.stdout.write(
+          `${result.file}: ${result.conditionsInlined} conditions inlined, ${result.nonNullAssertionsRemoved} non-null assertions removed`,
+        );
+        if (result.reviewMarkers.length > 0) {
+          process.stdout.write(`, ${result.reviewMarkers.length} review marker(s)`);
+        }
+        process.stdout.write('\n');
+      }
       return 0;
     }
 

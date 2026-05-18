@@ -41,6 +41,7 @@ export {
 export type { SchedulerImpl, Task } from './scheduler.ts';
 export { createScheduler } from './scheduler.ts';
 export type {
+  ActionChannel,
   ActionContext,
   ActionFn,
   ActionHook,
@@ -61,6 +62,8 @@ export type {
   EventMap,
   EventOf,
   FireContext,
+  InspectorFactory,
+  InspectorOption,
   InternalHandlerCtx,
   InternalTriggerConfig,
   MatchContext,
@@ -76,6 +79,7 @@ export type {
   SkipContext,
   ToPascal,
   Trigger,
+  TriggerBuilder,
   TriggerConfig,
   TriggerCtx,
   TriggerGraphNode,

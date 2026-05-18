@@ -173,21 +173,25 @@ useAction(messageTrigger, 'persistDraft', async (draft) => {
 
 Распространённое сокращение для «запускай это по порядку, никогда не два параллельно» — это `queue` concurrency самого триггера плюс синхронное действие, которое делает реальную работу. Обработчик идёт сериализованно; действие синхронно выполняется внутри него.
 
-## Владение по правилу last-mount-wins
+## Владение по правилу last-write-wins
 
-Как и условия, действия регистрируются на внутреннем стеке. Обработчик самого свежего реактора побеждает; при размонтировании предыдущий снова всплывает на верх. В DEV рантайм выдаёт одно предупреждение на пару `(triggerId, actionName)`, когда приходит вторая живая регистрация:
+Как и условия, каждая пара `(trigger, actionName)` имеет один слот. Самая свежая `runtime.registerAction` запись побеждает; при размонтировании слот очищается (предыдущая регистрация **не** восстанавливается — v0.10 убрала stack-based fallback).
+
+Новый [action-channel API](/ru/api/core/action-channel/) (`trigger.action(name).subscribe(cb)`) — предпочтительный путь подключать реакторы в v0.10: он **аддитивный** (срабатывает каждый subscriber), и `useAction` в React/Solid/Vue уже использует его под капотом. `runtime.registerAction` напрямую — только когда нужна явная single-handler ownership.
+
+В DEV рантайм выдаёт одно предупреждение на пару `(triggerId, actionName)`, когда приходит вторая живая `registerAction` запись:
 
 ```text
 [triggery] multiple action registrations for "showToast" on trigger "message-received" —
-last-mount-wins. To compose values from several sources, register through a single hook.
+last write wins. To compose values from several sources, register through a single hook.
 ```
 
 Две причины, почему так нормально:
 
-1. **Оверрайды first-class.** Модалка смонтировалась и хочет перехватить `showToast`? Монтируй оверрайд, он побеждает; при закрытии размонтируется, глобальный обработчик возвращается на верх.
+1. **Оверрайды first-class.** Модалка смонтировалась и хочет перехватить `showToast`? Монтируй оверрайд, он побеждает; предыдущий обработчик пропадёт при unmount (re-render восстановит).
 2. **Тесты простые.** Монтируешь тестовый реактор; он побеждает; ассертишь, что он получил payload; teardown.
 
-Если тебе по-настоящему нужно, чтобы *оба* обработчика запустились (один тост, один лог), регистрируй через один составной хук, который вызовет оба. Библиотека не делает молчаливый fan-out — явная композиция и есть контракт.
+Если нужно, чтобы *оба* обработчика запустились (один тост, один лог), используй action-channel API: `trigger.action('showToast').subscribe(cb1)` + `.subscribe(cb2)` — оба сработают на каждый emit. `registerAction` остаётся в библиотеке как путь для single-handler ownership.
 
 См. [Владение](/ru/guide/architecture/ownership/) для полного разбора.
 

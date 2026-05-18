@@ -92,7 +92,10 @@ export function useAction<S extends TriggerSchema, K extends ActionKey<S>>(
 ): void {
   const runtime = useRuntime();
   const scope = useScope();
-  const token = runtime.registerAction(
+  // v0.10: subscribeAction is additive — every component subscribed to the
+  // same action runs on every emit (in addition to any handler registered
+  // via runtime.registerAction).
+  const token = runtime.subscribeAction(
     trigger.id,
     name,
     handler as (payload: unknown) => void | Promise<void>,

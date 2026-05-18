@@ -1,4 +1,4 @@
-import { createTrigger } from '@triggery/core';
+import { createTrigger } from '@triggery/core/builder';
 
 type Settings = { sound: boolean; notifications: boolean; dnd: boolean };
 type Message = {
@@ -9,6 +9,11 @@ type Message = {
   channelId: string;
 };
 
+/**
+ * v0.10 canonical form: builder API with `.require(...)` narrowing —
+ * `conditions.settings` and `conditions.currentUserId` are non-optional
+ * inside `.handle(...)` thanks to `.require('settings', 'currentUserId')`.
+ */
 export const messageTrigger = createTrigger<{
   events: { 'new-message': Message };
   conditions: {
@@ -21,11 +26,11 @@ export const messageTrigger = createTrigger<{
     playSound: 'beep' | 'mention';
     incrementBadge: string;
   };
-}>({
-  id: 'message-received',
-  events: ['new-message'],
-  required: ['settings', 'currentUserId'],
-  handler({ event, conditions, actions, check }) {
+}>()
+  .id('message-received')
+  .events(['new-message'])
+  .require('settings', 'currentUserId')
+  .handle(({ event, conditions, actions, check }) => {
     const msg = event.payload;
     if (msg.channelId === conditions.activeChannelId) return;
     if (msg.authorId === conditions.currentUserId) return;
@@ -37,5 +42,4 @@ export const messageTrigger = createTrigger<{
       actions.debounce(800).playSound?.('beep');
     }
     actions.incrementBadge?.(msg.channelId);
-  },
-});
+  });

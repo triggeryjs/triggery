@@ -101,6 +101,46 @@ export type TriggerHandler<S extends TriggerSchema, R extends ConditionKey<S> = 
   ctx: TriggerCtx<S, R>,
 ) => void | Promise<void>;
 
+/**
+ * Chainable builder for declaring a trigger. Obtained by calling
+ * `createTrigger<Schema>()` with no arguments. Every method returns a fresh
+ * builder with the appropriate type parameter updated — so when you call
+ * `.require('user', 'settings').handle(({ conditions }) => …)`, the handler
+ * sees `conditions.user` and `conditions.settings` as `NonNullable<…>`, with
+ * no need for `!` or early-return narrowing.
+ *
+ * `R` carries the tuple/union of required condition keys that have been
+ * accumulated so far.
+ */
+export type TriggerBuilder<S extends TriggerSchema, R extends ConditionKey<S> = never> = {
+  /** Set the unique trigger id (mandatory before `.handle`). */
+  id(id: string): TriggerBuilder<S, R>;
+  /** Declare the event keys this trigger listens for (mandatory before `.handle`). */
+  events(events: readonly EventKey<S>[]): TriggerBuilder<S, R>;
+  /**
+   * Add condition keys to the required set. Calling `.require('a').require('b')`
+   * is equivalent to `.require('a', 'b')` — required keys accumulate. The
+   * handler's `conditions.<key>` becomes `NonNullable<...>` for every listed key.
+   */
+  require<K extends ConditionKey<S>>(...keys: readonly K[]): TriggerBuilder<S, R | K>;
+  /** Declare inline conditions (same shape as the imperative `conditions:` field). */
+  conditions(
+    values: { readonly [K in ConditionKey<S>]?: ConditionMap<S>[K] | null },
+  ): TriggerBuilder<S, R>;
+  /** Override the scheduler strategy (default: `'microtask'`). */
+  schedule(strategy: SchedulerStrategy): TriggerBuilder<S, R>;
+  /** Override the concurrency strategy (default: `'take-latest'`). */
+  concurrency(strategy: ConcurrencyStrategy): TriggerBuilder<S, R>;
+  /** Set the scope id (for `<TriggerScope>` isolation). */
+  scope(scope: string): TriggerBuilder<S, R>;
+  /**
+   * Finalize the trigger with the given handler. The handler sees
+   * `conditions.<key>` as `NonNullable<…>` for every key passed to `.require`.
+   * Returns the live `Trigger<S>`, already registered with the runtime.
+   */
+  handle(handler: TriggerHandler<S, R>): Trigger<S>;
+};
+
 export type SchedulerStrategy = 'sync' | 'microtask';
 
 export type ConcurrencyStrategy =
@@ -178,6 +218,29 @@ export type NamedHooks<S extends TriggerSchema> = {
 };
 
 /**
+ * A typed multi-subscriber channel for one action of a trigger.
+ *
+ * Returned by `trigger.action(name)` (cached per (trigger, name)). Replaces
+ * the v0.9 pattern of hand-rolled `Set<callback>` + `runtime.registerAction(...)
+ * for-of` fan-out. Inside the handler `actions.<name>(payload)` emits to every
+ * subscriber automatically.
+ *
+ * @example
+ * ```ts
+ * const toast = trigger.action('showToast');
+ * const unsub = toast.subscribe((p) => console.log(p));
+ * // ...later:
+ * unsub();
+ * ```
+ */
+export type ActionChannel<P> = {
+  /** Subscribe to emits. Returns an unsubscribe function. */
+  subscribe(cb: (payload: P) => void): () => void;
+  /** Number of currently active subscribers — useful for DevTools and tests. */
+  readonly subscribed: number;
+};
+
+/**
  * The public trigger object returned by `createTrigger`.
  */
 export type Trigger<S extends TriggerSchema> = {
@@ -187,6 +250,20 @@ export type Trigger<S extends TriggerSchema> = {
   enable(): void;
   disable(): void;
   isEnabled(): boolean;
+  /**
+   * Update the value of a condition that was declared inline in the
+   * `conditions:` config of `createTrigger`.
+   *
+   * No-op (and one-shot DEV warning) if the condition wasn't declared
+   * inline — use `runtime.registerCondition` for externally-sourced
+   * conditions.
+   */
+  setCondition<K extends ConditionKey<S>>(name: K, value: ConditionMap<S>[K] | null): void;
+  /**
+   * Get (or create) the typed multi-subscriber channel for an action.
+   * Cached per (trigger, name): repeat calls return the same channel.
+   */
+  action<K extends ActionKey<S>>(name: K): ActionChannel<ActionMap<S>[K]>;
   /** Get the named hooks proxy (typed via template literal types). */
   namedHooks(): NamedHooks<S>;
   /** Snapshot of the most recent run (for devtools / `useInspect`). */
@@ -228,12 +305,30 @@ export type InspectorEnvOverride = {
 };
 
 /**
+ * A factory passed via `createRuntime({ inspector })` that builds the live
+ * inspector implementation when the runtime needs it. Use
+ * `createInspectorFactory()` from `@triggery/core/inspect` to obtain one —
+ * importing it keeps the inspector code out of the main bundle for projects
+ * that don't enable it.
+ */
+export type InspectorFactory = (bufferSize: number) => {
+  record(snapshot: TriggerInspectSnapshot): void;
+  getBuffer(): readonly TriggerInspectSnapshot[];
+  getLastForTrigger(triggerId: string): TriggerInspectSnapshot | undefined;
+  subscribe(listener: (snapshot: TriggerInspectSnapshot) => void): () => void;
+  clear(): void;
+};
+
+/**
  * Inspector configuration for `createRuntime`.
  *
  * - `undefined` (default) — auto: on in DEV (`process.env.NODE_ENV !== 'production'`), off in PROD.
  * - `true` — always on regardless of env.
  * - `false` — always off regardless of env.
  * - `{ dev?, prod? }` — per-env override; unset fields fall back to the auto default.
+ * - **`InspectorFactory`** (v0.10+) — explicit factory imported from `@triggery/core/inspect`.
+ *   The recommended path going forward, because it keeps the inspector code
+ *   out of the main bundle when the factory isn't imported.
  *
  * When off, the runtime skips the per-run buffer write, `subscribe()` callbacks
  * never fire, `getInspectorBuffer()` returns `[]`, and the hot path drops the
@@ -241,7 +336,7 @@ export type InspectorEnvOverride = {
  * Devtools — `@triggery/devtools-redux`, `@triggery/devtools-bridge`, the React
  * `useInspectHistory` hook — require the inspector to be on.
  */
-export type InspectorOption = boolean | InspectorEnvOverride;
+export type InspectorOption = boolean | InspectorEnvOverride | InspectorFactory;
 
 export type RuntimeOptions = {
   /** Global middleware applied to every trigger in this runtime. */
@@ -382,6 +477,19 @@ export type Runtime = {
     triggerId: string,
     name: string,
     handler: UntypedActionFn,
+    options?: RegisterScopeOptions,
+  ): RegistrationToken;
+
+  /**
+   * Additive (non-last-write-wins) subscription to an action — the underlying
+   * mechanism for `trigger.action(name).subscribe(cb)`. Every subscriber is
+   * invoked on every action emit, in addition to the live handler
+   * registered via `registerAction`.
+   */
+  subscribeAction(
+    triggerId: string,
+    name: string,
+    cb: UntypedActionFn,
     options?: RegisterScopeOptions,
   ): RegistrationToken;
 
