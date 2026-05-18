@@ -176,37 +176,37 @@ importers:
         specifier: ^5.59.0
         version: 5.100.10(react@19.2.6)
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/dom':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/dom
       '@triggery/jotai':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/jotai
       '@triggery/mobx':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/mobx
       '@triggery/query':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/query
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       '@triggery/reatom':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/reatom
       '@triggery/redux':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/redux
       '@triggery/signals':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/signals
       '@triggery/socket':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/socket
       '@triggery/zustand':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/zustand
       jotai:
         specifier: ^2.10.0
@@ -246,10 +246,10 @@ importers:
   examples/vite-react-analytics:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -277,10 +277,10 @@ importers:
   examples/vite-react-auth-reactions:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -308,10 +308,10 @@ importers:
   examples/vite-react-chat-mentions:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -339,10 +339,10 @@ importers:
   examples/vite-react-counter:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -370,10 +370,10 @@ importers:
   examples/vite-react-debounced-search:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -401,10 +401,10 @@ importers:
   examples/vite-react-diagram-table-sync:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -432,10 +432,10 @@ importers:
   examples/vite-react-form-zod:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -463,10 +463,10 @@ importers:
   examples/vite-react-modal-stack:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -494,10 +494,10 @@ importers:
   examples/vite-react-notifications:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -525,10 +525,10 @@ importers:
   examples/vite-react-onboarding:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -556,10 +556,10 @@ importers:
   examples/vite-react-websocket-sync:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/react':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/react
       react:
         specifier: ^19.2.6
@@ -587,10 +587,10 @@ importers:
   examples/vite-solid-notifications:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/solid':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/solid
       solid-js:
         specifier: ^1.9.3
@@ -609,10 +609,10 @@ importers:
   examples/vite-vue-notifications:
     dependencies:
       '@triggery/core':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/core
       '@triggery/vue':
-        specifier: ^0.9.1
+        specifier: ^0.10.0
         version: link:../../packages/vue
       vue:
         specifier: ^3.5.13

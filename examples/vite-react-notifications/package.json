@@ -10,8 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@triggery/core": "^1.0.0",
-    "@triggery/react": "^1.0.0",
+    "@triggery/core": "^0.10.0",
+    "@triggery/react": "^0.10.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

@@ -10,8 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@triggery/core": "^1.0.0",
-    "@triggery/solid": "^1.0.0",
+    "@triggery/core": "^0.10.0",
+    "@triggery/solid": "^0.10.0",
     "solid-js": "^1.9.3"
   },
   "devDependencies": {
