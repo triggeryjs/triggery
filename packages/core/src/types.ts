@@ -481,9 +481,9 @@ export type Runtime = {
   ): RegistrationToken;
 
   /**
-   * Additive (non-last-mount-wins) subscription to an action — the underlying
+   * Additive (non-last-write-wins) subscription to an action — the underlying
    * mechanism for `trigger.action(name).subscribe(cb)`. Every subscriber is
-   * invoked on every action emit, in addition to the top-of-stack handler
+   * invoked on every action emit, in addition to the live handler
    * registered via `registerAction`.
    */
   subscribeAction(

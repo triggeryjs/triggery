@@ -378,7 +378,7 @@ test('fetched message renders in toast', async () => {
 
 ### StrictMode тебе друг
 
-Гоняй интеграционный сьют с `<StrictMode>`, обёрнутым вокруг провайдера рантайма. Хуки Triggery спроектированы strict-mode-safe (last-mount-wins на стеке condition/action) — обёртка делает безопасными и *твои* компоненты. Подробности жизненного цикла см. в [StrictMode (React)](/ru/guide/ssr/strict-mode/).
+Гоняй интеграционный сьют с `<StrictMode>`, обёрнутым вокруг провайдера рантайма. Хуки Triggery спроектированы strict-mode-safe (cycle mount→cleanup→mount проходит чисто — cleanup первого монта очищает слот до того, как второй монт запишет; last-write-wins для condition / action и channel-подписок) — обёртка делает безопасными и *твои* компоненты. Подробности жизненного цикла см. в [StrictMode (React)](/ru/guide/ssr/strict-mode/).
 
 ### Не дели `getDefaultRuntime()`
 

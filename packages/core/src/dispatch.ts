@@ -41,7 +41,7 @@ export type RegisteredTrigger = {
   readonly actions: Map<string, UntypedActionFn>;
   /**
    * Additive fan-out subscribers per action name (v0.10+ action-channel path).
-   * Invoked on every action emit in addition to the top-of-stack action handler
+   * Invoked on every action emit in addition to the live action handler
    * registered via `runtime.registerAction`. Empty for triggers that never used
    * the action-channel API.
    */
@@ -246,7 +246,7 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
   });
 
   // ─── Action proxy + timing wrappers ──────────────────────────────────────
-  // Invoke an action: top-of-stack handler (if any) AND every channel
+  // Invoke an action: the live handler (if any) AND every channel
   // subscriber (if any). `recordExecution` differentiates immediate calls
   // (track for the inspector) from deferred timer invocations.
   const dispatchAction = (name: string, payload: unknown, recordExecution: boolean): void => {

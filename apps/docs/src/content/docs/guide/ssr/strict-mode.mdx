@@ -1,6 +1,6 @@
 ---
 title: StrictMode (React)
-description: "React's StrictMode double-invokes useEffect to flush out cleanup bugs. Triggery's last-mount-wins stack is safe by construction — and Solid / Vue dev-mode double-renders behave the same way."
+description: "React's StrictMode double-invokes useEffect to flush out cleanup bugs. Triggery's last-write-wins slot is safe by construction — and Solid / Vue dev-mode double-renders behave the same way."
 ---
 
 import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
@@ -36,39 +36,32 @@ That's why React's docs explicitly recommend StrictMode for new apps and Trigger
 Triggery's hooks register a token in `useEffect` and unregister it in the cleanup. Run the full StrictMode cycle and the trace looks like this:
 
 ```text
-1. Mount   — registerCondition('settings', getter)  → token A pushed
-2. Cleanup — token A.unregister()                   → stack empty
-3. Mount   — registerCondition('settings', getter)  → token B pushed
+1. Mount   — registerCondition('settings', getterA) → slot = A
+2. Cleanup — tokenA.unregister()                    → slot empty (A was live, removed)
+3. Mount   — registerCondition('settings', getterB) → slot = B
                                                       (same closure, same value)
 4. …user interacts…
-5. Unmount — token B.unregister()                   → stack empty
+5. Unmount — tokenB.unregister()                    → slot empty (B was live, removed)
 ```
 
 After step 3, exactly **one** registration is live. The first one (token A) is fully cleaned up before the second one (token B) takes its place. There's no double-firing of the trigger; there's no duplicate condition; the value the trigger sees is unambiguous.
 
-The mechanism is a per-(trigger, name) **stack** maintained by the runtime, not a flat map. When a registration comes in, it's pushed onto the stack. When it unregisters, it's removed from wherever it is in the stack — most often the top, but the runtime walks the stack just in case. The "active" value is always the top of the stack.
+The mechanism is a per-(trigger, name) **single slot** maintained by the runtime: a flat `Map<name, fn>`. A new registration overwrites the slot. Cleanup removes the entry **only if it's still the live one** (stale tokens are no-ops). The "active" value is whatever is in the slot.
 
-```ts title="What the runtime stack looks like"
+```ts title="What the runtime slot table looks like"
 {
   triggerId: 'message-received',
-  conditionStacks: {
-    settings: [
-      // Stack — top of array is the active registration
-      <getter from <SettingsPanel /> mount #2>,
-    ],
-    activeChannelId: [
-      <getter from <Chat /> mount #2>,
-    ],
+  conditions: {
+    settings: <getter from <SettingsPanel /> mount #2>,
+    activeChannelId: <getter from <Chat /> mount #2>,
   },
-  actionStacks: {
-    showToast: [
-      <handler from <NotificationLayer /> mount #2>,
-    ],
+  actions: {
+    showToast: <handler from <NotificationLayer /> mount #2>,
   },
 }
 ```
 
-When the runtime reads `conditions.settings` at fire time, it picks the **top of the stack**. When the handler calls `actions.showToast?.()`, it picks the top of the action stack. Last-mount-wins is consistent, deterministic, and StrictMode-safe.
+When the runtime reads `conditions.settings` at fire time, it picks the slot's value. When the handler calls `actions.showToast?.()`, it picks the action slot. Last-write-wins is consistent, deterministic, and StrictMode-safe.
 
 ## Refcount + cleanup semantics
 
@@ -89,9 +82,9 @@ export function useCondition(trigger, name, getter, deps = []) {
     //     *this exact registration* (matched by identity, not by name).
     const token = runtime.registerCondition(trigger.id, name, stableGetter, { scope });
 
-    // (B) on cleanup: unregister that exact token. The stack pops the
-    //     matching entry — even if it's not at the top (e.g. two providers
-    //     mounted in sequence).
+    // (B) on cleanup: unregister. If this registration was already overwritten
+    //     by a later one (stale token), unregister is a silent no-op so we
+    //     don't wipe the live entry.
     return () => token.unregister();
   }, [runtime, trigger.id, name, stableGetter, scope]);
 }
@@ -99,9 +92,9 @@ export function useCondition(trigger, name, getter, deps = []) {
 
 Three properties matter:
 
-1. **Tokens are unique per registration.** Two `useCondition` calls register two distinct stack entries even if their `getter` happens to be the same function reference.
-2. **`unregister` is idempotent.** Calling it twice is a no-op. StrictMode doesn't actually call cleanup twice, but if a parent component manually held the token and unregistered it, the React cleanup would still call its own — and the second call is silent.
-3. **The active mirror always reflects the top of the stack.** The runtime stores the "current value" on a flat `Map<name, fn>` for hot-path reads — but it's just a mirror; the source of truth is the stack. When the top changes (because a registration was popped), the mirror is updated.
+1. **Tokens are unique per registration.** Every `useCondition` call returns its own token; cleanup compares function identity against the live slot before deleting.
+2. **`unregister` is idempotent and stale-safe.** Calling it twice is a no-op. If the registration was already overwritten by a later write, the cleanup won't wipe the new one.
+3. **The slot is the source of truth.** A flat `Map<name, fn>` per trigger holds the current registration. A new write overwrites; the dispatcher reads the latest value directly.
 
 This is what makes the "mount → cleanup → mount" cycle behave as if only the second mount happened.
 
@@ -154,18 +147,16 @@ test('one fire == one action call, even under StrictMode', () => {
 
 In a library that doesn't handle StrictMode, this test fails with `onPing` called twice. In Triggery, it passes.
 
-## Multiple live registrations: when last-mount-wins matters
+## Multiple live registrations: when last-write-wins matters
 
-StrictMode's mount-unmount-mount cycle is one case. The other case is mounting two genuinely different components that both register the same condition or action:
+StrictMode's mount-cleanup-mount cycle is one case. The other case is mounting two genuinely different components that both register the same condition or action:
 
 ```tsx
 <SettingsPanelA />  {/* useCondition('settings', () => valueA) */}
 <SettingsPanelB />  {/* useCondition('settings', () => valueB) */}
 ```
 
-The runtime warns once in DEV ("multiple condition registrations for 'settings' on trigger 'message-received' — last-mount-wins") and uses the most-recently-pushed getter. When `<SettingsPanelB />` unmounts, the stack pops back to `<SettingsPanelA />`'s getter automatically — no manual cleanup, no global state.
-
-This is intentional: it's the same mechanism that StrictMode relies on, generalized. The DEV warning helps catch *accidental* duplicate registrations (a copy-pasted component); the stack semantics make *deliberate* layered registrations (e.g. a feature-flag override) behave deterministically.
+The runtime warns once in DEV ("multiple condition registrations for 'settings' on trigger 'message-received' — last write wins") and uses the most recent getter. When `<SettingsPanelB />` unmounts, the slot is cleared — the previous `<SettingsPanelA />`'s getter is **not** automatically restored (v0.10 removed the stack-based fallback). If a "layered" override pattern matters in your app, lift the wiring up so a single component owns the slot. See [Ownership](/guide/architecture/ownership/) for patterns.
 
 ## Solid: dev-mode owner double-invocation
 
@@ -174,7 +165,7 @@ Solid's owner-graph model means components mount once and reactivity is tracked 
 - **HMR** re-runs setup functions; `onCleanup` callbacks fire, then setup re-runs.
 - **Some Solid plugins** (like `solid-devtools`) instrument the owner graph and can re-execute setup in development.
 
-Triggery's Solid bindings call `runtime.registerCondition(...)` directly in setup and `onCleanup(() => token.unregister())` afterwards. The same `register → cleanup → register` cycle applies — last-mount-wins on the stack, no duplicate registrations.
+Triggery's Solid bindings call `runtime.registerCondition(...)` directly in setup and `onCleanup(() => token.unregister())` afterwards. The same `register → cleanup → register` cycle applies — last-write-wins on the slot, no duplicate registrations.
 
 ```tsx title="@triggery/solid — useCondition"
 export function useCondition(trigger, name, getter) {
@@ -236,7 +227,7 @@ A related lifecycle question: what happens when [`@triggery/vite`](/packages/vit
 
 Auto-discovery re-runs `createTrigger(config)` on the new module. The runtime's `registerTrigger` is **idempotent by id** — finding an existing trigger with the same id, it tears down the old registration (cancels in-flight handlers, clears timers, deindexes event names) and swaps in the new config. The inspector history is preserved (it's keyed on `runId`, not on the trigger object identity).
 
-The condition/action stacks are *not* cleared on a trigger replacement — they're owned by the components, not the trigger. When the trigger's id stays the same, the existing stacks continue to apply; the new handler runs against the same registered providers and reactors. This is what makes HMR feel snappy: edit a trigger, save, the next fire runs the new logic without re-mounting any component.
+The condition/action slots are *not* cleared on a trigger replacement — they're owned by the components, not the trigger. When the trigger's id stays the same, the existing slots continue to apply; the new handler runs against the same registered providers and reactors. This is what makes HMR feel snappy: edit a trigger, save, the next fire runs the new logic without re-mounting any component.
 
 See [Auto-discovery](/guide/advanced/auto-discovery/) for the full HMR story.
 
@@ -244,11 +235,11 @@ See [Auto-discovery](/guide/advanced/auto-discovery/) for the full HMR story.
 
 | Concern | Triggery's behaviour |
 |---|---|
-| React StrictMode mount → unmount → mount | The cleanup runs between, the stack is empty, the second mount pushes one registration. One live registration. |
-| Two providers for the same condition | Last-mount-wins on the stack. Unmounting the second pops back to the first. DEV warning once. |
+| React StrictMode mount → cleanup → mount | The cleanup runs between mounts, the slot is empty, the second mount writes one registration. One live registration. |
+| Two providers for the same condition | Last-write-wins: the second provider overwrites the slot; unmounting the second clears the slot (it does not fall back). DEV warning once. |
 | Async handlers in flight during cleanup | `signal.aborted` flips to true; the handler can short-circuit. The new mount starts fresh. |
-| HMR on a trigger file | Trigger replaced atomically; existing condition/action stacks survive; inspector history persists. |
-| Solid `onCleanup` / Vue `onScopeDispose` | Same stack semantics — last-mount-wins, no duplicates. |
+| HMR on a trigger file | Trigger replaced atomically; existing condition/action slots survive; inspector history persists. |
+| Solid `onCleanup` / Vue `onScopeDispose` | Same slot semantics — last-write-wins, no duplicates. |
 
 The principle is the same in all three bindings: **register a token in the mount path, unregister it in the cleanup path, never assume effects run exactly once**. That's what makes the whole runtime safe by construction.
 

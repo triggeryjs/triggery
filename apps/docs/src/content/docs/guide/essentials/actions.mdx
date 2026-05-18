@@ -173,18 +173,22 @@ What about the **executor**? It runs once per `actions.foo(...)` call. If the ha
 
 A common shorthand for "run these in order, never two at once" is the trigger's own `queue` concurrency plus a synchronous action that performs the actual work. The handler runs serialized; the action runs synchronously inside it.
 
-## Last-mount-wins ownership
+## Last-write-wins ownership
 
-Like conditions, actions register on an internal stack. The most recently mounted reactor's handler wins; on unmount, the previous one takes over. In DEV, the runtime emits a one-time warning per `(triggerId, actionName)` when a second live registration arrives:
+Like conditions, each `(trigger, actionName)` pair has a single slot. The most recent `runtime.registerAction` write wins; on unmount the slot is cleared (the previous registration is **not** restored — v0.10 removed the stack-based fallback).
+
+The new [action-channel API](/api/core/action-channel/) (`trigger.action(name).subscribe(cb)`) is the preferred way to attach reactors in v0.10 — it's additive (every subscriber fires) and `useAction` in React/Solid/Vue already uses it under the hood. Use `runtime.registerAction` directly only when you want explicit single-handler ownership.
+
+In DEV, the runtime emits a one-time warning per `(triggerId, actionName)` when a second live `registerAction` arrives:
 
 ```text
 [triggery] multiple action registrations for "showToast" on trigger "message-received" —
-last-mount-wins. To compose values from several sources, register through a single hook.
+last write wins. To compose values from several sources, register through a single hook.
 ```
 
 Two reasons this is fine:
 
-1. **Overrides are first-class.** A modal mounts and wants to intercept `showToast`? Mount the override, it wins, on close it unmounts and the global handler takes over again.
+1. **Overrides are first-class.** A modal mounts and wants to intercept `showToast`? Mount the override, it wins; the previous handler is gone on unmount (re-render to restore).
 2. **Tests are simple.** Mount the test reactor; it wins; assert it received the payload; teardown.
 
 If you genuinely need *both* handlers to run (e.g. one toast, one log), register through a single composed hook that calls both. The library does not silently fan out — explicit composition is the contract.

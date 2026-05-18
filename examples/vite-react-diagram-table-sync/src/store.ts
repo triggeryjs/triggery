@@ -2,12 +2,12 @@
  * Tiny module-scoped store with a subscribe primitive — enough for
  * `useSyncExternalStore` to drive both panes off the same source of truth.
  *
- * Why a store at all? In Triggery, `useAction` registrations are
- * last-mount-wins — only the latest-mounted reactor for a given action
- * actually runs. That's correct for "I am THE side-effect for this rule".
- * It's wrong for fanout-to-N: if every Row/Node tried to be its own
- * reactor, only the last-mounted one would update. Instead, ONE reactor
- * writes to this store and every consumer reads from it.
+ * Why a store at all? In Triggery v0.10, `useAction` is additive — every
+ * component that subscribes to the same `(trigger, name)` runs on every
+ * emit. You could wire every Row/Node to its own `useAction`. But fan-out
+ * to N rows means N renders per emit plus cleanup churn each time a row
+ * remounts. Instead, ONE reactor writes to this store and every consumer
+ * reads from it.
  *
  * This is the standard split: the trigger orchestrates the rule, a tiny
  * store holds the resulting state, the views consume that state. In a

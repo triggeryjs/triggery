@@ -67,6 +67,8 @@ Same trigger in v0.10:
 
 ```ts
 // v0.10
+import { createTrigger } from '@triggery/core/builder';
+
 const messageTrigger = createTrigger<Schema>()
   .id('message-received')
   .events(['new-message'])
@@ -168,6 +170,8 @@ React/Solid/Vue) benefit automatically because they switched to
 ### 4. (Optional) Move to the builder API to drop `!` and `if-return`
 
 ```ts
+import { createTrigger } from '@triggery/core/builder';
+
 const t = createTrigger<Schema>()
   .id('x')
   .events(['e'])

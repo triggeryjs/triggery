@@ -79,7 +79,7 @@ runtime.registerAction(trigger.id, 'showToast', (p) => toastA(p));
 trigger.action('showToast').subscribe((p) => toastB(p));
 ```
 
-The `runtime.registerAction` path remains last-mount-wins (only the top of the stack runs). Channel subscribers run additively in addition to the top handler. This means:
+The `runtime.registerAction` path remains last-write-wins (a single slot per action — newer writes overwrite older). Channel subscribers run additively in addition to that slot's handler. This means:
 
 - **v0.10 React/Solid/Vue `useAction`** internally uses the channel path → multiple components mounting the same `useAction(trigger, 'name', fn)` now all run on each emit. (This is the one semantic change in v0.10 — see the [migration guide](/migration/from-v0.9/).)
 - **Adapters that need exclusive ownership** can keep using `runtime.registerAction(...)`. The two paths don't interfere.

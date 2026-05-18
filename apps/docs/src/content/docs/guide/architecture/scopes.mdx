@@ -16,7 +16,7 @@ The classic case: you render the same feature **N times** in parallel, and each 
 ```tsx title="The wrong shape — one scope, four panels, all conditions collide"
 <App>
   <ChatPanel channelId="general" />     {/* registers useCondition('activeChannelId', …) */}
-  <ChatPanel channelId="random" />      {/* same condition, last-mount-wins, only one survives */}
+  <ChatPanel channelId="random" />      {/* same condition, last-write-wins, only one survives */}
   <ChatPanel channelId="hiring" />
   <NotificationLayer />                 {/* sees one of the three, can't tell which */}
 </App>
@@ -155,7 +155,7 @@ export const commentsNotification     = makeNotificationTrigger('doc-comments');
 
 ## Disposal
 
-When a `<TriggerScope>` unmounts, every `useCondition` / `useAction` inside it unmounts too — the standard React effect cleanup path. The registrations are removed from the runtime's stacks. If a trigger was running with an in-flight async handler, **the abort signal is not flipped** by scope unmount alone — only by `take-latest` supersession or `runtime.dispose()`. Defensive handlers check `signal.aborted` after every `await` and exit early. See [Concurrency](/guide/async/concurrency/) for the full discussion.
+When a `<TriggerScope>` unmounts, every `useCondition` / `useAction` inside it unmounts too — the standard React effect cleanup path. The registrations are removed from the runtime's slot table. If a trigger was running with an in-flight async handler, **the abort signal is not flipped** by scope unmount alone — only by `take-latest` supersession or `runtime.dispose()`. Defensive handlers check `signal.aborted` after every `await` and exit early. See [Concurrency](/guide/async/concurrency/) for the full discussion.
 
 ```tsx title="A scope that comes and goes"
 function PanelHost({ open, id, channelId }: { open: boolean; id: string; channelId: string }) {

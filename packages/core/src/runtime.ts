@@ -235,10 +235,10 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   ): RegistrationToken => registerStacked(triggerId, name, handler, 'action', options?.scope ?? '');
 
   /**
-   * Additive (non-last-mount-wins) subscription to an action — used by the
+   * Additive (non-last-write-wins) subscription to an action — used by the
    * v0.10 action-channel API (`trigger.action(name).subscribe(cb)`). Every
    * subscriber is invoked on every action emit, in addition to the
-   * top-of-stack handler registered via `registerAction`. Returns an
+   * live handler registered via `registerAction`. Returns an
    * idempotent token that removes the subscriber.
    *
    * Scope semantics mirror `registerAction`: a scope-mismatched call is a

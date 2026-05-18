@@ -254,9 +254,9 @@ For SSR per-request isolation, `dispose()` at the end of request handling is the
 
 ## Lifecycle notes
 
-**Dev mode.** The inspector is on, last-mount-wins collisions emit a one-time warning per `(triggerId, name)`, scope mismatches emit a one-time warning. None of these are errors — they're signals you read in DevTools.
+**Dev mode.** The inspector is on, last-write-wins collisions emit a one-time warning per `(triggerId, name)`, scope mismatches emit a one-time warning. None of these are errors — they're signals you read in DevTools.
 
-**React StrictMode.** The mount → unmount → mount cycle is safe. Registration is on a stack; unmounting pops the latest registration; the next mount pushes again. The runtime treats each push as the new top of stack.
+**React StrictMode.** The mount → cleanup → mount cycle is safe. Each `(trigger, name)` pair has one slot; the first mount's cleanup deletes its entry (still the live one at that point), and the second mount writes again. Stale unregister tokens (where the registration was already overwritten by a later write) are no-ops.
 
 **SSR.** Create one runtime per request, mount your tree against it, await any in-flight async runs (if you have them), dispose at the end. See [Server-side rendering](/guide/ssr/server-side-rendering/) for the streaming / hydration story.
 

@@ -156,10 +156,10 @@ const trigger = createTrigger<{ events: { hi: void } }>(
 
 ## Замечания
 
-<Aside type="caution" title="Ограничение сужения типов в V1">
-В V1 `required` проверяется только в рантайме. TypeScript не сужает типы обязательных условий внутри обработчика — `conditions.user` остаётся `User | undefined`. Используй либо ранний guard (`if (!conditions.user) return;`), либо `check.is/all/any`, которые несут NonNullable-сужение.
+<Aside type="tip" title="Сужение типов через builder API">
+В imperative форме `createTrigger({...})` `required` проверяется только в рантайме — TypeScript не сужает типы обязательных условий, `conditions.user` остаётся `User | undefined`. Используй либо ранний guard (`if (!conditions.user) return;`), либо `check.is/all/any` с NonNullable-сужением.
 
-Builder API с автоматическим сужением обязательных условий — в роадмапе на V1.1.
+Builder API с автоматическим сужением shipped в v0.10: `import { createTrigger } from '@triggery/core/builder'` и пиши `createTrigger<S>().require('user').handle(...)`.
 </Aside>
 
 <Aside type="tip">

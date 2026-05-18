@@ -67,6 +67,8 @@ runtime.registerAction(messageTrigger.id, 'showToast', (p) => {
 
 ```ts
 // v0.10
+import { createTrigger } from '@triggery/core/builder';
+
 const messageTrigger = createTrigger<Schema>()
   .id('message-received')
   .events(['new-message'])
@@ -167,6 +169,8 @@ toast.subscribe(cb2);
 ### 4. (Опционально) Перейди на builder API чтобы убрать `!` и `if-return`
 
 ```ts
+import { createTrigger } from '@triggery/core/builder';
+
 const t = createTrigger<Schema>()
   .id('x')
   .events(['e'])

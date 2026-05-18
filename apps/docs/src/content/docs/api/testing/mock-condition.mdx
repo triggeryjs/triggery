@@ -146,7 +146,7 @@ rt.mockCondition(t, 'onTick', () => cb);
 ## Notes
 
 <Aside type="caution" title="Last-mock-wins">
-Stacking two `mockCondition` calls for the same `(trigger, name)` follows the runtime's last-mount-wins rule. The most recent registration is the one the handler sees; unregistering the top restores the previous one. A DEV warn-once warns when this happens unintentionally.
+Two `mockCondition` calls for the same `(trigger, name)` follow the runtime's last-write-wins rule. The most recent registration is the one the handler sees; the previous registration is overwritten. A DEV warn-once fires when this happens unintentionally.
 </Aside>
 
 <Aside type="tip">
