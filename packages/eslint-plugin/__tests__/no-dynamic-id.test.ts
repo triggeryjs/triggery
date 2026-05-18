@@ -14,6 +14,7 @@ describe('no-dynamic-id', () => {
         errors: [{ messageId: 'dynamic' }],
       },
       {
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: intentional fixture — the rule must flag template-literal interpolation in `id`
         code: 'const t = createTrigger({ id: `dynamic-${suffix}`, events: [], handler() {} });',
         errors: [{ messageId: 'dynamic' }],
       },

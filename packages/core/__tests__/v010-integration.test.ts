@@ -104,7 +104,7 @@ describe('v0.10 integration — B1 + B2 + B3 together', () => {
         events: ['new-message'],
         conditions: { user: { id: 'me' }, settings: { sound: true } },
         required: ['user', 'settings'],
-        handler({ event, conditions, actions }) {
+        handler({ conditions, actions }) {
           // V0.9 form still needs runtime guard since R = never in this overload.
           if (!conditions.user || !conditions.settings) return;
           actions.showToast?.({ title: conditions.user.id });
