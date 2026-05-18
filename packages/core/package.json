@@ -42,13 +42,19 @@
     ".": {
       "source": "./src/index.ts",
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
+      "import": {
+        "production": "./dist/index.prod.js",
+        "default": "./dist/index.js"
+      },
       "default": "./dist/index.js"
     },
     "./inspect": {
       "source": "./src/inspect.ts",
       "types": "./dist/inspect.d.ts",
-      "import": "./dist/inspect.js",
+      "import": {
+        "production": "./dist/inspect.prod.js",
+        "default": "./dist/inspect.js"
+      },
       "default": "./dist/inspect.js"
     },
     "./package.json": "./package.json"

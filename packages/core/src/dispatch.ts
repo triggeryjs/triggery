@@ -249,42 +249,24 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
   });
 
   // ─── Action proxy + timing wrappers ──────────────────────────────────────
-  /**
-   * Invoke the action's top-of-stack handler (if any) AND every channel
-   * subscriber (if any). At least one of the two must be present for the
-   * action to count as "executed" in the inspector.
-   */
-  const dispatchAction = (name: string, payload: unknown): void => {
-    const handler = trigger.actions.get(name);
-    const subscribers = trigger.channelSubscribers.get(name);
-    if (!handler && (!subscribers || subscribers.size === 0)) return;
-    if (inspectorEnabled) executedActions.push(name);
-    const actionCtx = { triggerId: trigger.config.id, runId, actionName: name, payload };
-    if (handler) invokeAction(handler, actionCtx, middleware, trackTiming);
-    if (subscribers && subscribers.size > 0) {
-      for (const cb of subscribers) {
-        invokeAction(cb, actionCtx, middleware, trackTiming);
-      }
-    }
-  };
-
-  const callActionImmediate = (name: string, payload: unknown): void => {
-    dispatchAction(name, payload);
-  };
-
-  /** Invocation triggered by a debounce/throttle/defer timer — late binding. */
-  const callActionDeferred = (name: string, payload: unknown): void => {
+  // Invoke an action: top-of-stack handler (if any) AND every channel
+  // subscriber (if any). `recordExecution` differentiates immediate calls
+  // (track for the inspector) from deferred timer invocations.
+  const dispatchAction = (name: string, payload: unknown, recordExecution: boolean): void => {
     if (!trigger.enabled) return;
     const handler = trigger.actions.get(name);
     const subscribers = trigger.channelSubscribers.get(name);
     if (!handler && (!subscribers || subscribers.size === 0)) return;
+    if (recordExecution && inspectorEnabled) executedActions.push(name);
     const actionCtx = { triggerId: trigger.config.id, runId, actionName: name, payload };
     if (handler) invokeAction(handler, actionCtx, middleware, trackTiming);
-    if (subscribers && subscribers.size > 0) {
-      for (const cb of subscribers) {
-        invokeAction(cb, actionCtx, middleware, trackTiming);
-      }
+    if (subscribers) {
+      for (const cb of subscribers) invokeAction(cb, actionCtx, middleware, trackTiming);
     }
+  };
+
+  const callActionDeferred = (name: string, payload: unknown): void => {
+    dispatchAction(name, payload, false);
   };
 
   const hasActionTarget = (name: string): boolean =>
@@ -306,7 +288,7 @@ function runHandler(deps: DispatchDeps, concurrency: ConcurrencyStrategy): void 
       if (prop === 'defer') return (ms: number) => buildTimedProxy('defer', ms);
       if (typeof prop !== 'string') return undefined;
       if (!hasActionTarget(prop)) return undefined;
-      return (payload: unknown) => callActionImmediate(prop, payload);
+      return (payload: unknown) => dispatchAction(prop, payload, true);
     },
     has(_target, prop) {
       return typeof prop === 'string' && hasActionTarget(prop);

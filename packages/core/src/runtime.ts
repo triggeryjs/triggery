@@ -1,11 +1,12 @@
 import { chainHas, getCurrentDispatch } from './cascadeContext.ts';
+import { warn } from './dev-warn.ts';
 import {
   cancelAllTimers,
   executeTrigger,
   needsTiming,
   type RegisteredTrigger,
 } from './dispatch.ts';
-import { createInspector, createNoopInspector } from './inspector.ts';
+import { createInspector } from './inspector.ts';
 import { createScheduler } from './scheduler.ts';
 import type {
   CascadeContext,
@@ -28,11 +29,17 @@ import type {
 let runtimeIdCounter = 0;
 const genRuntimeId = () => `runtime_${(++runtimeIdCounter).toString(36)}`;
 
-/** Browser-safe DEV-mode detector. */
-const isDev = (): boolean => {
-  const env = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV;
-  return env !== 'production';
-};
+/** Inline noop inspector — saves one extra export off the public surface. */
+const NOOP_INSPECTOR_BUFFER: readonly TriggerInspectSnapshot[] = Object.freeze(
+  [] as readonly TriggerInspectSnapshot[],
+);
+const buildNoopInspector = () => ({
+  record() {},
+  getBuffer: () => NOOP_INSPECTOR_BUFFER,
+  getLastForTrigger: () => undefined,
+  subscribe: () => () => {},
+  clear() {},
+});
 
 /**
  * Resolve the inspector option against the current environment.
@@ -47,9 +54,10 @@ function resolveInspectorEnabled(option: InspectorOption | undefined): boolean {
   if (option === true) return true;
   if (option === false) return false;
   if (typeof option === 'function') return true;
-  const dev = isDev();
+  // Inline check rather than module-level constant — tests mutate
+  // `process.env.NODE_ENV` per-case, and the runtime must see the live value.
+  const dev = process.env.NODE_ENV !== 'production';
   if (option === undefined) return dev;
-  // Object form: explicit overrides per environment, with auto fallback.
   if (dev) return option.dev ?? true;
   return option.prod ?? false;
 }
@@ -66,21 +74,23 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   const maxCascadeDepth = options.maxCascadeDepth ?? 3;
   const inspectorEnabled = resolveInspectorEnabled(options.inspector);
   const inspectorBufferSize = options.inspectorBufferSize ?? 50;
-  const inspector = inspectorEnabled
-    ? typeof options.inspector === 'function'
+  const inspector = !inspectorEnabled
+    ? buildNoopInspector()
+    : typeof options.inspector === 'function'
       ? options.inspector(inspectorBufferSize)
-      : createInspector(inspectorBufferSize)
-    : createNoopInspector();
+      : createInspector(inspectorBufferSize);
   const microtaskScheduler = createScheduler('microtask');
   const syncScheduler = createScheduler('sync');
 
-  /**
-   * DEV-only memo of `(label:triggerId:name)` keys we've already warned about,
-   * so the user sees one warning per collision rather than one per re-render.
-   * StrictMode's mount → unmount → mount cycle empties the stack before the
-   * second mount, so it doesn't trigger this warning.
-   */
+  // Per-runtime DEV warning memo. Stripped by bundlers because the only
+  // call sites that read or write to it sit under
+  // `if (process.env.NODE_ENV !== 'production')` guards.
   const warnedCollisions = new Set<string>();
+  const warnRuntimeOnce = (key: string, message: string): void => {
+    if (warnedCollisions.has(key)) return;
+    warnedCollisions.add(key);
+    warn(message);
+  };
 
   const indexEvent = (eventName: string, trigger: RegisteredTrigger) => {
     let set = eventIndex.get(eventName);
@@ -160,9 +170,8 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
   ): RegistrationToken => {
     const trigger = triggers.get(triggerId);
     if (!trigger) {
-      if (isDev()) {
-        // eslint-disable-next-line no-console -- DEV warn
-        console.warn(
+      if (process.env.NODE_ENV !== 'production') {
+        warn(
           `[triggery] register${label === 'condition' ? 'Condition' : 'Action'}: trigger "${triggerId}" not found`,
         );
       }
@@ -173,28 +182,25 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     // sees global registrations. Mismatches are silent no-ops at runtime, but
     // we warn-once in DEV so the user notices the wiring is off.
     if (trigger.config.scope !== scope) {
-      if (isDev()) {
-        const collisionKey = `scope-mismatch:${label}:${triggerId}:${scope}:${name}`;
-        if (!warnedCollisions.has(collisionKey)) {
-          warnedCollisions.add(collisionKey);
-          // eslint-disable-next-line no-console -- DEV warn
-          console.warn(
-            `[triggery] register${label === 'condition' ? 'Condition' : 'Action'}: scope mismatch — ` +
-              `trigger "${triggerId}" has scope "${trigger.config.scope || '(global)'}" but the ` +
-              `registration came from scope "${scope || '(global)'}". The registration is ignored.`,
-          );
-        }
+      if (process.env.NODE_ENV !== 'production') {
+        warnRuntimeOnce(
+          `scope-mismatch:${label}:${triggerId}:${scope}:${name}`,
+          `[triggery] register${label === 'condition' ? 'Condition' : 'Action'}: scope mismatch — ` +
+            `trigger "${triggerId}" has scope "${trigger.config.scope || '(global)'}" but the ` +
+            `registration came from scope "${scope || '(global)'}". The registration is ignored.`,
+        );
       }
       return { unregister() {} };
     }
-    const stacks: Map<string, unknown[]> =
-      label === 'condition'
-        ? (trigger.conditionStacks as unknown as Map<string, unknown[]>)
-        : (trigger.actionStacks as unknown as Map<string, unknown[]>);
-    const mirror: Map<string, unknown> =
-      label === 'condition'
-        ? (trigger.conditions as unknown as Map<string, unknown>)
-        : (trigger.actions as unknown as Map<string, unknown>);
+    const isCondition = label === 'condition';
+    const stacks = (isCondition ? trigger.conditionStacks : trigger.actionStacks) as unknown as Map<
+      string,
+      unknown[]
+    >;
+    const mirror = (isCondition ? trigger.conditions : trigger.actions) as unknown as Map<
+      string,
+      unknown
+    >;
 
     let stack = stacks.get(name);
     if (!stack) {
@@ -203,19 +209,13 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     }
 
     // DEV: warn-once per (label, triggerId, name) when a second live
-    // registration arrives. Helps catch accidental multi-provider setups
-    // ("why does the trigger see value B, not A?") without spamming the
-    // console on every re-render or on StrictMode's mount-cycle.
-    if (isDev() && stack.length > 0) {
-      const collisionKey = `${label}:${triggerId}:${name}`;
-      if (!warnedCollisions.has(collisionKey)) {
-        warnedCollisions.add(collisionKey);
-        // eslint-disable-next-line no-console -- DEV warn
-        console.warn(
-          `[triggery] multiple ${label} registrations for "${name}" on trigger "${triggerId}" — last-mount-wins. ` +
-            'To compose values from several sources, register through a single hook.',
-        );
-      }
+    // registration arrives.
+    if (process.env.NODE_ENV !== 'production' && stack.length > 0) {
+      warnRuntimeOnce(
+        `${label}:${triggerId}:${name}`,
+        `[triggery] multiple ${label} registrations for "${name}" on trigger "${triggerId}" — last-mount-wins. ` +
+          'To compose values from several sources, register through a single hook.',
+      );
     }
 
     stack.push(fn);
@@ -228,14 +228,14 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
         unregistered = true;
         const t = triggers.get(triggerId);
         if (!t) return;
-        const liveStacks: Map<string, unknown[]> =
-          label === 'condition'
-            ? (t.conditionStacks as unknown as Map<string, unknown[]>)
-            : (t.actionStacks as unknown as Map<string, unknown[]>);
-        const liveMirror: Map<string, unknown> =
-          label === 'condition'
-            ? (t.conditions as unknown as Map<string, unknown>)
-            : (t.actions as unknown as Map<string, unknown>);
+        const liveStacks = (isCondition ? t.conditionStacks : t.actionStacks) as unknown as Map<
+          string,
+          unknown[]
+        >;
+        const liveMirror = (isCondition ? t.conditions : t.actions) as unknown as Map<
+          string,
+          unknown
+        >;
         const liveStack = liveStacks.get(name);
         if (!liveStack) return;
         // Remove the most-recent occurrence of this fn (StrictMode-safe).
@@ -289,24 +289,19 @@ export function createRuntime(options: RuntimeOptions = {}): Runtime {
     const scope = options?.scope ?? '';
     const trigger = triggers.get(triggerId);
     if (!trigger) {
-      if (isDev()) {
-        // eslint-disable-next-line no-console -- DEV warn
-        console.warn(`[triggery] subscribeAction: trigger "${triggerId}" not found`);
+      if (process.env.NODE_ENV !== 'production') {
+        warn(`[triggery] subscribeAction: trigger "${triggerId}" not found`);
       }
       return { unregister() {} };
     }
     if (trigger.config.scope !== scope) {
-      if (isDev()) {
-        const collisionKey = `scope-mismatch:action-channel:${triggerId}:${scope}:${name}`;
-        if (!warnedCollisions.has(collisionKey)) {
-          warnedCollisions.add(collisionKey);
-          // eslint-disable-next-line no-console -- DEV warn
-          console.warn(
-            `[triggery] subscribeAction: scope mismatch — trigger "${triggerId}" has scope ` +
-              `"${trigger.config.scope || '(global)'}" but the subscribe call came from scope ` +
-              `"${scope || '(global)'}". The subscription is ignored.`,
-          );
-        }
+      if (process.env.NODE_ENV !== 'production') {
+        warnRuntimeOnce(
+          `scope-mismatch:action-channel:${triggerId}:${scope}:${name}`,
+          `[triggery] subscribeAction: scope mismatch — trigger "${triggerId}" has scope ` +
+            `"${trigger.config.scope || '(global)'}" but the subscribe call came from scope ` +
+            `"${scope || '(global)'}". The subscription is ignored.`,
+        );
       }
       return { unregister() {} };
     }
@@ -516,6 +511,9 @@ function buildPublicTrigger(
   internal: RegisteredTrigger,
   inspector: { getLastForTrigger(id: string): TriggerInspectSnapshot | undefined },
 ): Trigger<TriggerSchema> {
+  const throwOriginal = (): never => {
+    throw new Error('[triggery] can only be called on the original trigger object');
+  };
   return {
     id: internal.config.id,
     schedule: internal.config.schedule,
@@ -528,19 +526,9 @@ function buildPublicTrigger(
     isEnabled() {
       return internal.enabled;
     },
-    setCondition() {
-      throw new Error(
-        '[triggery] setCondition() can only be called on the original trigger object (returned by createTrigger)',
-      );
-    },
-    action() {
-      throw new Error(
-        '[triggery] action() can only be called on the original trigger object (returned by createTrigger)',
-      );
-    },
-    namedHooks() {
-      throw new Error('[triggery] namedHooks() can only be called on the original trigger object');
-    },
+    setCondition: throwOriginal,
+    action: throwOriginal,
+    namedHooks: throwOriginal,
     inspect() {
       return inspector.getLastForTrigger(internal.config.id);
     },

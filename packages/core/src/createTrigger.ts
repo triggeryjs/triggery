@@ -1,3 +1,4 @@
+import { warnOnce } from './dev-warn.ts';
 import { getDefaultRuntime } from './runtime.ts';
 import type {
   ActionChannel,
@@ -62,25 +63,6 @@ export type CreateTriggerConfig<S extends TriggerSchema> = {
   readonly concurrency?: ConcurrencyStrategy;
   readonly scope?: string;
   readonly handler: TriggerHandler<S, never>;
-};
-
-/**
- * Browser-safe DEV-mode detector (mirrored from runtime.ts so we don't
- * depend on its internals).
- */
-const isDevEnv = (): boolean => {
-  const env = (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV;
-  return env !== 'production';
-};
-
-/** Module-scoped one-shot DEV warning memo. Survives StrictMode mount cycles. */
-const warnedOnce = new Set<string>();
-const devWarnOnce = (key: string, message: string): void => {
-  if (!isDevEnv()) return;
-  if (warnedOnce.has(key)) return;
-  warnedOnce.add(key);
-  // eslint-disable-next-line no-console -- DEV warn
-  console.warn(message);
 };
 
 /**
@@ -273,10 +255,12 @@ function createTriggerFromConfig<S extends TriggerSchema>(
         },
         subscribe(cb) {
           if (disposed) {
-            devWarnOnce(
-              `action-subscribe-disposed:${config.id}:${name}`,
-              `[triggery] trigger.action("${name}").subscribe on disposed trigger "${config.id}" — ignored.`,
-            );
+            if (process.env.NODE_ENV !== 'production') {
+              warnOnce(
+                `action-subscribe-disposed:${config.id}:${name}`,
+                `[triggery] trigger.action("${name}").subscribe on disposed trigger "${config.id}" — ignored.`,
+              );
+            }
             return () => {};
           }
           const token = runtime.subscribeAction(config.id, name, cb as (payload: unknown) => void, {
@@ -311,18 +295,22 @@ function createTriggerFromConfig<S extends TriggerSchema>(
     },
     setCondition<K extends ConditionKey<S>>(name: K, value: ConditionMap<S>[K] | null) {
       if (disposed) {
-        devWarnOnce(
-          `setCondition-disposed:${config.id}:${String(name)}`,
-          `[triggery] trigger.setCondition("${String(name)}") on disposed trigger "${config.id}" — ignored.`,
-        );
+        if (process.env.NODE_ENV !== 'production') {
+          warnOnce(
+            `setCondition-disposed:${config.id}:${String(name)}`,
+            `[triggery] trigger.setCondition("${String(name)}") on disposed trigger "${config.id}" — ignored.`,
+          );
+        }
         return;
       }
       const cell = conditionCells.get(name as string);
       if (!cell) {
-        devWarnOnce(
-          `setCondition-undeclared:${config.id}:${String(name)}`,
-          `[triggery] trigger.setCondition("${String(name)}") — "${String(name)}" was not declared in the conditions config of trigger "${config.id}". Use runtime.registerCondition for externally-sourced conditions.`,
-        );
+        if (process.env.NODE_ENV !== 'production') {
+          warnOnce(
+            `setCondition-undeclared:${config.id}:${String(name)}`,
+            `[triggery] trigger.setCondition("${String(name)}") — "${String(name)}" was not declared in the conditions config of trigger "${config.id}". Use runtime.registerCondition for externally-sourced conditions.`,
+          );
+        }
         return;
       }
       cell.value = value;
@@ -343,11 +331,8 @@ function createTriggerFromConfig<S extends TriggerSchema>(
     },
     namedHooks(): NamedHooks<S> {
       return new Proxy({} as NamedHooks<S>, {
-        get(_target, prop) {
-          throw new Error(
-            `[triggery] namedHooks().${String(prop)} requires @triggery/react. ` +
-              `Use createNamedHooks(trigger) from '@triggery/react' instead.`,
-          );
+        get() {
+          throw new Error('[triggery] namedHooks requires @triggery/react (use createNamedHooks)');
         },
       });
     },
