@@ -26,7 +26,7 @@ export const preferBuilderTrigger = createRule({
     },
     messages: {
       preferBuilder:
-        '`createTrigger({ required: [{{required}}] })` could be written as `createTrigger<S>().require({{required}}).handle(...)`. The builder form narrows `conditions.<key>` to NonNullable<...> automatically — drop the `!` non-null assertions and early-return guards.',
+        '`createTrigger({ required: [{{required}}] })` could be written as `createTrigger<S>().require({{required}}).handle(...)` (import from `@triggery/core/builder`). The builder form narrows `conditions.<key>` to NonNullable<...> automatically — drop the `!` non-null assertions and early-return guards.',
     },
     schema: [],
   },

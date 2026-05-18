@@ -22,14 +22,14 @@ import { createTrigger } from '@triggery/core';
 ## Signature
 
 ```ts
-// Imperative form — v0.1+
+// Imperative form — v0.1+ — from '@triggery/core'
 function createTrigger<S extends TriggerSchema>(
   config: CreateTriggerConfig<S>,
   runtime?: Runtime,
 ): Trigger<S>;
 
-// Builder form — v0.10+
-function createTrigger<S extends TriggerSchema>(): TriggerBuilder<S>;
+// Builder form — v0.10+ — from '@triggery/core/builder'
+function createTrigger<S extends TriggerSchema>(runtime?: Runtime): TriggerBuilder<S>;
 ```
 
 The generic `S` is the schema — three optional maps for events, conditions and actions. It is **never inferred** in normal use; always passed explicitly.
@@ -165,10 +165,10 @@ const trigger = createTrigger<{ events: { hi: void } }>(
 
 ## Trigger builder (v0.10+) \{#trigger-builder\}
 
-Calling `createTrigger<S>()` with no arguments returns a `TriggerBuilder<S>`. The builder accumulates configuration through chainable methods and finalizes with `.handle(handler)` — at which point the handler sees required conditions narrowed to `NonNullable<...>`.
+Calling `createTrigger<S>()` with no arguments returns a `TriggerBuilder<S>`. The builder accumulates configuration through chainable methods and finalizes with `.handle(handler)` — at which point the handler sees required conditions narrowed to `NonNullable<...>`. **Import from `@triggery/core/builder`** — the subpath keeps the builder machinery out of the main bundle.
 
 ```ts
-import { createTrigger } from '@triggery/core';
+import { createTrigger } from '@triggery/core/builder';
 
 const messageTrigger = createTrigger<{
   events:     { 'new-message': { author: string; text: string } };

@@ -153,7 +153,7 @@ type ActionsCtx<A> =
 1. Ранний выход — `if (!conditions.user) return;` сужает остаток функции.
 2. `check.is('user', u => u.isActive)` — типобезопасный предикат, `u` имеет тип `NonNullable<User>`.
 
-Builder-API (`createTrigger<S>().require(['user']).handle(...)`) появится в V1.1 и сужает автоматически. Гард в рантайме идентичен — меняется только типизация.
+Builder-API уже доступен в v0.10 — `import { createTrigger } from '@triggery/core/builder'` и пиши `createTrigger<S>().require('user').handle(...)`, чтобы сузить автоматически. Гард в рантайме идентичен; меняется только типизация.
 </Aside>
 
 ## Переиспользование схемы — поделись один раз, уточняй пер-триггер

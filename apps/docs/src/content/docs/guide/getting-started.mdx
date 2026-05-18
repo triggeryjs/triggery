@@ -107,7 +107,7 @@ You can omit the provider altogether — in that case Triggery uses a lazily cre
 Triggery's house style is one trigger per file, suffixed `.trigger.ts`. The file reads top-to-bottom as a specification.
 
 ```ts title="src/triggers/message.trigger.ts"
-import { createTrigger } from '@triggery/core';
+import { createTrigger } from '@triggery/core/builder';
 
 type Settings = { sound: boolean; notifications: boolean };
 type Message  = { author: string; text: string; channelId: string };
@@ -139,7 +139,7 @@ export const messageTrigger = createTrigger<{
 The single inline-generic captures the whole port surface — three maps for events, conditions and actions. `.require('settings')` narrows `conditions.settings` to its non-null type inside `.handle(...)`, so we read `s.notifications` without a `!` or an early-return guard. The handler `ctx` is now strongly typed: try to fire a wrong event name or pass the wrong action payload and TypeScript stops you.
 
 <Aside type="tip" title="Imperative form still works">
-If you prefer a single object config, `createTrigger({ id, events, required, handler })` is fully supported and won't be removed before v1.0. The builder above is the new recommended path for v0.10+.
+If you prefer a single object config, `createTrigger({ id, events, required, handler })` is fully supported — import it from `@triggery/core` (no `/builder` subpath). The builder above is the new recommended path for v0.10+; the imperative form keeps working through v1.0.
 </Aside>
 
 ## 4. Wire components

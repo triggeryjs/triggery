@@ -27,7 +27,7 @@ export const noNonNullAssertionInHandler = createRule({
     },
     messages: {
       assertion:
-        '`conditions.{{name}}!` is unnecessary inside a trigger handler. Use `createTrigger<S>().require("{{name}}").handle(...)` (v0.10 builder API) so the type is narrowed automatically, or guard with `if (!conditions.{{name}}) return;`.',
+        '`conditions.{{name}}!` is unnecessary inside a trigger handler. Use the v0.10 builder API (`import { createTrigger } from "@triggery/core/builder"`; then `createTrigger<S>().require("{{name}}").handle(...)`) so the type is narrowed automatically, or guard with `if (!conditions.{{name}}) return;`.',
     },
     schema: [],
   },

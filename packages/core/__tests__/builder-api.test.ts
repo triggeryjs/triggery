@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { createTrigger } from '../src/builder.ts';
+import type { TriggerBuilder } from '../src/index.ts';
 import { createRuntime, createTrigger as createTriggerImperative } from '../src/index.ts';
-import type { TriggerBuilder } from '../src/types.ts';
 
 type Schema = {
   events: { ping: number };

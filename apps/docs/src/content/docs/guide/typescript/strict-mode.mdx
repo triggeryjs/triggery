@@ -63,7 +63,7 @@ handler({ conditions, actions, check }) {
 }
 ```
 
-The builder API in V1.1 changes this — `createTrigger<S>().require(['user']).handle(ctx => ...)` types `ctx.conditions.user` as `User` without the guard. The runtime semantics don't change.
+The builder API (shipped in v0.10 — import from `@triggery/core/builder`) changes this: `createTrigger<S>().require('user').handle(ctx => ...)` types `ctx.conditions.user` as `User` automatically, without the manual guard. Runtime semantics don't change.
 
 ### Actions: every action is optional because reactors may be absent
 

@@ -18,9 +18,11 @@ for every key passed to `.require(...)` — no `!`, no early-return narrowing.
 ## Import
 
 ```ts
-import { createTrigger } from '@triggery/core';
+import { createTrigger } from '@triggery/core/builder';
 import type { TriggerBuilder } from '@triggery/core';
 ```
+
+The chainable `createTrigger<S>()` form lives in the `@triggery/core/builder` subpath (v0.10+) so apps that only use the imperative `createTrigger({...})` form don't pay for the ~250 B gz builder machinery in their main bundle. The `TriggerBuilder<S, R>` type is exported from the main `@triggery/core` for ergonomic type references.
 
 ## Signature
 

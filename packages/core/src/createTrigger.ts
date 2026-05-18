@@ -27,12 +27,14 @@ import type {
  * method. The existing `runtime.registerCondition` path keeps working and
  * is the recommended low-level API for externally-owned values.
  *
- * **TypeScript narrowing of required conditions** is provided by the
- * builder API — see `createTrigger<Schema>()` (no args) → `.require(...).handle(...)`.
- * In the imperative form below, listed `required` keys are checked at runtime
- * but not narrowed at the type level — use an early return
- * (`if (!conditions.user) return;`) or `check.is('user', ...)` for typesafe
- * narrowing inside the handler.
+ * **TypeScript narrowing of required conditions** is provided by the builder
+ * API, exported from the `@triggery/core/builder` subpath. Import it as
+ * `import { createTrigger } from '@triggery/core/builder'` and write
+ * `createTrigger<S>().require(...).handle(...)` — the handler then sees
+ * required keys as `NonNullable<...>`. In the imperative form below, listed
+ * `required` keys are checked at runtime but not narrowed at the type level:
+ * use an early return (`if (!conditions.user) return;`) or `check.is('user', ...)`
+ * for typesafe narrowing inside the handler.
  */
 export type CreateTriggerConfig<S extends TriggerSchema> = {
   readonly id: string;
