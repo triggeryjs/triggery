@@ -96,8 +96,8 @@ importers:
         specifier: ^0.34.5
         version: 0.34.5
       shiki-twoslash-renderer:
-        specifier: ^0.1.0
-        version: 0.1.0(typescript@5.9.3)
+        specifier: ^0.3.4
+        version: 0.3.4(typescript@5.9.3)
       starlight-theme-nova:
         specifier: ^0.11.10
         version: 0.11.10(@astrojs/starlight@0.39.2(astro@6.3.4(@types/node@25.8.0)(idb-keyval@6.2.2)(lightningcss@1.32.0)(rollup@4.60.4)(yaml@2.9.0))(typescript@5.9.3))(typescript@5.9.3)
@@ -1210,68 +1210,14 @@ importers:
 
 packages:
 
-  '@aria-ui/core@0.0.22':
-    resolution: {integrity: sha512-N/UC2JJ8fA46WAc5TBNM9NZMcmQ3ghqDt1DNa7XdXHqHhDYkZ7Mn0Yn6KEciiIvlP+yuxLrPO/Q1oB4CNV21kg==}
-
   '@aria-ui/core@0.2.1':
     resolution: {integrity: sha512-EEh2mIHL4HnfjIgZocxhCCqPRU6EE5eLFQcGw4FOfomil11jIBKtmqCQkz8qJ9Ni3IBoh/5DvUFaY206X0oY6A==}
 
   '@aria-ui/elements@0.1.10':
     resolution: {integrity: sha512-XdykJS7m8cOv2vUAzGmuqWzQksBkqh4GEx4WY3N1zCHFB5tVZ9Omfc4vHDoJOfnI2pux64vJIAi+FWb9hUCKdw==}
 
-  '@aria-ui/overlay@0.0.25':
-    resolution: {integrity: sha512-YpOFpB1KNQaGLgRsnN5BcY64A+akHOqlLhH/ft7YU/l7E/9Sm0yscriiBvEi+vVwqYUOveNuh5vDVVmWeRjLpQ==}
-
-  '@aria-ui/presence@0.0.20':
-    resolution: {integrity: sha512-K/n60HLCGG0XX+sAEJ7aOScevXrfDet7+gxt+QXlELxxjrlpP0sZq/iS6KCdr6n7piaW6zfY7EtKxOriWUv8tw==}
-
-  '@aria-ui/tooltip@0.0.30':
-    resolution: {integrity: sha512-XYctHrJOSRNW2iQc1IHkozlK2H6edX+uD/p1Oo5yHNMA28mFrxKUOJEiA297jAvlLwASKTaAT+40cOTZ2bTyTQ==}
-
   '@aria-ui/utils@0.1.6':
     resolution: {integrity: sha512-zdbOstUfJ6Hq92EZZhGT3CLQgnIl3keBkhoFz//6L8l0IMbtdBjYOkd/4nlSCrppQllQNrGOsUSfYSrWOPr9ZA==}
-
-  '@ariatype/aria-attributes-drag-and-drop@1.0.2':
-    resolution: {integrity: sha512-JbbKaKkYMN/zc//irXYb6QFIMm+A4tpwgs6x4BrNtqU/Jeq2vk4i3LhnHBB1SaMfihGtcH8/Sj++o4jaIBXyCw==}
-
-  '@ariatype/aria-attributes-global@1.0.2':
-    resolution: {integrity: sha512-7SFhMMqiO8bd1/bePd+QTxJTkRKQpl1nsgFSpfeXFV3bypl93JYTkQyspbmkmSSqV6yQDwgfOA4XPapWDKiU9Q==}
-
-  '@ariatype/aria-attributes-live-region@1.0.2':
-    resolution: {integrity: sha512-WXlPVXAtaOShNnthxYAeA0L1OdJyMORyg+fOVdgQPw5hVI0zkF4tq/TA/k39QZOc82Ox5hDJBZqSTmg0pfk45g==}
-
-  '@ariatype/aria-attributes-relationship@1.0.2':
-    resolution: {integrity: sha512-pMhhosfqc42Pp0mQ5zMoyLNnrLTqB3dHrxD2hPyd4ahLjn7uty2SBvfjpEMRUmVpYzVskk3TkOogceQdGE1dCQ==}
-
-  '@ariatype/aria-attributes-widget@1.0.2':
-    resolution: {integrity: sha512-jhTD9Hsjj3s/UpCX1/0JeEVyH/MlSspwxMkdrUjjYN2fOZuScSlv2uhxQs7L7CAYprcESu7ze9PCILOwaIcuWw==}
-
-  '@ariatype/aria-attributes@1.0.2':
-    resolution: {integrity: sha512-fI6gnJwPaspKbpDruU21P/2RE5AGj7ZUtMXXfsTAHV+IFodd16HCBvifF8yQpFCU8bDvJjhaDaUoBt+89okE0w==}
-
-  '@ariatype/aria-roles-composite@1.0.2':
-    resolution: {integrity: sha512-PchMV4wxWsFeR2b774ZYXgUdBCDwpVUOGrhxgVG2NLK4y6BNbL4NvGgujvxEa3US5QHaeDk9nXF1t2HGprXtbg==}
-
-  '@ariatype/aria-roles-document-structure@1.0.2':
-    resolution: {integrity: sha512-luBB23nVL8jdfLZZBjZ7SaNTs7cgiEMqsfPdJGgvXFUjWPYC46pDwkz7GoFgkgCTUB4/PuDh/DzYw3ySUHYNWQ==}
-
-  '@ariatype/aria-roles-generic@1.0.2':
-    resolution: {integrity: sha512-dYmVwqWZ4vKR8dygp60JHbVbjorEOSK72Tktpfw7q35bcH455Fj81GtMtw4Mq/71RWsTaR7coQRwBbqwsGCOpw==}
-
-  '@ariatype/aria-roles-landmark@1.0.2':
-    resolution: {integrity: sha512-f8SoNedYsZp2R9+huGFkkAbb2AgI7ofMSnPdjRpcNrM2hkqqrIVzpbDazkV0YtoEpbgHdmRnFE3xxWknKRIOoQ==}
-
-  '@ariatype/aria-roles-live-region@1.0.2':
-    resolution: {integrity: sha512-k/HxYoquWwyHS11lm4+M1UHgH0UFEvtxU/DQZGaUOIFG7gjDDX1e+M9hsgGgEHMEsD1ev75PLdNRTAmZwbH+kA==}
-
-  '@ariatype/aria-roles-widget@1.0.2':
-    resolution: {integrity: sha512-uGEIXgu0dnDtBahcBHoo8mT+OZOXj3sZhPH067p+D+WViumb0yLbPtdqnVaLVeCDeuyLopWMp7OW6SD6h+5IDw==}
-
-  '@ariatype/aria-roles-window@1.0.2':
-    resolution: {integrity: sha512-zd1f5nzc+3FfrpjSz8HfbOyiVxlRfi2Xrs8Rk5JHIw9kkZIa5Mf2M55bBlTZVNLCO8l5oUrIPxhi0seR3kN9bA==}
-
-  '@ariatype/aria-roles@1.0.2':
-    resolution: {integrity: sha512-ZhQTwM1Q5TdoJlFIdaveZMjE0sMGZ4qTpZLbn1b9HqXoixHLzbWWZlmeAPXpSrYjQsCsJlnuIlL9LeYCLT61ag==}
 
   '@astrojs/check@0.9.9':
     resolution: {integrity: sha512-A5UW8uIuErLWEoRQvzgXpO1gTjUFtK8r7nU2Z7GewAMxUb7bPvpk11qaKKgxqXlHJWlAvaaxy+Xg28A6bmQ1Tg==}
@@ -2319,11 +2265,12 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@shikijs/core@3.23.0':
-    resolution: {integrity: sha512-NSWQz0riNb67xthdm5br6lAkvpDJRTgB36fxlo37ZzM2yq0PQFFzbd8psqC2XMPgCzo1fW6cVi18+ArJ44wqgA==}
-
   '@shikijs/core@4.0.2':
     resolution: {integrity: sha512-hxT0YF4ExEqB8G/qFdtJvpmHXBYJ2lWW7qTHDarVkIudPFE6iCIrqdgWxGn5s+ppkGXI0aEGlibI0PAyzP3zlw==}
+    engines: {node: '>=20'}
+
+  '@shikijs/core@4.1.0':
+    resolution: {integrity: sha512-jLJtSJeuFffqX6/inRE1zqU5aFv2hrszvYgq3OjbAgFRZiWv7abKMDdQzYxuSDfmUPQozZvI/kuy6VMTvnvqTQ==}
     engines: {node: '>=20'}
 
   '@shikijs/engine-javascript@4.0.2':
@@ -2342,6 +2289,10 @@ packages:
     resolution: {integrity: sha512-M6UMPrSa3fN5ayeJwFVl9qWofl273wtK1VG8ySDZ1mQBfhCpdd8nEx7nPZ/tk7k+TYcpqBZzj/AnwxT9lO+HJw==}
     engines: {node: '>=20'}
 
+  '@shikijs/primitive@4.1.0':
+    resolution: {integrity: sha512-zx2/2Uwj2q9X3KSyYREEhXO23xBw5WUhP4orK2lE4r+t9JGITmEe0JH+wPmJhqHpOT2bRRs6lAL945+LDvOAGw==}
+    engines: {node: '>=20'}
+
   '@shikijs/themes@4.0.2':
     resolution: {integrity: sha512-mjCafwt8lJJaVSsQvNVrJumbnnj1RI8jbUKrPKgE6E3OvQKxnuRoBaYC51H4IGHePsGN/QtALglWBU7DoKDFnA==}
     engines: {node: '>=20'}
@@ -2350,22 +2301,24 @@ packages:
     resolution: {integrity: sha512-1+L0gf9v+SdDXs08vjaLb3mBFa8U7u37cwcBQIv/HCocLwX69Tt6LpUCjtB+UUTvQxI7BnjZKhN/wMjhHBcJGg==}
     engines: {node: '>=20'}
 
-  '@shikijs/twoslash@3.23.0':
-    resolution: {integrity: sha512-pNaLJWMA3LU7PhT8tm9OQBZ1epy0jmdgeJzntBtr1EVXLbHxGzTj3mnf9vOdcl84l96qnlJXkJ/NGXZYBpXl5g==}
-    peerDependencies:
-      typescript: '>=5.5.0'
-
   '@shikijs/twoslash@4.0.2':
     resolution: {integrity: sha512-yHRudhirlMxOwDO6Q4OFU9hJMvUqNkY8hwtUfbaSEoG7A2cYicdO4c8fdDaDtyJ50HK7I8vTokrkIHTK3DCkLQ==}
     engines: {node: '>=20'}
     peerDependencies:
       typescript: '>=5.5.0'
 
-  '@shikijs/types@3.23.0':
-    resolution: {integrity: sha512-3JZ5HXOZfYjsYSk0yPwBrkupyYSLpAE26Qc0HLghhZNGTZg/SKxXIIgoxOpmmeQP0RRSDJTk1/vPfw9tbw+jSQ==}
+  '@shikijs/twoslash@4.1.0':
+    resolution: {integrity: sha512-XD7d3LqLXOaL6PbFKGwtdnfcyBdOfKWfxb1+c4MVknVTemwnMQxqj1wYhhWBLRdk8H3Fp9pyf/FILfy2Nzeg8g==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      typescript: '>=5.5.0'
 
   '@shikijs/types@4.0.2':
     resolution: {integrity: sha512-qzbeRooUTPnLE+sHD/Z8DStmaDgnbbc/pMrU203950aRqjX/6AFHeDYT+j00y2lPdz0ywJKx7o/7qnqTivtlXg==}
+    engines: {node: '>=20'}
+
+  '@shikijs/types@4.1.0':
+    resolution: {integrity: sha512-3EQWX54fMpniOrDblzAhiwiJwpiTMW6+B9DWyUd9ska483tbayFYuw47UxwuPknI31bKnySfVQ/QW+jFL4rFdA==}
     engines: {node: '>=20'}
 
   '@shikijs/vscode-textmate@10.0.2':
@@ -2711,20 +2664,26 @@ packages:
       '@vue/server-renderer':
         optional: true
 
-  '@zag-js/dismissable@1.40.0':
-    resolution: {integrity: sha512-bBkFvPg/zbYn31ZgEfx8not6s2Ekx7zU2sO8tGXb8rYPnHBfGDYEzVQansUStJn0Atzw+y7XR7B3G3u5AFQJKw==}
+  '@zag-js/dismissable@1.41.0':
+    resolution: {integrity: sha512-M9YBC6MyySHyTrbiTeP+5RdvMCbIg6Yac5gda9glRBD7njjqeVFoFT61V0aHJK4Pcni5rFjCMO7u4Wn+WBr6Hg==}
 
   '@zag-js/dom-query@1.40.0':
     resolution: {integrity: sha512-4J3EO2gHpZ1VZiGLuMlH6G1Tsp4gKB8PPt2yKeNQWYGEXyrHUXrvMhRUzv7Z4/2I1s1tnxlFG4F8ovB3kTpz/Q==}
 
-  '@zag-js/interact-outside@1.40.0':
-    resolution: {integrity: sha512-Fws+O4uD9vS0I5KVcf3U2tNjLKvqlv+RExFbTywckDLOCJ145M/pMQWTr1FHil04jk5PFyM1iGfsbom8tozHpQ==}
+  '@zag-js/dom-query@1.41.0':
+    resolution: {integrity: sha512-10KVw1sZNKsiGcR9nC+xazn6r2hAijrJFcMJWWmtrXuskezV04/axCaWdEGHkPloddaoADecWwCAsD4+kOmKFg==}
+
+  '@zag-js/interact-outside@1.41.0':
+    resolution: {integrity: sha512-nmqgOM8w3YEO3OXXpS2ycA7waYYBeeaSwoh+dUJFKFPViWBzHQ6AFupsobq5K9MejCl7LIV8fDmmB3BAF/0xXg==}
 
   '@zag-js/types@1.40.0':
     resolution: {integrity: sha512-LVvxEyqFv/u9SEe5xdivvG2vYb9cCmbkD+5r6s+IGljpDLaRgv4BYyxEh40ri1ai070tL08ZKmoLfx2/xfvY/A==}
 
-  '@zag-js/utils@1.40.0':
-    resolution: {integrity: sha512-XUpqDtXfHe7CySjOhLPLj9H8rxbiFUJAGgmBzNdpsGPP4wx12cpOXrpSjRXZ2kMwooMPz/P7RPDBteto8sqhAQ==}
+  '@zag-js/types@1.41.0':
+    resolution: {integrity: sha512-CNTzGNjJU1e7VAzucjcjqBzpU7e1EBwRH29hCdyoigB4e4uDb+NrKUBHyAkfBVeNMLhpmXxnQfMDlvYt7K3W1A==}
+
+  '@zag-js/utils@1.41.0':
+    resolution: {integrity: sha512-WUCIw+W4MYKYfyKad0LLNNqhL58/cRAAAVjLqDch05c1dZ0yhZq3t81jWeYUwiPnprt9V+BtGJEFMnWhdfxsBA==}
 
   abbrev@2.0.0:
     resolution: {integrity: sha512-6/mh1E2u2YgEsCHdY0Yx5oW+61gZU+1vXaoiHHrpKeuRNNgFvS+/jrwHiQhB5apAf5oB7UB7E19ol2R2LKH8hQ==}
@@ -3773,12 +3732,6 @@ packages:
   jsonfile@4.0.0:
     resolution: {integrity: sha512-m6F1R3z8jjlf2imQHS2Qez5sjKWQzbuuhuJ/FKYFRZvPE3PuHcSMVZzfsLhGVOkfd20obL5SWEBew5ShlquNxg==}
 
-  just-kebab-case@4.2.0:
-    resolution: {integrity: sha512-p2BdO7o4BI+pMun3J+dhaOfYan5JsZrw9wjshRjkWY9+p+u+kKSMhNWYnot2yHDR9CSahZ9iT3dcqJ+V72qHMw==}
-
-  just-map-values@3.2.0:
-    resolution: {integrity: sha512-TyqCKtK3NxiUgOjRYMIKURvBTHesi3XzomDY0QVPZ3rYzLCF+nNq5rSi0B/L5aOd/WMTZo6ukzA4wih4HUbrDg==}
-
   keyv@4.5.4:
     resolution: {integrity: sha512-oxVHkHR/EJf2CNXnWxRLW6mg7JyCCUcG0DtEGmL2ctUo1PNTin1PUil+r/+4r5MpVgC/fn1kjsx7mjSujKqIpw==}
 
@@ -4161,11 +4114,6 @@ packages:
   nanoid@3.3.12:
     resolution: {integrity: sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
-    hasBin: true
-
-  nanoid@5.1.11:
-    resolution: {integrity: sha512-v+KEsUv2ps74PaSKv0gHTxTCgMXOIfBEbaqa6w6ISIGC7ZsvHN4N9oJ8d4cmf0n5oTzQz2SLmThbQWhjd/8eKg==}
-    engines: {node: ^18 || >=20}
     hasBin: true
 
   natural-compare@1.4.0:
@@ -4655,9 +4603,6 @@ packages:
   shebang-regex@3.0.0:
     resolution: {integrity: sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A==}
     engines: {node: '>=8'}
-
-  shiki-twoslash-renderer@0.1.0:
-    resolution: {integrity: sha512-8ho1tRDDqTFg5RRJIKGihLSv0Z4zRQG/uWWa+HbxobbT479vZ1ZrNsMRj2CvnQGbHgKr+9cj6sSRChoCeXtEaA==}
 
   shiki-twoslash-renderer@0.3.4:
     resolution: {integrity: sha512-YK8co9RVCqAda5uhf6pMmP1AA2LkzhWycZdSKHHSAiX6qS+tLgYfmMpg6OpYR0I3STRELR48Eopd/UMaIMCheA==}
@@ -5421,20 +5366,10 @@ packages:
 
 snapshots:
 
-  '@aria-ui/core@0.0.22':
-    dependencies:
-      '@ariatype/aria-attributes': 1.0.2
-      '@ariatype/aria-roles': 1.0.2
-      '@preact/signals-core': 1.14.2
-      '@zag-js/dom-query': 1.40.0
-      just-kebab-case: 4.2.0
-      just-map-values: 3.2.0
-      server-dom-shim: 1.1.0
-
   '@aria-ui/core@0.2.1':
     dependencies:
       '@ocavue/utils': 1.6.0
-      '@zag-js/dom-query': 1.40.0
+      '@zag-js/dom-query': 1.41.0
       alien-signals: 3.2.1
       server-dom-shim: 1.1.0
 
@@ -5443,86 +5378,13 @@ snapshots:
       '@aria-ui/core': 0.2.1
       '@aria-ui/utils': 0.1.6
       '@floating-ui/dom': 1.7.6
-      '@zag-js/dismissable': 1.40.0
-      '@zag-js/dom-query': 1.40.0
-
-  '@aria-ui/overlay@0.0.25':
-    dependencies:
-      '@aria-ui/core': 0.0.22
-      '@floating-ui/dom': 1.7.6
-      '@floating-ui/utils': 0.2.11
-      '@zag-js/dom-query': 1.40.0
-
-  '@aria-ui/presence@0.0.20':
-    dependencies:
-      '@aria-ui/core': 0.0.22
-      '@zag-js/dom-query': 1.40.0
-
-  '@aria-ui/tooltip@0.0.30':
-    dependencies:
-      '@aria-ui/core': 0.0.22
-      '@aria-ui/overlay': 0.0.25
-      '@aria-ui/presence': 0.0.20
-      nanoid: 5.1.11
+      '@zag-js/dismissable': 1.41.0
+      '@zag-js/dom-query': 1.41.0
 
   '@aria-ui/utils@0.1.6':
     dependencies:
       '@aria-ui/core': 0.2.1
       '@zag-js/dom-query': 1.40.0
-
-  '@ariatype/aria-attributes-drag-and-drop@1.0.2': {}
-
-  '@ariatype/aria-attributes-global@1.0.2': {}
-
-  '@ariatype/aria-attributes-live-region@1.0.2': {}
-
-  '@ariatype/aria-attributes-relationship@1.0.2': {}
-
-  '@ariatype/aria-attributes-widget@1.0.2': {}
-
-  '@ariatype/aria-attributes@1.0.2':
-    dependencies:
-      '@ariatype/aria-attributes-drag-and-drop': 1.0.2
-      '@ariatype/aria-attributes-global': 1.0.2
-      '@ariatype/aria-attributes-live-region': 1.0.2
-      '@ariatype/aria-attributes-relationship': 1.0.2
-      '@ariatype/aria-attributes-widget': 1.0.2
-
-  '@ariatype/aria-roles-composite@1.0.2':
-    dependencies:
-      '@ariatype/aria-roles-generic': 1.0.2
-
-  '@ariatype/aria-roles-document-structure@1.0.2':
-    dependencies:
-      '@ariatype/aria-roles-generic': 1.0.2
-
-  '@ariatype/aria-roles-generic@1.0.2': {}
-
-  '@ariatype/aria-roles-landmark@1.0.2':
-    dependencies:
-      '@ariatype/aria-roles-generic': 1.0.2
-
-  '@ariatype/aria-roles-live-region@1.0.2':
-    dependencies:
-      '@ariatype/aria-roles-generic': 1.0.2
-
-  '@ariatype/aria-roles-widget@1.0.2':
-    dependencies:
-      '@ariatype/aria-roles-generic': 1.0.2
-
-  '@ariatype/aria-roles-window@1.0.2':
-    dependencies:
-      '@ariatype/aria-roles-generic': 1.0.2
-
-  '@ariatype/aria-roles@1.0.2':
-    dependencies:
-      '@ariatype/aria-roles-composite': 1.0.2
-      '@ariatype/aria-roles-document-structure': 1.0.2
-      '@ariatype/aria-roles-generic': 1.0.2
-      '@ariatype/aria-roles-landmark': 1.0.2
-      '@ariatype/aria-roles-live-region': 1.0.2
-      '@ariatype/aria-roles-widget': 1.0.2
-      '@ariatype/aria-roles-window': 1.0.2
 
   '@astrojs/check@0.9.9(prettier@3.8.3)(typescript@5.9.3)':
     dependencies:
@@ -6611,17 +6473,18 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.4':
     optional: true
 
-  '@shikijs/core@3.23.0':
-    dependencies:
-      '@shikijs/types': 3.23.0
-      '@shikijs/vscode-textmate': 10.0.2
-      '@types/hast': 3.0.4
-      hast-util-to-html: 9.0.5
-
   '@shikijs/core@4.0.2':
     dependencies:
       '@shikijs/primitive': 4.0.2
       '@shikijs/types': 4.0.2
+      '@shikijs/vscode-textmate': 10.0.2
+      '@types/hast': 3.0.4
+      hast-util-to-html: 9.0.5
+
+  '@shikijs/core@4.1.0':
+    dependencies:
+      '@shikijs/primitive': 4.1.0
+      '@shikijs/types': 4.1.0
       '@shikijs/vscode-textmate': 10.0.2
       '@types/hast': 3.0.4
       hast-util-to-html: 9.0.5
@@ -6647,6 +6510,12 @@ snapshots:
       '@shikijs/vscode-textmate': 10.0.2
       '@types/hast': 3.0.4
 
+  '@shikijs/primitive@4.1.0':
+    dependencies:
+      '@shikijs/types': 4.1.0
+      '@shikijs/vscode-textmate': 10.0.2
+      '@types/hast': 3.0.4
+
   '@shikijs/themes@4.0.2':
     dependencies:
       '@shikijs/types': 4.0.2
@@ -6655,15 +6524,6 @@ snapshots:
     dependencies:
       '@shikijs/core': 4.0.2
       '@shikijs/types': 4.0.2
-
-  '@shikijs/twoslash@3.23.0(typescript@5.9.3)':
-    dependencies:
-      '@shikijs/core': 3.23.0
-      '@shikijs/types': 3.23.0
-      twoslash: 0.3.8(typescript@5.9.3)
-      typescript: 5.9.3
-    transitivePeerDependencies:
-      - supports-color
 
   '@shikijs/twoslash@4.0.2(typescript@5.9.3)':
     dependencies:
@@ -6674,12 +6534,21 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@shikijs/types@3.23.0':
+  '@shikijs/twoslash@4.1.0(typescript@5.9.3)':
+    dependencies:
+      '@shikijs/core': 4.1.0
+      '@shikijs/types': 4.1.0
+      twoslash: 0.3.8(typescript@5.9.3)
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - supports-color
+
+  '@shikijs/types@4.0.2':
     dependencies:
       '@shikijs/vscode-textmate': 10.0.2
       '@types/hast': 3.0.4
 
-  '@shikijs/types@4.0.2':
+  '@shikijs/types@4.1.0':
     dependencies:
       '@shikijs/vscode-textmate': 10.0.2
       '@types/hast': 3.0.4
@@ -7126,26 +6995,34 @@ snapshots:
     optionalDependencies:
       '@vue/server-renderer': 3.5.34(vue@3.5.34(typescript@6.0.3))
 
-  '@zag-js/dismissable@1.40.0':
+  '@zag-js/dismissable@1.41.0':
     dependencies:
-      '@zag-js/dom-query': 1.40.0
-      '@zag-js/interact-outside': 1.40.0
-      '@zag-js/utils': 1.40.0
+      '@zag-js/dom-query': 1.41.0
+      '@zag-js/interact-outside': 1.41.0
+      '@zag-js/utils': 1.41.0
 
   '@zag-js/dom-query@1.40.0':
     dependencies:
       '@zag-js/types': 1.40.0
 
-  '@zag-js/interact-outside@1.40.0':
+  '@zag-js/dom-query@1.41.0':
     dependencies:
-      '@zag-js/dom-query': 1.40.0
-      '@zag-js/utils': 1.40.0
+      '@zag-js/types': 1.41.0
+
+  '@zag-js/interact-outside@1.41.0':
+    dependencies:
+      '@zag-js/dom-query': 1.41.0
+      '@zag-js/utils': 1.41.0
 
   '@zag-js/types@1.40.0':
     dependencies:
       csstype: 3.2.3
 
-  '@zag-js/utils@1.40.0': {}
+  '@zag-js/types@1.41.0':
+    dependencies:
+      csstype: 3.2.3
+
+  '@zag-js/utils@1.41.0': {}
 
   abbrev@2.0.0: {}
 
@@ -8365,10 +8242,6 @@ snapshots:
     optionalDependencies:
       graceful-fs: 4.2.11
 
-  just-kebab-case@4.2.0: {}
-
-  just-map-values@3.2.0: {}
-
   keyv@4.5.4:
     dependencies:
       json-buffer: 3.0.1
@@ -9002,8 +8875,6 @@ snapshots:
 
   nanoid@3.3.12: {}
 
-  nanoid@5.1.11: {}
-
   natural-compare@1.4.0: {}
 
   neotraverse@0.6.18: {}
@@ -9586,23 +9457,12 @@ snapshots:
 
   shebang-regex@3.0.0: {}
 
-  shiki-twoslash-renderer@0.1.0(typescript@5.9.3):
-    dependencies:
-      '@aria-ui/core': 0.0.22
-      '@aria-ui/tooltip': 0.0.30
-      '@shikijs/twoslash': 3.23.0(typescript@5.9.3)
-      '@shikijs/types': 3.23.0
-      '@types/hast': 3.0.4
-    transitivePeerDependencies:
-      - supports-color
-      - typescript
-
   shiki-twoslash-renderer@0.3.4(typescript@5.9.3):
     dependencies:
       '@aria-ui/core': 0.2.1
       '@aria-ui/elements': 0.1.10
-      '@shikijs/twoslash': 4.0.2(typescript@5.9.3)
-      '@shikijs/types': 4.0.2
+      '@shikijs/twoslash': 4.1.0(typescript@5.9.3)
+      '@shikijs/types': 4.1.0
       '@types/hast': 3.0.4
       twoslash: 0.3.8(typescript@5.9.3)
     transitivePeerDependencies:
