@@ -68,7 +68,7 @@
     "happy-dom": "^20.9.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   },
   "llms": "https://triggeryjs.github.io/llms.txt",
   "llmsFull": "https://triggeryjs.github.io/llms-full.txt"
