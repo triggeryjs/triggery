@@ -67,7 +67,7 @@
     "react": ">=18.0.0"
   },
   "devDependencies": {
-    "@tanstack/query-core": "^5.59.20",
+    "@tanstack/query-core": "^5.100.14",
     "@testing-library/react": "^16.3.2",
     "@triggery/core": "workspace:*",
     "@triggery/react": "workspace:*",
@@ -77,7 +77,7 @@
     "react-dom": "^19.2.6",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   },
   "llms": "https://triggeryjs.github.io/llms.txt",
   "llmsFull": "https://triggeryjs.github.io/llms-full.txt"

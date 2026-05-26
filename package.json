@@ -59,10 +59,10 @@
     "@changesets/cli": "^2.31.0",
     "@codspeed/vitest-plugin": "^5.4.0",
     "@testing-library/react": "^16.3.2",
-    "@types/node": "^25.8.0",
+    "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^4.1.7",
     "happy-dom": "^20.9.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
@@ -70,7 +70,7 @@
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
     "vite-tsconfig-paths": "^6.1.1",
-    "vitest": "^4.1.6"
+    "vitest": "^4.1.7"
   },
   "pnpm": {
     "overrides": {
