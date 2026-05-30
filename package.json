@@ -55,9 +55,9 @@
     "release": "pnpm build && changeset publish"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.15",
+    "@biomejs/biome": "^2.4.16",
     "@changesets/cli": "^2.31.0",
-    "@codspeed/vitest-plugin": "^5.4.0",
+    "@codspeed/vitest-plugin": "^5.5.0",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
