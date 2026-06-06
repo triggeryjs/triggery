@@ -27,13 +27,13 @@
     "@triggery/zustand": "^0.10.0",
     "jotai": "^2.10.0",
     "mobx": "^6.13.0",
-    "react": "^19.2.6",
+    "react": "^19.2.7",
     "react-dom": "^19.2.6",
     "react-redux": "^9.2.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@types/react": "^19.2.15",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "typescript": "^6.0.3",
