@@ -71,7 +71,7 @@
     }
   },
   "devDependencies": {
-    "@preact/signals-core": "^1.13.2",
+    "@preact/signals-core": "^1.14.4",
     "@testing-library/react": "^16.3.2",
     "@triggery/core": "workspace:*",
     "@triggery/react": "workspace:*",
