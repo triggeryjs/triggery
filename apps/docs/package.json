@@ -23,7 +23,7 @@
     "@triggery/testing": "workspace:*",
     "@triggery/vue": "workspace:*",
     "astro": "^6.3.7",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "shiki-twoslash-renderer": "^0.3.4",
     "starlight-theme-nova": "^0.11.10",
     "typescript": "^5.7.3"
