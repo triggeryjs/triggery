@@ -67,12 +67,12 @@
   "devDependencies": {
     "@solidjs/testing-library": "^0.8.10",
     "@triggery/core": "workspace:*",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^20.11.1",
     "solid-js": "^1.9.13",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "vite-plugin-solid": "^2.11.12",
-    "vitest": "^4.1.7"
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^4.1.10"
   },
   "llms": "https://triggeryjs.github.io/llms.txt",
   "llmsFull": "https://triggeryjs.github.io/llms-full.txt"
