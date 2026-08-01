@@ -52,14 +52,14 @@ jobs:
       # Analysis`). The finalizer step below handles that side.
 
       - name: Bench — core (Triggery dispatch hot path)
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@v5
         continue-on-error: true
         with:
           mode: simulation
           run: cd benchmarks && pnpm exec vitest bench --run bench/core
 
       - name: Bench — vs (side-by-side comparisons)
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@v5
         continue-on-error: true
         with:
           mode: simulation
