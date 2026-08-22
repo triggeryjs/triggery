@@ -15,7 +15,7 @@
   "dependencies": {
     "@astrojs/check": "^0.9.9",
     "@astrojs/sitemap": "^3.7.2",
-    "@astrojs/starlight": "^0.39.2",
+    "@astrojs/starlight": "^0.41.7",
     "@stackblitz/sdk": "^1.11.0",
     "@triggery/core": "workspace:*",
     "@triggery/react": "workspace:*",
