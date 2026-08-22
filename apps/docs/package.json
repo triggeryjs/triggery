@@ -13,7 +13,7 @@
     "check": "astro check"
   },
   "dependencies": {
-    "@astrojs/check": "^0.9.9",
+    "@astrojs/check": "^0.9.10",
     "@astrojs/sitemap": "^3.7.2",
     "@astrojs/starlight": "^0.39.2",
     "@stackblitz/sdk": "^1.11.0",
