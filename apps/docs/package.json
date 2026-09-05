@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",
-    "@astrojs/sitemap": "^3.7.2",
+    "@astrojs/sitemap": "^3.7.4",
     "@astrojs/starlight": "^0.39.2",
     "@stackblitz/sdk": "^1.11.0",
     "@triggery/core": "workspace:*",
