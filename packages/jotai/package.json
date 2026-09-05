@@ -67,17 +67,17 @@
     "react": ">=18.0.0"
   },
   "devDependencies": {
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@triggery/core": "workspace:*",
     "@triggery/react": "workspace:*",
     "@types/react": "^19.2.15",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^20.13.2",
     "jotai": "^2.10.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.11"
   },
   "llms": "https://triggeryjs.github.io/llms.txt",
   "llmsFull": "https://triggeryjs.github.io/llms-full.txt"
