@@ -69,16 +69,16 @@
   },
   "devDependencies": {
     "@reatom/core": "^1001.0.0",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/react": "^16.3.3",
     "@triggery/core": "workspace:*",
     "@triggery/react": "workspace:*",
     "@types/react": "^19.2.15",
-    "happy-dom": "^20.9.0",
+    "happy-dom": "^21.0.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "tsup": "^8.5.1",
+    "tsup": "^9.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^5.0.4"
   },
   "llms": "https://triggeryjs.github.io/llms.txt",
   "llmsFull": "https://triggeryjs.github.io/llms-full.txt"
